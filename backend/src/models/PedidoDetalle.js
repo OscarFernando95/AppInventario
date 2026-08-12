@@ -1,0 +1,31 @@
+const { DataTypes } = require('sequelize');
+const sequelize = require('../config/database');
+
+const PedidoDetalle = sequelize.define('PedidoDetalle', {
+  id: {
+    type: DataTypes.INTEGER,
+    autoIncrement: true,
+    primaryKey: true,
+  },
+  pedidoId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
+  productoId: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
+  cantidad_pedida: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+  },
+  costo_estimado: {
+    type: DataTypes.DECIMAL(10, 2),
+    allowNull: false,
+  }
+}, {
+  tableName: 'pedidos_detalles',
+  timestamps: false,
+});
+
+module.exports = PedidoDetalle;
