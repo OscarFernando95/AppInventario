@@ -11,8 +11,18 @@ exports.getEmpresas = async (req, res) => {
 
 exports.createEmpresa = async (req, res) => {
   try {
-    const { nombre, nit, contacto, modulosIds } = req.body;
-    const empresa = await Empresa.create({ nombre, nit, contacto });
+    const {
+      nombre, nit, contacto, modulosIds,
+      dv, tipo_persona, regimen_fiscal, direccion_fisica, municipio_dane, departamento_dane,
+      codigo_ciiu, email_facturacion, resolucion_numero, prefijo_facturacion,
+      rango_desde, rango_hasta, fecha_vigencia_desde, fecha_vigencia_hasta, clave_tecnica
+    } = req.body;
+    const empresa = await Empresa.create({
+      nombre, nit, contacto,
+      dv, tipo_persona, regimen_fiscal, direccion_fisica, municipio_dane, departamento_dane,
+      codigo_ciiu, email_facturacion, resolucion_numero, prefijo_facturacion,
+      rango_desde, rango_hasta, fecha_vigencia_desde, fecha_vigencia_hasta, clave_tecnica
+    });
     if (modulosIds && modulosIds.length > 0) {
       await empresa.setModulos(modulosIds);
     }
@@ -26,12 +36,22 @@ exports.createEmpresa = async (req, res) => {
 exports.updateEmpresa = async (req, res) => {
   try {
     const { id } = req.params;
-    const { nombre, nit, contacto, activa, modulosIds } = req.body;
+    const {
+      nombre, nit, contacto, activa, modulosIds,
+      dv, tipo_persona, regimen_fiscal, direccion_fisica, municipio_dane, departamento_dane,
+      codigo_ciiu, email_facturacion, resolucion_numero, prefijo_facturacion,
+      rango_desde, rango_hasta, fecha_vigencia_desde, fecha_vigencia_hasta, clave_tecnica
+    } = req.body;
     const empresa = await Empresa.findByPk(id);
     
     if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
     
-    await empresa.update({ nombre, nit, contacto, activa });
+    await empresa.update({
+      nombre, nit, contacto, activa,
+      dv, tipo_persona, regimen_fiscal, direccion_fisica, municipio_dane, departamento_dane,
+      codigo_ciiu, email_facturacion, resolucion_numero, prefijo_facturacion,
+      rango_desde, rango_hasta, fecha_vigencia_desde, fecha_vigencia_hasta, clave_tecnica
+    });
     if (modulosIds) {
       await empresa.setModulos(modulosIds);
     }

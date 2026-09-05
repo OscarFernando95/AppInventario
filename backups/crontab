@@ -1,0 +1,4 @@
+# Corre todos los días a las 3:00 AM.
+# La salida se redirige al stdout/stderr del contenedor (PID 1) para que
+# "docker compose logs backup" muestre lo que hizo cada corrida.
+0 3 * * * /usr/local/bin/backup.sh >> /proc/1/fd/1 2>> /proc/1/fd/2

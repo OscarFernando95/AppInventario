@@ -22,6 +22,18 @@ const Servicio = sequelize.define('Servicio', {
   precio: {
     type: DataTypes.DECIMAL(10, 2),
     allowNull: false,
+  },
+  porcentaje_iva: {
+    type: DataTypes.DECIMAL(5, 2),
+    defaultValue: 19.00,
+  },
+  unidad_medida: {
+    type: DataTypes.STRING,
+    defaultValue: 'ZZ', // ZZ=Servicios mutuos
+  },
+  codigo_estandar: {
+    type: DataTypes.STRING,
+    allowNull: true,
   }
 }, {
   tableName: 'servicios',

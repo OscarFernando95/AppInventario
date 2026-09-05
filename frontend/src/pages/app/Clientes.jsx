@@ -6,7 +6,11 @@ import { Users, Plus, Edit, Briefcase, Mail, Phone, MapPin, IdCard } from 'lucid
 const Clientes = () => {
   const [clientes, setClientes] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [formData, setFormData] = useState({ nombre: '', documento: '', email: '', telefono: '', direccion: '' });
+  const [formData, setFormData] = useState({ 
+    nombre: '', documento: '', email: '', telefono: '', direccion: '',
+    tipo_documento: '13', dv: '', tipo_persona: '2', regimen_fiscal: 'R-99-PN',
+    departamento_dane: '', municipio_dane: ''
+  });
   const [editId, setEditId] = useState(null);
 
   const fetchClientes = async () => {
@@ -28,14 +32,22 @@ const Clientes = () => {
       }
       setShowModal(false);
       setEditId(null);
-      setFormData({ nombre: '', documento: '', email: '', telefono: '', direccion: '' });
+      setFormData({ 
+        nombre: '', documento: '', email: '', telefono: '', direccion: '',
+        tipo_documento: '13', dv: '', tipo_persona: '2', regimen_fiscal: 'R-99-PN',
+        departamento_dane: '', municipio_dane: ''
+      });
       fetchClientes();
     } catch (err) { alert('Error al guardar cliente'); }
   };
 
   const startEdit = (c) => {
     setEditId(c.id);
-    setFormData({ nombre: c.nombre, documento: c.documento, email: c.email, telefono: c.telefono, direccion: c.direccion });
+    setFormData({ 
+      nombre: c.nombre, documento: c.documento, email: c.email, telefono: c.telefono, direccion: c.direccion,
+      tipo_documento: c.tipo_documento || '13', dv: c.dv || '', tipo_persona: c.tipo_persona || '2', regimen_fiscal: c.regimen_fiscal || 'R-99-PN',
+      departamento_dane: c.departamento_dane || '', municipio_dane: c.municipio_dane || ''
+    });
     setShowModal(true);
   };
 
@@ -46,7 +58,15 @@ const Clientes = () => {
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">Directorio de Clientes</h2>
           <p className="text-slate-500 mt-1">Gestiona tu cartera de clientes recurrentes para agilizar tus ventas</p>
         </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setEditId(null); setFormData({ nombre: '', documento: '', email: '', telefono: '', direccion: '' }); setShowModal(true); }}>
+        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { 
+          setEditId(null); 
+          setFormData({ 
+            nombre: '', documento: '', email: '', telefono: '', direccion: '',
+            tipo_documento: '13', dv: '', tipo_persona: '2', regimen_fiscal: 'R-99-PN',
+            departamento_dane: '', municipio_dane: ''
+          }); 
+          setShowModal(true); 
+        }}>
           <Plus className="w-5 h-5" /> Nuevo Cliente
         </button>
       </div>
@@ -84,16 +104,60 @@ const Clientes = () => {
 
       {showModal && createPortal(
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center z-[9999] animate-fade-in p-4 overflow-y-auto">
-          <div className="bg-white rounded-[2rem] p-8 w-full max-w-lg shadow-xl relative my-auto">
+          <div className="bg-white rounded-[2rem] p-8 w-full max-w-2xl shadow-xl relative my-auto">
             <h3 className="text-2xl font-bold mb-6 text-slate-800 border-b border-slate-100 pb-4">{editId ? 'Editar Cliente' : 'Nuevo Cliente'}</h3>
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Nombre o Razón Social</label><input required className="input-field rounded-xl" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})}/></div>
-              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">N° Documento</label><input className="input-field rounded-xl" value={formData.documento} onChange={e => setFormData({...formData, documento: e.target.value})}/></div>
-              <div className="grid grid-cols-2 gap-4">
-                <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Teléfono</label><input className="input-field rounded-xl" value={formData.telefono} onChange={e => setFormData({...formData, telefono: e.target.value})}/></div>
-                <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Correo</label><input type="email" className="input-field rounded-xl" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})}/></div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-4">
+                  <h4 className="font-bold text-brand-600 border-b pb-1 mb-2 text-sm">Información Básica</h4>
+                  <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Nombre o Razón Social</label><input required className="input-field rounded-xl" value={formData.nombre || ''} onChange={e => setFormData({...formData, nombre: e.target.value})}/></div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="col-span-2">
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">N° Documento</label>
+                      <div className="flex gap-1">
+                        <select className="input-field rounded-xl w-1/3 px-1" value={formData.tipo_documento || '13'} onChange={e => setFormData({...formData, tipo_documento: e.target.value})}>
+                          <option value="13">CC</option>
+                          <option value="31">NIT</option>
+                          <option value="22">CE</option>
+                        </select>
+                        <input className="input-field rounded-xl w-2/3" value={formData.documento || ''} onChange={e => setFormData({...formData, documento: e.target.value})}/>
+                      </div>
+                    </div>
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">DV</label><input className="input-field rounded-xl" value={formData.dv || ''} onChange={e => setFormData({...formData, dv: e.target.value})}/></div>
+                  </div>
+                  <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Correo</label><input type="email" className="input-field rounded-xl" value={formData.email || ''} onChange={e => setFormData({...formData, email: e.target.value})}/></div>
+                  <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Teléfono</label><input className="input-field rounded-xl" value={formData.telefono || ''} onChange={e => setFormData({...formData, telefono: e.target.value})}/></div>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="font-bold text-brand-600 border-b pb-1 mb-2 text-sm">Información Tributaria (DIAN)</h4>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">Tipo Persona</label>
+                      <select className="input-field rounded-xl" value={formData.tipo_persona || '2'} onChange={e => setFormData({...formData, tipo_persona: e.target.value})}>
+                        <option value="1">Jurídica</option>
+                        <option value="2">Natural</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">Régimen</label>
+                      <select className="input-field rounded-xl" value={formData.regimen_fiscal || 'R-99-PN'} onChange={e => setFormData({...formData, regimen_fiscal: e.target.value})}>
+                        <option value="O-48">O-48 Resp. IVA</option>
+                        <option value="R-99-PN">R-99-PN No Resp.</option>
+                        <option value="O-13">O-13 Gran Cont.</option>
+                        <option value="O-47">O-47 Simple</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Dirección Físcia</label><input className="input-field rounded-xl" value={formData.direccion || ''} onChange={e => setFormData({...formData, direccion: e.target.value})}/></div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Cod. Dpto</label><input className="input-field rounded-xl" placeholder="11" value={formData.departamento_dane || ''} onChange={e => setFormData({...formData, departamento_dane: e.target.value})}/></div>
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Cod. Mpio</label><input className="input-field rounded-xl" placeholder="11001" value={formData.municipio_dane || ''} onChange={e => setFormData({...formData, municipio_dane: e.target.value})}/></div>
+                  </div>
+                </div>
               </div>
-              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Dirección Físcia</label><input className="input-field rounded-xl" value={formData.direccion} onChange={e => setFormData({...formData, direccion: e.target.value})}/></div>
+
               <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-slate-100">
                 <button type="button" className="btn-secondary rounded-xl" onClick={() => setShowModal(false)}>Cancelar</button>
                 <button type="submit" className="btn-primary rounded-xl px-6">{editId ? 'Guardar Cambios' : 'Dar de Alta'}</button>

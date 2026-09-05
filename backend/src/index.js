@@ -45,12 +45,13 @@ app.get('/*splat', (req, res) => {
   res.sendFile(path.join(frontendDistPath, 'index.html'));
 });
 
-// Sync DB
-sequelize.sync({ alter: true }).then(() => {
-  console.log('Modelos sincronizados con la Base de Datos.');
-  app.listen(PORT, () => {
-    console.log(`Servidor Backend corriendo en puerto ${PORT}`);
+// El esquema de la base de datos se gestiona con migraciones (npm run migrate),
+// NO con sequelize.sync(). Ver src/migrations/ y src/scripts/initDB.js.
+sequelize.authenticate()
+  .then(() => console.log('Conexión a la base de datos verificada.'))
+  .catch(err => console.error('Aviso: no se pudo verificar la conexión a la BD al arrancar:', err.message))
+  .finally(() => {
+    app.listen(PORT, () => {
+      console.log(`Servidor Backend corriendo en puerto ${PORT}`);
+    });
   });
-}).catch(err => {
-  console.error('No se pudo inicializar la base de datos:', err);
-});

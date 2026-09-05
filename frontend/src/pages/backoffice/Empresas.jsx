@@ -7,7 +7,13 @@ const Empresas = () => {
   const [empresas, setEmpresas] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [formData, setFormData] = useState({ nombre: '', nit: '', contacto: '', activa: true, modulosIds: [] });
+  const [formData, setFormData] = useState({ 
+    nombre: '', nit: '', contacto: '', activa: true, modulosIds: [],
+    dv: '', tipo_persona: '1', regimen_fiscal: 'O-48', direccion_fisica: '',
+    municipio_dane: '', departamento_dane: '', codigo_ciiu: '', email_facturacion: '',
+    resolucion_numero: '', prefijo_facturacion: '', rango_desde: '', rango_hasta: '',
+    fecha_vigencia_desde: '', fecha_vigencia_hasta: '', clave_tecnica: ''
+  });
 
   const modulosDisponibles = [
     { id: 1, nombre: 'Inventario' },
@@ -111,7 +117,17 @@ const Empresas = () => {
                   </td>
                   <td className="px-6 py-4 text-right">
                     <button 
-                      onClick={() => { setEditId(emp.id); setFormData({ nombre: emp.nombre, nit: emp.nit, contacto: emp.contacto, activa: emp.activa, modulosIds: emp.Modulos.map(m=>m.id) }); setShowModal(true); }}
+                      onClick={() => { 
+                        setEditId(emp.id); 
+                        setFormData({ 
+                          nombre: emp.nombre, nit: emp.nit, contacto: emp.contacto, activa: emp.activa, modulosIds: emp.Modulos.map(m=>m.id),
+                          dv: emp.dv || '', tipo_persona: emp.tipo_persona || '1', regimen_fiscal: emp.regimen_fiscal || 'O-48', direccion_fisica: emp.direccion_fisica || '',
+                          municipio_dane: emp.municipio_dane || '', departamento_dane: emp.departamento_dane || '', codigo_ciiu: emp.codigo_ciiu || '', email_facturacion: emp.email_facturacion || '',
+                          resolucion_numero: emp.resolucion_numero || '', prefijo_facturacion: emp.prefijo_facturacion || '', rango_desde: emp.rango_desde || '', rango_hasta: emp.rango_hasta || '',
+                          fecha_vigencia_desde: emp.fecha_vigencia_desde || '', fecha_vigencia_hasta: emp.fecha_vigencia_hasta || '', clave_tecnica: emp.clave_tecnica || ''
+                        }); 
+                        setShowModal(true); 
+                      }}
                       className="text-brand-600 hover:text-brand-800 font-bold text-sm px-3 py-1.5 bg-brand-50 rounded-lg hover:bg-brand-100 transition-colors"
                     >Editar</button>
                   </td>
@@ -124,37 +140,92 @@ const Empresas = () => {
 
       {showModal && createPortal(
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm flex flex-col items-center justify-center p-4 z-[9999] animate-fade-in sm:p-6 overflow-y-auto">
-          <div className="bg-white rounded-[2rem] p-8 sm:p-10 w-full max-w-md shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] relative my-auto">
+          <div className="bg-white rounded-[2rem] p-8 sm:p-10 w-full max-w-4xl shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] relative my-auto">
             <h3 className="text-2xl font-bold mb-6 text-slate-800 border-b border-slate-100 pb-4">{editId ? 'Editar Empresa' : 'Registrar Nuevo Tenant'}</h3>
             <form onSubmit={handleSubmit} className="space-y-5">
-              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Nombre Comercial</label><input required className="input-field rounded-xl" placeholder="Empresa XYZ" value={formData.nombre} onChange={e=>setFormData({...formData,nombre:e.target.value})}/></div>
-              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">NIT o Doc. Comercial</label><input required className="input-field rounded-xl" placeholder="123456789-0" value={formData.nit} onChange={e=>setFormData({...formData,nit:e.target.value})}/></div>
-              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Datos de Contacto</label><input required className="input-field rounded-xl" placeholder="admin@xyz.com" value={formData.contacto} onChange={e=>setFormData({...formData,contacto:e.target.value})}/></div>
-              {editId && (
-                <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Estado de la Cuenta</label>
-                  <select className="input-field rounded-xl" value={formData.activa} onChange={e=>setFormData({...formData,activa:e.target.value === 'true'})}>
-                    <option value="true">Activo (Permitir Acceso)</option>
-                    <option value="false">Suspendido (Bloquear Acceso)</option>
-                  </select>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <h4 className="font-bold text-brand-600 border-b pb-2">Datos Comerciales Principales</h4>
+                  <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Nombre Comercial</label><input required className="input-field rounded-xl" placeholder="Empresa XYZ" value={formData.nombre || ''} onChange={e=>setFormData({...formData,nombre:e.target.value})}/></div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="col-span-2"><label className="block text-sm font-semibold text-slate-700 mb-1.5">NIT</label><input required className="input-field rounded-xl" placeholder="123456789" value={formData.nit || ''} onChange={e=>setFormData({...formData,nit:e.target.value})}/></div>
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">DV</label><input className="input-field rounded-xl" placeholder="0" value={formData.dv || ''} onChange={e=>setFormData({...formData,dv:e.target.value})}/></div>
+                  </div>
+                  <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Contacto General</label><input required className="input-field rounded-xl" placeholder="admin@xyz.com" value={formData.contacto || ''} onChange={e=>setFormData({...formData,contacto:e.target.value})}/></div>
+                  
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">Tipo Persona</label>
+                      <select className="input-field rounded-xl" value={formData.tipo_persona || '1'} onChange={e=>setFormData({...formData,tipo_persona:e.target.value})}>
+                        <option value="1">Jurídica</option><option value="2">Natural</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">Régimen</label>
+                      <select className="input-field rounded-xl" value={formData.regimen_fiscal || 'O-48'} onChange={e=>setFormData({...formData,regimen_fiscal:e.target.value})}>
+                        <option value="O-48">O-48 Responsable IVA</option>
+                        <option value="R-99-PN">R-99-PN No Responsable</option>
+                        <option value="O-13">O-13 Gran Contribuyente</option>
+                        <option value="O-47">O-47 Régimen Simple</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Dirección y Localización</label><input className="input-field rounded-xl mb-2" placeholder="Dirección Física" value={formData.direccion_fisica || ''} onChange={e=>setFormData({...formData,direccion_fisica:e.target.value})}/>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input className="input-field rounded-xl" placeholder="Dpto (ej. 11)" value={formData.departamento_dane || ''} onChange={e=>setFormData({...formData,departamento_dane:e.target.value})}/>
+                      <input className="input-field rounded-xl" placeholder="Mpio (ej. 11001)" value={formData.municipio_dane || ''} onChange={e=>setFormData({...formData,municipio_dane:e.target.value})}/>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                     <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">CIIU</label><input className="input-field rounded-xl" placeholder="4711" value={formData.codigo_ciiu || ''} onChange={e=>setFormData({...formData,codigo_ciiu:e.target.value})}/></div>
+                     <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Email FE</label><input className="input-field rounded-xl" type="email" placeholder="fe@xyz.com" value={formData.email_facturacion || ''} onChange={e=>setFormData({...formData,email_facturacion:e.target.value})}/></div>
+                  </div>
+
                 </div>
-              )}
-              
-              <div className="border-t border-slate-100 pt-4 mt-6">
-                <label className="block text-sm font-bold text-slate-800 mb-3">Permisos a Módulos (Tenants)</label>
-                <div className="grid grid-cols-2 gap-3">
-                  {modulosDisponibles.map(mod => (
-                    <label key={mod.id} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-all ${formData.modulosIds.includes(mod.id) ? 'bg-brand-50 border-brand-200' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
-                      <input 
-                        type="checkbox" 
-                        className="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500" 
-                        checked={formData.modulosIds.includes(mod.id)}
-                        onChange={() => handleToggleModulo(mod.id)}
-                      />
-                      <span className={`text-sm font-semibold ${formData.modulosIds.includes(mod.id) ? 'text-brand-700' : 'text-slate-600'}`}>{mod.nombre}</span>
-                    </label>
-                  ))}
+
+                <div className="space-y-4">
+                  <h4 className="font-bold text-brand-600 border-b pb-2">Resolución DIAN (Facturación Electrónica)</h4>
+                  <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Resolución N°</label><input className="input-field rounded-xl" placeholder="18760000001" value={formData.resolucion_numero || ''} onChange={e=>setFormData({...formData,resolucion_numero:e.target.value})}/></div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Prefijo</label><input className="input-field rounded-xl" placeholder="SETP" value={formData.prefijo_facturacion || ''} onChange={e=>setFormData({...formData,prefijo_facturacion:e.target.value})}/></div>
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Desde</label><input type="number" className="input-field rounded-xl" placeholder="1" value={formData.rango_desde || ''} onChange={e=>setFormData({...formData,rango_desde:e.target.value})}/></div>
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Hasta</label><input type="number" className="input-field rounded-xl" placeholder="5000" value={formData.rango_hasta || ''} onChange={e=>setFormData({...formData,rango_hasta:e.target.value})}/></div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Vigencia Desde</label><input type="date" className="input-field rounded-xl" value={formData.fecha_vigencia_desde || ''} onChange={e=>setFormData({...formData,fecha_vigencia_desde:e.target.value})}/></div>
+                    <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Vigencia Hasta</label><input type="date" className="input-field rounded-xl" value={formData.fecha_vigencia_hasta || ''} onChange={e=>setFormData({...formData,fecha_vigencia_hasta:e.target.value})}/></div>
+                  </div>
+                  <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Clave Técnica DIAN</label><input className="input-field rounded-xl" placeholder="fc8eac42..." value={formData.clave_tecnica || ''} onChange={e=>setFormData({...formData,clave_tecnica:e.target.value})}/></div>
+                  
+                  {editId && (
+                    <div className="pt-2"><label className="block text-sm font-semibold text-slate-700 mb-1.5">Estado de la Cuenta (Tenant)</label>
+                      <select className="input-field rounded-xl" value={formData.activa} onChange={e=>setFormData({...formData,activa:e.target.value === 'true'})}>
+                        <option value="true">Activo (Permitir Acceso)</option>
+                        <option value="false">Suspendido (Bloquear Acceso)</option>
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="border-t border-slate-100 pt-4 mt-2">
+                    <label className="block text-sm font-bold text-slate-800 mb-3">Permisos a Módulos</label>
+                    <div className="grid grid-cols-2 gap-3 max-h-48 overflow-y-auto">
+                      {modulosDisponibles.map(mod => (
+                        <label key={mod.id} className={`flex items-center gap-2 p-2 rounded-xl border cursor-pointer transition-all ${formData.modulosIds?.includes(mod.id) ? 'bg-brand-50 border-brand-200' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
+                          <input 
+                            type="checkbox" 
+                            className="w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500" 
+                            checked={formData.modulosIds?.includes(mod.id)}
+                            onChange={() => handleToggleModulo(mod.id)}
+                          />
+                          <span className={`text-xs font-semibold ${formData.modulosIds?.includes(mod.id) ? 'text-brand-700' : 'text-slate-600'}`}>{mod.nombre}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
+
               <div className="flex gap-3 justify-end pt-4 mt-6 border-t border-slate-100">
                 <button type="button" className="btn-secondary rounded-xl" onClick={()=>setShowModal(false)}>Cancelar</button>
                 <button type="submit" className="btn-primary rounded-xl px-6">{editId ? 'Guardar Cambios' : 'Activar Servicio'}</button>

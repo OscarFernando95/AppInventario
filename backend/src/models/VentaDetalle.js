@@ -30,6 +30,18 @@ const VentaDetalle = sequelize.define('VentaDetalle', {
   precio_base: {
     type: DataTypes.DECIMAL(10, 2),
     allowNull: true,
+  },
+  porcentaje_iva: {
+    type: DataTypes.DECIMAL(5, 2),
+    defaultValue: 0,
+  },
+  valor_iva: {
+    type: DataTypes.DECIMAL(10, 2),
+    defaultValue: 0,
+  },
+  subtotal_bruto: {
+    type: DataTypes.DECIMAL(10, 2),
+    defaultValue: 0,
   }
 }, {
   tableName: 'ventas_detalles',

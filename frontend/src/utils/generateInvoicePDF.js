@@ -112,8 +112,20 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
   if (clienteTel) {
     doc.text(`Tel: ${clienteTel}`, margin + cardW + cardGap + 6, cursorY + 27);
   }
+  
+  // Payment info
+  const paymentMethodNames = {
+    '10': 'Efectivo', '42': 'Consignación', '48': 'Tarj. Crédito', '49': 'Tarj. Débito', '47': 'Transf.'
+  };
+  const formaPagoName = venta.forma_pago === '2' ? 'Crédito' : 'Contado';
+  const medioPagoName = paymentMethodNames[venta.medio_pago] || 'Efectivo';
+  
+  doc.setFont('helvetica', 'bold');
+  doc.text('Pago:', margin + cardW + cardGap + 6, cursorY + 33);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`${formaPagoName} — ${medioPagoName}`, margin + cardW + cardGap + 20, cursorY + 33);
 
-  cursorY += cardH + 10;
+  cursorY += cardH + 15;
 
   // ═══════════════════════════════════════════════
   // ITEMS TABLE
@@ -218,6 +230,10 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
   // ═══════════════════════════════════════════════
   const subtotalAtBase = detalles.reduce((acc, d) => acc + d.cantidad * Number(d.precio_base || d.precio_unitario), 0);
   const subtotalAtSale = detalles.reduce((acc, d) => acc + d.cantidad * Number(d.precio_unitario), 0);
+  
+  const subtotalBruto = Number(venta.subtotal_bruto) || subtotalAtSale;
+  const totalImpuestos = Number(venta.total_impuestos) || 0;
+  
   const itemDiscountTotal = subtotalAtBase - subtotalAtSale;
   const globalDiscountPct = Number(venta.descuento_global || 0);
   const globalDiscountAmount = subtotalAtSale * (globalDiscountPct / 100);
@@ -229,7 +245,13 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
 
   // Calculate box height dynamically
   let boxH = 12; // base padding
-  boxH += 8; // subtotal line
+  if (totalImpuestos > 0) {
+    boxH += 8; // subtotal bruto line
+    boxH += 8; // IVA line
+  } else {
+    boxH += 8; // standard subtotal line
+  }
+  
   if (itemDiscountTotal > 0) boxH += 8;
   if (hasGlobalDiscount) boxH += 8;
   boxH += 4; // divider space
@@ -240,14 +262,27 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
 
   let lineY = cursorY + 6;
 
-  // Subtotal (at base prices)
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...textMuted);
-  doc.text('Subtotal Bruto:', totalsX, lineY);
-  doc.setTextColor(...textDark);
-  doc.text(formatCOP(subtotalAtBase), totalsX + totalsW, lineY, { align: 'right' });
-  lineY += 8;
+
+  if (totalImpuestos > 0) {
+    doc.text('Subtotal Bruto:', totalsX, lineY);
+    doc.setTextColor(...textDark);
+    doc.text(formatCOP(subtotalBruto), totalsX + totalsW, lineY, { align: 'right' });
+    lineY += 8;
+    
+    doc.setTextColor(...textMuted);
+    doc.text('Total IVA:', totalsX, lineY);
+    doc.setTextColor(...textDark);
+    doc.text(formatCOP(totalImpuestos), totalsX + totalsW, lineY, { align: 'right' });
+    lineY += 8;
+  } else {
+    doc.text('Subtotal:', totalsX, lineY);
+    doc.setTextColor(...textDark);
+    doc.text(formatCOP(subtotalAtBase), totalsX + totalsW, lineY, { align: 'right' });
+    lineY += 8;
+  }
 
   // Item-level discounts
   if (itemDiscountTotal > 0) {

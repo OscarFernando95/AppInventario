@@ -31,6 +31,18 @@ const Producto = sequelize.define('Producto', {
   precio_unitario: {
     type: DataTypes.DECIMAL(10, 2),
     allowNull: false,
+  },
+  porcentaje_iva: {
+    type: DataTypes.DECIMAL(5, 2),
+    defaultValue: 19.00,
+  },
+  unidad_medida: {
+    type: DataTypes.STRING,
+    defaultValue: '94', // 94=Unidad
+  },
+  codigo_estandar: {
+    type: DataTypes.STRING,
+    allowNull: true,
   }
 }, {
   tableName: 'productos',

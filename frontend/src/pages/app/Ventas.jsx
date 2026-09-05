@@ -19,7 +19,7 @@ const Ventas = () => {
   const [activeTab, setActiveTab] = useState('P'); // 'P' or 'S'
   const [viewDetalle, setViewDetalle] = useState(null);
   
-  const [formData, setFormData] = useState({ clienteId: '', detalles: [] });
+  const [formData, setFormData] = useState({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' });
   const [cartItem, setCartItem] = useState({ tipo: 'P', itemId: '', cantidad: 1, precio_unitario: 0 });
   const [activeDiscountIdx, setActiveDiscountIdx] = useState(null);
   const [globalDiscount, setGlobalDiscount] = useState(0);
@@ -174,6 +174,8 @@ const Ventas = () => {
         clienteId: parseInt(formData.clienteId),
         total: getTotal(),
         descuento_global: globalDiscount || 0,
+        forma_pago: formData.forma_pago,
+        medio_pago: formData.medio_pago,
         detalles: formData.detalles.map(d => ({ 
           productoId: d.productoId, 
           servicioId: d.servicioId, 
@@ -183,7 +185,7 @@ const Ventas = () => {
         }))
       });
       setShowModal(false);
-      setFormData({ clienteId: '', detalles: [] });
+      setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' });
       setClientSearch('');
       setItemSearch('');
       setGlobalDiscount(0);
@@ -212,7 +214,7 @@ const Ventas = () => {
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">Registro POS de Ventas</h2>
           <p className="text-slate-500 mt-1">Caja registradora. Factura rápido filtrando productos o escaneando clientes.</p>
         </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setFormData({ clienteId: '', detalles: [] }); setGlobalDiscount(0); setShowNewClient(false); setClientSearch(''); setItemSearch(''); setShowModal(true); }}>
+        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' }); setGlobalDiscount(0); setShowNewClient(false); setClientSearch(''); setItemSearch(''); setShowModal(true); }}>
           <Tag className="w-5 h-5" /> Iniciar POS (Caja)
         </button>
       </div>
@@ -450,6 +452,28 @@ const Ventas = () => {
                        {[5,10,15].map(pct => (
                          <button key={pct} type="button" className={`px-2 py-1 text-xs font-black rounded border transition-colors ${globalDiscount === pct ? 'bg-brand-500 text-white border-brand-600' : 'bg-brand-50 border-brand-200 text-brand-600 hover:bg-brand-100'}`} onClick={() => setGlobalDiscount(pct)}>{pct}%</button>
                        ))}
+                     </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-slate-200/60 font-sans">
+                     <div className="grid grid-cols-2 gap-2">
+                       <div>
+                         <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Forma de Pago</label>
+                         <select className="input-field rounded-lg text-xs font-bold bg-white" value={formData.forma_pago} onChange={e=>setFormData({...formData, forma_pago: e.target.value})}>
+                           <option value="1">Contado</option>
+                           <option value="2">Crédito</option>
+                         </select>
+                       </div>
+                       <div>
+                         <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Medio (DIAN)</label>
+                         <select className="input-field rounded-lg text-xs font-bold bg-white" value={formData.medio_pago} onChange={e=>setFormData({...formData, medio_pago: e.target.value})}>
+                           <option value="10">Efectivo</option>
+                           <option value="42">Consignación Bancaria</option>
+                           <option value="48">Tarjeta Crédito</option>
+                           <option value="49">Tarjeta Débito</option>
+                           <option value="47">Transferencia Débito</option>
+                         </select>
+                       </div>
                      </div>
                   </div>
 

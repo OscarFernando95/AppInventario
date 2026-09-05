@@ -1,46 +1,40 @@
-const bcrypt = require('bcrypt');
-const { sequelize, Role, Usuario, Modulo } = require('../models');
-require('dotenv').config({ path: require('path').resolve(__dirname, '../../.env') });
+'use strict';
 
-const initDB = async () => {
-  try {
-    await sequelize.authenticate();
-    await sequelize.sync({ force: true }); // PRECAUCIÓN: Elimina las tablas para recrearlas
-    console.log('Base de datos sincronizada y limpia.');
+/**
+ * Prepara la base de datos desde cero, SIN destruir datos:
+ *   1. Aplica todas las migraciones pendientes   (equivale a: npm run migrate)
+ *   2. Ejecuta todos los seeders                  (equivale a: npm run seed)
+ *
+ * Sustituye al antiguo `sequelize.sync({ force: true })`, que borraba todas las
+ * tablas en cada ejecución. Este script es idempotente: las migraciones ya
+ * aplicadas se saltan y el seeder inicial no duplica datos.
+ *
+ * Uso:  npm run initdb
+ */
 
-    // Crear Roles base
-    const backAdmin = await Role.create({ nombre: 'Súper Administrador', tipo: 'BACKOFFICE_ADMIN' });
-    const frontAdmin = await Role.create({ nombre: 'Administrador de Empresa', tipo: 'FRONT_ADMIN' });
-    const frontUser = await Role.create({ nombre: 'Usuario Operativo', tipo: 'FRONT_USER' });
+const path = require('path');
+const { execFileSync } = require('child_process');
 
-    console.log('Roles creados.');
+const backendRoot = path.resolve(__dirname, '../..');
+const sequelizeCli = require.resolve('sequelize-cli/lib/sequelize');
 
-    await Modulo.bulkCreate([
-      { id: 1, nombre_codigo: 'Inventario' },
-      { id: 2, nombre_codigo: 'Ventas' },
-      { id: 3, nombre_codigo: 'Compras' },
-      { id: 4, nombre_codigo: 'Proveedores' },
-      { id: 5, nombre_codigo: 'Informes' }
-    ]);
-    console.log('Módulos semilla creados.');
+function run(label, args) {
+  console.log(`\n== ${label} ==`);
+  execFileSync(process.execPath, [sequelizeCli, ...args], {
+    cwd: backendRoot,        // aquí vive .sequelizerc
+    stdio: 'inherit',
+    env: process.env,
+  });
+}
 
-    // Crear Usuario Admin BackOffice
-    const hash = await bcrypt.hash('Admin*123', 10);
-    await Usuario.create({
-      empresaId: null, // Global, sin empresa específica
-      rolId: backAdmin.id,
-      nombre: 'Súper Administrador',
-      username: 'admin',
-      contrasena_hash: hash,
-      estado: true
-    });
-
-    console.log('Usuario SuperAdmin creado correctamente (admin / Admin*123).');
-    process.exit(0);
-  } catch (error) {
-    console.error('Error inicializando DB:', error);
-    process.exit(1);
-  }
-};
-
-initDB();
+try {
+  run('Aplicando migraciones', ['db:migrate']);
+  run('Ejecutando seeders', ['db:seed:all']);
+  console.log('\n✔ Base de datos lista (migraciones + datos iniciales).');
+  console.log('  Usuario administrador: admin / Admin*123');
+  process.exit(0);
+} catch (err) {
+  console.error('\n✖ Error preparando la base de datos.');
+  console.error('  Revisa la conexión (DATABASE_URL / DB_*) y vuelve a intentar.');
+  process.exit(1);
+}

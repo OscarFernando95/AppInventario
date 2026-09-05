@@ -1,19 +1,16 @@
-const { Sequelize } = require('sequelize');
-require('dotenv').config();
+/**
+ * Instancia de Sequelize usada por toda la aplicación.
+ *
+ * Toda la configuración de conexión (dialecto, DATABASE_URL vs variables sueltas,
+ * SSL para Supabase, límites de tiempo, pool) vive en ./connection.js, que es la
+ * misma fuente que consume sequelize-cli para migraciones y seeders.
+ */
 
-const sequelize = new Sequelize(
-  process.env.DB_NAME,
-  process.env.DB_USER,
-  process.env.DB_PASSWORD,
-  {
-    host: process.env.DB_HOST,
-    port: process.env.DB_PORT || 3306,
-    dialect: 'mysql',
-    logging: false, // Set to console.log to see SQL queries
-  }
-);
+const { createSequelize } = require('./connection');
 
-// Connection test
+const sequelize = createSequelize();
+
+// Test de conexión (no bloqueante).
 sequelize.authenticate()
   .then(() => console.log('Base de datos conectada correctamente.'))
   .catch(err => console.error('Error al conectar a la base de datos:', err));

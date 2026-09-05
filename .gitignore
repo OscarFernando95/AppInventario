@@ -11,6 +11,14 @@ frontend/dist/
 frontend/dist-ssr/
 backend/dist/
 
+# Dumps de backup de Postgres (se generan en el servidor, no se versionan)
+backups/dumps/*
+!backups/dumps/.gitkeep
+
+# Override de desarrollo (expone el puerto de Postgres al host). Nunca debe
+# llegar al servidor del cliente.
+docker-compose.override.yml
+
 # Logs
 *.log
 npm-debug.log*

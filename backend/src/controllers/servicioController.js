@@ -11,10 +11,13 @@ exports.getServicios = async (req, res) => {
 
 exports.createServicio = async (req, res) => {
   try {
-    const { nombre, descripcion, precio } = req.body;
+    const { nombre, descripcion, precio, porcentaje_iva, unidad_medida, codigo_estandar } = req.body;
     const servicio = await Servicio.create({
       empresaId: req.empresaId,
-      nombre, descripcion, precio
+      nombre, descripcion, precio,
+      porcentaje_iva: porcentaje_iva || 19,
+      unidad_medida: unidad_medida || 'ZZ',
+      codigo_estandar
     });
     res.status(201).json(servicio);
   } catch (error) {
@@ -25,10 +28,10 @@ exports.createServicio = async (req, res) => {
 exports.updateServicio = async (req, res) => {
   try {
     const { id } = req.params;
-    const { nombre, descripcion, precio } = req.body;
+    const { nombre, descripcion, precio, porcentaje_iva, unidad_medida, codigo_estandar } = req.body;
     const servicio = await Servicio.findOne({ where: { id, empresaId: req.empresaId } });
     if (!servicio) return res.status(404).json({ error: 'Servicio no encontrado' });
-    await servicio.update({ nombre, descripcion, precio });
+    await servicio.update({ nombre, descripcion, precio, porcentaje_iva, unidad_medida, codigo_estandar });
     res.json(servicio);
   } catch (error) {
     res.status(500).json({ error: 'Error al actualizar servicio' });

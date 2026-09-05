@@ -32,6 +32,50 @@ const Venta = sequelize.define('Venta', {
     type: DataTypes.DECIMAL(5, 2),
     allowNull: true,
     defaultValue: 0,
+  },
+  forma_pago: {
+    type: DataTypes.STRING,
+    defaultValue: '1', // 1=Contado, 2=Crédito
+  },
+  medio_pago: {
+    type: DataTypes.STRING,
+    defaultValue: '10', // 10=Efectivo
+  },
+  fecha_vencimiento: {
+    type: DataTypes.DATEONLY,
+    allowNull: true,
+  },
+  subtotal_bruto: {
+    type: DataTypes.DECIMAL(10, 2),
+    defaultValue: 0,
+  },
+  total_impuestos: {
+    type: DataTypes.DECIMAL(10, 2),
+    defaultValue: 0,
+  },
+  total_descuentos: {
+    type: DataTypes.DECIMAL(10, 2),
+    defaultValue: 0,
+  },
+  estado_fe: {
+    type: DataTypes.STRING,
+    defaultValue: 'NO_EMITIDA', // NO_EMITIDA, EMITIDA, RECHAZADA
+  },
+  cufe: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  qr_data: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+  },
+  pdf_url: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
+  xml_url: {
+    type: DataTypes.STRING,
+    allowNull: true,
   }
 }, {
   tableName: 'ventas',

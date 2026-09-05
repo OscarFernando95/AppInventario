@@ -8,7 +8,10 @@ const Inventario = () => {
   const [productos, setProductos] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  const [formData, setFormData] = useState({ codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '' });
+  const [formData, setFormData] = useState({ 
+    codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
+    porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: ''
+  });
 
   const fetchProductos = async () => {
     setIsLoading(true);
@@ -26,7 +29,10 @@ const Inventario = () => {
     try {
       await api.post('/productos', { ...formData, stock_actual: parseInt(formData.stock_actual) || 0 });
       setShowModal(false);
-      setFormData({ codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '' });
+      setFormData({ 
+        codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
+        porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: ''
+      });
       fetchProductos();
     } catch (err) { alert('Error al crear producto'); }
   };
@@ -38,7 +44,13 @@ const Inventario = () => {
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">Catálogo e Inventario</h2>
           <p className="text-slate-500 mt-1">Administra los productos base. El stock aumenta vía Compras.</p>
         </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => setShowModal(true)}>
+        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => {
+          setFormData({ 
+            codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
+            porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: ''
+          });
+          setShowModal(true);
+        }}>
           <Plus className="w-5 h-5" /> Nuevo Producto
         </button>
       </div>
@@ -83,14 +95,43 @@ const Inventario = () => {
 
       {showModal && createPortal(
         <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm flex flex-col items-center justify-center p-4 z-[9999] animate-fade-in sm:p-6 overflow-y-auto">
-          <div className="bg-white rounded-[2rem] p-8 sm:p-10 w-full max-w-md shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] relative my-auto">
+          <div className="bg-white rounded-[2rem] p-8 sm:p-10 w-full max-w-lg shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] relative my-auto">
             <h3 className="text-2xl font-bold mb-6 text-slate-800 border-b border-slate-100 pb-4">Crear Artículo</h3>
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Código SKU</label><input required className="input-field rounded-xl" placeholder="PROD-001" value={formData.codigo} onChange={e => setFormData({...formData, codigo: e.target.value})}/></div>
-              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Descripción</label><input required className="input-field rounded-xl" placeholder="Lapto Gamer ZX" value={formData.nombre_producto} onChange={e => setFormData({...formData, nombre_producto: e.target.value})}/></div>
-              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Precio de Venta ($)</label><input type="number" step="0.01" required className="input-field rounded-xl" placeholder="1500.00" value={formData.precio_unitario} onChange={e => setFormData({...formData, precio_unitario: e.target.value})}/></div>
-              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Stock Físico Inicial</label><input type="number" required className="input-field rounded-xl" placeholder="50" value={formData.stock_actual} onChange={e => setFormData({...formData, stock_actual: e.target.value})}/></div>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Código SKU</label><input required className="input-field rounded-xl" placeholder="PROD-001" value={formData.codigo || ''} onChange={e => setFormData({...formData, codigo: e.target.value})}/></div>
+                <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Código Estandar</label><input className="input-field rounded-xl" placeholder="999999" value={formData.codigo_estandar || ''} onChange={e => setFormData({...formData, codigo_estandar: e.target.value})}/></div>
+              </div>
+              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Descripción</label><input required className="input-field rounded-xl" placeholder="Laptop Gamer ZX" value={formData.nombre_producto || ''} onChange={e => setFormData({...formData, nombre_producto: e.target.value})}/></div>
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Precio de Venta ($)</label><input type="number" step="0.01" required className="input-field rounded-xl" placeholder="1500.00" value={formData.precio_unitario || ''} onChange={e => setFormData({...formData, precio_unitario: e.target.value})}/></div>
+                <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Stock Físico Inicial</label><input type="number" required className="input-field rounded-xl" placeholder="50" value={formData.stock_actual || ''} onChange={e => setFormData({...formData, stock_actual: e.target.value})}/></div>
+              </div>
               
+              <div className="border-t border-slate-100 pt-3 mt-3">
+                <h4 className="font-bold text-brand-600 text-sm mb-3">Datos DIAN (Facturación Electrónica)</h4>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">% IVA Aplicable</label>
+                    <select className="input-field rounded-xl" value={formData.porcentaje_iva || '19'} onChange={e => setFormData({...formData, porcentaje_iva: e.target.value})}>
+                      <option value="19">19% (General)</option>
+                      <option value="5">5% (Reducido)</option>
+                      <option value="0">0% (Exento/Excluido)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">Unidad de Medida (UBL)</label>
+                    <select className="input-field rounded-xl" value={formData.unidad_medida || '94'} onChange={e => setFormData({...formData, unidad_medida: e.target.value})}>
+                      <option value="94">94 - Unidad</option>
+                      <option value="KGM">KGM - Kilogramos</option>
+                      <option value="LTR">LTR - Litros</option>
+                      <option value="MTK">MTK - Metros Cuadrados</option>
+                      <option value="HUR">HUR - Hora</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
               <div className="flex gap-3 justify-end mt-8 pt-4 border-t border-slate-100">
                 <button type="button" className="btn-secondary rounded-xl" onClick={() => setShowModal(false)}>Cancelar</button>
                 <button type="submit" className="btn-primary rounded-xl px-6">Guardar en Base</button>

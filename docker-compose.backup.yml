@@ -1,0 +1,27 @@
+# Servicio opcional de backups automáticos. Se levanta agregando este archivo
+# al comando de docker compose, por ejemplo:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.backup.yml up -d
+#
+# Se mantiene separado del docker-compose.yml principal para que el stack base
+# (los 4 servicios pedidos: db, backend, frontend, nginx) quede intacto y el
+# backup sea un extra opcional que se activa a propósito, no algo que arranca
+# siempre sin que el cliente lo sepa.
+services:
+  backup:
+    build:
+      context: ./backups
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      DB_HOST: db
+      DB_PORT: 5432
+      RETENTION_DAYS: 14
+    volumes:
+      - ./backups/dumps:/dumps
+    networks:
+      - appnet

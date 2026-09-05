@@ -11,10 +11,14 @@ exports.getClientes = async (req, res) => {
 
 exports.createCliente = async (req, res) => {
   try {
-    const { nombre, documento, email, telefono, direccion } = req.body;
+    const { 
+      nombre, documento, email, telefono, direccion,
+      tipo_documento, dv, tipo_persona, regimen_fiscal, municipio_dane, departamento_dane
+    } = req.body;
     const cliente = await Cliente.create({
       empresaId: req.empresaId,
-      nombre, documento, email, telefono, direccion
+      nombre, documento, email, telefono, direccion,
+      tipo_documento, dv, tipo_persona, regimen_fiscal, municipio_dane, departamento_dane
     });
     res.status(201).json(cliente);
   } catch (error) {
@@ -25,10 +29,16 @@ exports.createCliente = async (req, res) => {
 exports.updateCliente = async (req, res) => {
   try {
     const { id } = req.params;
-    const { nombre, documento, email, telefono, direccion } = req.body;
+    const { 
+      nombre, documento, email, telefono, direccion,
+      tipo_documento, dv, tipo_persona, regimen_fiscal, municipio_dane, departamento_dane
+    } = req.body;
     const cliente = await Cliente.findOne({ where: { id, empresaId: req.empresaId } });
     if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
-    await cliente.update({ nombre, documento, email, telefono, direccion });
+    await cliente.update({ 
+      nombre, documento, email, telefono, direccion,
+      tipo_documento, dv, tipo_persona, regimen_fiscal, municipio_dane, departamento_dane
+    });
     res.json(cliente);
   } catch (error) {
     res.status(500).json({ error: 'Error al actualizar cliente' });
