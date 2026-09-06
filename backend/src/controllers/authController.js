@@ -1,56 +1,89 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { Usuario, Role, Empresa, Modulo } = require('../models');
+const { ValidationError } = require('../utils/errors');
+const { hashPassword, BCRYPT_ROUNDS } = require('../utils/password');
+const logger = require('../utils/logger');
+
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
+
+// Hash "señuelo": se compara contra él cuando el usuario no existe, para que el
+// tiempo de respuesta no revele si el usuario es válido (anti-enumeración).
+const DUMMY_HASH = bcrypt.hashSync('dummy-password-para-timing-constante', BCRYPT_ROUNDS);
+
+const CREDENCIALES_INVALIDAS = 'Credenciales inválidas';
 
 exports.login = async (req, res) => {
-  try {
-    const { username, contrasena } = req.body;
-    
-    const usuario = await Usuario.findOne({ 
-      where: { username },
-      include: [
-        { model: Role },
-        { model: Empresa, through: { attributes: [] }, include: [{ model: Modulo, through: { attributes: [] } }] }
-      ]
-    });
+  const { username, contrasena } = req.body;
 
-    if (!usuario || !usuario.estado) {
-      return res.status(404).json({ error: 'Usuario no encontrado o inactivo' });
-    }
+  const usuario = await Usuario.findOne({
+    where: { username },
+    include: [
+      { model: Role },
+      { model: Empresa, through: { attributes: [] }, include: [{ model: Modulo, through: { attributes: [] } }] }
+    ]
+  });
 
-    const isValid = await bcrypt.compare(contrasena, usuario.contrasena_hash);
-    if (!isValid) {
-      return res.status(401).json({ error: 'Contraseña incorrecta' });
-    }
+  // Siempre se ejecuta un bcrypt.compare (contra el hash real o el señuelo).
+  const hashParaComparar = usuario ? usuario.contrasena_hash : DUMMY_HASH;
+  const passwordOk = await bcrypt.compare(contrasena, hashParaComparar);
 
-    const token = jwt.sign(
-      { 
-        id: usuario.id, 
-        rolId: usuario.rolId,
-        tipoRol: usuario.Role.tipo 
-      }, 
-      process.env.JWT_SECRET, 
-      { expiresIn: '8h' }
-    );
-
-    res.json({
-      mensaje: 'Login exitoso',
-      token,
-      usuario: {
-        id: usuario.id,
-        nombre: usuario.nombre,
-        username: usuario.username,
-        rol: usuario.Role.tipo,
-        empresas: usuario.Empresas ? usuario.Empresas.map(emp => ({
-          id: emp.id,
-          nombre: emp.nombre,
-          modulos: emp.Modulos ? emp.Modulos.map(m => m.nombre_codigo) : []
-        })) : []
-      }
-    });
-
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Error en el servidor' });
+  if (!usuario || !usuario.estado || !passwordOk) {
+    logger.warn('login_fail', { username });
+    return res.status(401).json({ error: CREDENCIALES_INVALIDAS });
   }
+
+  const token = jwt.sign(
+    { id: usuario.id, rolId: usuario.rolId, tipoRol: usuario.Role.tipo },
+    process.env.JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN }
+  );
+
+  logger.info('login_ok', { userId: usuario.id, rol: usuario.Role.tipo });
+
+  res.json({
+    mensaje: 'Login exitoso',
+    token,
+    usuario: {
+      id: usuario.id,
+      nombre: usuario.nombre,
+      username: usuario.username,
+      rol: usuario.Role.tipo,
+      mustChangePassword: usuario.must_change_password,
+      empresas: usuario.Empresas ? usuario.Empresas.map(emp => ({
+        id: emp.id,
+        nombre: emp.nombre,
+        modulos: emp.Modulos ? emp.Modulos.map(m => m.nombre_codigo) : []
+      })) : []
+    }
+  });
+};
+
+/**
+ * Cambio de contraseña del propio usuario autenticado. Verifica la contraseña
+ * actual, aplica la política de complejidad y limpia el flag
+ * must_change_password.
+ */
+exports.changePassword = async (req, res) => {
+  const { actual, nueva } = req.body;
+
+  const usuario = await Usuario.findByPk(req.userId);
+  if (!usuario || !usuario.estado) {
+    return res.status(401).json({ error: 'Sesión inválida' });
+  }
+
+  const actualOk = await bcrypt.compare(actual, usuario.contrasena_hash);
+  if (!actualOk) {
+    throw new ValidationError('La contraseña actual no es correcta.');
+  }
+  if (actual === nueva) {
+    throw new ValidationError('La nueva contraseña debe ser distinta de la actual.');
+  }
+
+  usuario.contrasena_hash = await hashPassword(nueva); // valida la política
+  usuario.must_change_password = false;
+  await usuario.save();
+
+  logger.info('password_changed', { userId: usuario.id });
+  res.json({ mensaje: 'Contraseña actualizada' });
 };

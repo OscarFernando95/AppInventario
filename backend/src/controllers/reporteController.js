@@ -58,6 +58,7 @@ exports.getDashboardData = async (req, res) => {
       productosBajoStock
     });
   } catch (error) {
-    res.status(500).json({ error: 'Error al generar dashboard: ' + error.message });
+    console.error('DASHBOARD ERROR:', error);
+    res.status(500).json({ error: 'Error al generar el dashboard' });
   }
 };

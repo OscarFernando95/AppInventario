@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const informeController = require('../controllers/informeController');
 const { verifyToken } = require('../middlewares/auth');
+const asyncHandler = require('../middlewares/asyncHandler');
+const validate = require('../middlewares/validate');
+const { informeQuery } = require('../schemas/informeSchemas');
 
 router.use(verifyToken);
 // Validación Multi-Tenant
@@ -10,6 +13,6 @@ router.use((req, res, next) => {
   next();
 });
 
-router.get('/', informeController.getInforme);
+router.get('/', validate({ query: informeQuery }), asyncHandler(informeController.getInforme));
 
 module.exports = router;

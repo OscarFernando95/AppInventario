@@ -24,8 +24,10 @@ const LoginProvider = () => {
       const { token, usuario } = response.data;
       
       login(usuario, token);
-      
-      if (usuario.rol === 'BACKOFFICE_ADMIN') {
+
+      if (usuario.mustChangePassword) {
+        navigate('/cambiar-password', { replace: true });
+      } else if (usuario.rol === 'BACKOFFICE_ADMIN') {
         navigate('/backoffice');
       } else if (usuario.empresas?.length > 1) {
         setTempUser(usuario);
@@ -80,8 +82,7 @@ const LoginProvider = () => {
               <div className="w-16 h-16 bg-gradient-to-tr from-brand-600 to-brand-400 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-lg shadow-brand-500/30">
                 <Lock className="w-8 h-8 text-white stroke-[1.5]" />
               </div>
-              <h1 className="text-3xl font-extrabold tracking-tight text-white mb-2">AppInventario</h1>
-              <p className="text-slate-400 text-sm">Portal de Acceso Corporativo</p>
+              <h1 className="text-3xl font-extrabold tracking-tight text-white mb-2">Gestión de Inventario</h1>
             </div>
 
             {error && (

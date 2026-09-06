@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 
 import LoginProvider from './pages/LoginProvider';
+import CambiarPassword from './pages/CambiarPassword';
 import BackOfficeLayout from './layouts/BackOfficeLayout';
 import FrontLayout from './layouts/FrontLayout';
 import DashboardAdmin from './pages/backoffice/DashboardAdmin';
@@ -21,10 +22,19 @@ import Informes from './pages/app/Informes';
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { isAuthenticated, user } = useAuthStore();
   if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (user?.mustChangePassword) return <Navigate to="/cambiar-password" replace />;
   if (allowedRoles && !allowedRoles.includes(user?.rol)) {
     return <Navigate to="/" replace />;
   }
   return children;
+};
+
+// La pantalla de cambio de contraseña solo requiere sesión iniciada (se usa
+// también cuando el usuario está obligado a cambiarla y aún no puede entrar).
+const CambiarPasswordGuard = () => {
+  const { isAuthenticated } = useAuthStore();
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  return <CambiarPassword />;
 };
 
 const App = () => {
@@ -32,7 +42,8 @@ const App = () => {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginProvider />} />
-        
+        <Route path="/cambiar-password" element={<CambiarPasswordGuard />} />
+
         <Route 
           path="/backoffice" 
           element={

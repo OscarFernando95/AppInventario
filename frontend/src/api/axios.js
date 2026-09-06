@@ -22,7 +22,10 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401 || error.response?.status === 403) {
+    // Solo un 401 (sesión inválida/expirada) cierra la sesión. Un 403
+    // (sin permiso para ese recurso o esa empresa) NO debe desloguear:
+    // se deja que la vista muestre el error.
+    if (error.response?.status === 401) {
       useAuthStore.getState().logout();
     }
     return Promise.reject(error);

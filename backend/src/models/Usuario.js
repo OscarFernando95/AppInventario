@@ -27,6 +27,11 @@ const Usuario = sequelize.define('Usuario', {
   estado: {
     type: DataTypes.BOOLEAN,
     defaultValue: true,
+  },
+  must_change_password: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
   }
 }, {
   tableName: 'usuarios',

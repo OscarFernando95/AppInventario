@@ -90,7 +90,13 @@ const FrontLayout = () => {
             <span className="text-sm font-bold text-slate-800 truncate">{user?.nombre}</span>
             <span className="text-xs font-semibold text-brand-600 tracking-wide mt-0.5">{user?.rol === 'FRONT_ADMIN' ? 'ADMINISTRADOR' : 'USUARIO'}</span>
           </div>
-          <button 
+          <Link
+            to="/cambiar-password"
+            className="w-full mb-2 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-500 hover:text-slate-800 hover:bg-slate-50 transition-all text-xs font-semibold shadow-sm"
+          >
+            <Settings className="w-3.5 h-3.5" /> Cambiar contraseña
+          </Link>
+          <button
             onClick={handleLogout}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white border border-slate-200 text-slate-600 hover:bg-red-50 hover:text-red-600 hover:border-red-100 transition-all text-sm font-bold shadow-sm"
           >
