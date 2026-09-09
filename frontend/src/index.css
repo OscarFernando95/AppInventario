@@ -25,16 +25,66 @@
 }
 
 @layer components {
+  /* Botones ------------------------------------------------------------------
+     El color de reposo es brand-700 (blanco sobre #0369a1 = 5.93:1, cumple AA)
+     y el hover ACLARA a brand-600 (4.10:1). Antes era al revés: brand-600 en
+     reposo y brand-500 en hover, que bajaba el contraste a 2.77:1 justo en el
+     estado que indica "esto es accionable".
+     El foco usa focus-visible para no dibujar el anillo en cada click de ratón. */
+  .btn-base {
+    @apply inline-flex items-center justify-center px-4 py-2 font-medium rounded-lg shadow-sm
+           transition-all active:scale-95
+           focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100;
+  }
   .btn-primary {
-    @apply px-4 py-2 bg-brand-600 text-white font-medium rounded-lg shadow-sm hover:bg-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply btn-base bg-brand-700 text-white hover:bg-brand-600 focus-visible:ring-brand-600;
   }
   .btn-secondary {
-    @apply px-4 py-2 bg-white text-slate-700 font-medium rounded-lg border border-slate-300 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 transition-all active:scale-95;
+    @apply btn-base bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 focus-visible:ring-brand-600;
   }
+  /* Confirmación de operaciones que mueven stock o dinero (compras, recepción).
+     emerald-700 y no emerald-600: blanco sobre emerald-600 es 3.77:1 y no pasa AA. */
+  .btn-success {
+    @apply btn-base bg-emerald-700 text-white hover:bg-emerald-600 focus-visible:ring-emerald-600;
+  }
+  .btn-danger {
+    @apply btn-base bg-red-700 text-white hover:bg-red-600 focus-visible:ring-red-600;
+  }
+  /* Botón de icono sin texto. Siempre necesita aria-label en el call site. */
+  .btn-icon {
+    @apply inline-flex items-center justify-center p-2 rounded-xl bg-slate-50 text-slate-500
+           hover:text-brand-700 hover:bg-brand-50 transition-colors
+           focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-1;
+  }
+
+  /* Campos -------------------------------------------------------------------
+     rounded-xl y no rounded-md: los 67 call sites pisaban el radio del token
+     con `input-field rounded-xl`, así que el valor real del sistema era xl. */
   .input-field {
-    @apply block w-full rounded-md border-slate-300 shadow-sm focus:border-brand-500 focus:ring-brand-500 sm:text-sm px-3 py-2 border outline-none transition-shadow;
+    @apply block w-full rounded-xl border border-slate-300 shadow-sm px-3 py-2 sm:text-sm
+           outline-none transition-shadow
+           focus:border-brand-600 focus:ring-1 focus:ring-brand-600
+           disabled:bg-slate-50 disabled:text-slate-500 disabled:cursor-not-allowed;
   }
+
+  /* Campos sobre fondo oscuro (pantallas de login y cambio de contraseña).
+     El placeholder sube de slate-600 a slate-500: sobre dark-900/50 el anterior
+     era prácticamente invisible. */
+  .input-dark {
+    @apply block w-full px-4 py-3 rounded-xl bg-dark-900/50 border border-dark-700 text-white
+           placeholder-slate-500 outline-none transition-all
+           focus:ring-2 focus:ring-brand-400/60 focus:border-brand-400;
+  }
+  .btn-dark {
+    @apply btn-base w-full py-3 text-slate-100 bg-dark-900/50 border border-dark-700
+           hover:bg-dark-800 focus-visible:ring-brand-400 focus-visible:ring-offset-dark-800;
+  }
+
+  /* Superficies --------------------------------------------------------------
+     Un único radio para "superficie grande" (24px). Antes convivían
+     rounded-3xl (24px) y rounded-[2rem] (32px) para el mismo rol. */
   .card-container {
-    @apply bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden;
+    @apply bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden;
   }
 }

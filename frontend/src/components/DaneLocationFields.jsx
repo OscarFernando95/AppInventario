@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import SearchableSelect from './SearchableSelect';
+import Field from './ui/Field';
 import { titleCase } from '../utils/nit';
 import { useDepartamentos, useMunicipios } from '../hooks/useCatalogos';
 
@@ -45,14 +46,12 @@ const DaneLocationFields = ({ departamento = '', municipio = '', onChange, class
 
   return (
     <div className={`grid grid-cols-1 sm:grid-cols-2 gap-2 ${className}`}>
-      <div>
-        <label className="block text-sm font-semibold text-slate-700 mb-1.5">Departamento</label>
+      <Field label="Departamento">
         <SearchableSelect options={deptoOptions} value={departamento} onChange={handleDepartamento} placeholder="Buscar departamento…" />
-      </div>
-      <div>
-        <label className="block text-sm font-semibold text-slate-700 mb-1.5">Ciudad / Municipio</label>
+      </Field>
+      <Field label="Ciudad / Municipio">
         <SearchableSelect options={muniOptions} value={municipio} onChange={handleMunicipio} placeholder="Buscar municipio…" />
-      </div>
+      </Field>
     </div>
   );
 };

@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { UserPlus, Shield, Mail, Search, Trash2, User } from 'lucide-react';
+import { UserPlus, Search, Users as UsersIcon } from 'lucide-react';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
+import PageHeader from '../../components/ui/PageHeader';
+import Field from '../../components/ui/Field';
+import { TableCard, THead, Th, Tr, Td } from '../../components/ui/Table';
+import { TableState } from '../../components/ui/DataState';
 
 const EMPTY = { nombre: '', username: '', contrasena: '', rolId: 3 }; // 3 = FRONT_USER
 
@@ -12,8 +16,21 @@ const AdminUsuarios = () => {
   const queryClient = useQueryClient();
   const [formData, setFormData] = useState(EMPTY);
   const [formError, setFormError] = useState(null);
+  const [busqueda, setBusqueda] = useState('');
 
-  const { data: usuarios = [] } = useEmpresaQuery(['usuarios-empresa'], '/usuarios');
+  const { data: usuarios = [], isLoading, isError, error, refetch } = useEmpresaQuery(['usuarios-empresa'], '/usuarios');
+
+  // El buscador existía en la UI pero no tenía estado ni onChange: era una caja
+  // de texto que no filtraba nada. Ahora filtra por nombre y username.
+  const filtrados = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    if (!q) return usuarios;
+    return usuarios.filter(
+      (u) =>
+        u.nombre?.toLowerCase().includes(q) ||
+        u.username?.toLowerCase().includes(q)
+    );
+  }, [usuarios, busqueda]);
 
   const crear = useMutation({
     mutationFn: (data) => api.post('/usuarios', data),
@@ -33,139 +50,105 @@ const AdminUsuarios = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h2 className="text-3xl font-black text-slate-800 tracking-tight">Gestión de Personal</h2>
-          <p className="text-slate-500 mt-1">Controla quién tiene acceso al sistema de tu empresa</p>
-        </div>
-        <div className="relative">
-          <Search className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input 
-            type="text" 
-            placeholder="Buscar empleado..."
-            className="pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-500 outline-none w-64 shadow-sm"
-          />
-        </div>
-      </div>
+      <PageHeader
+        title="Gestión de Personal"
+        description="Controla quién tiene acceso al sistema de tu empresa"
+        action={
+          <div className="relative">
+            <label htmlFor="buscar-empleado" className="sr-only">Buscar empleado</label>
+            <Search className="w-5 h-5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" aria-hidden="true" />
+            <input
+              id="buscar-empleado"
+              type="search"
+              placeholder="Buscar empleado…"
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
+              className="input-field pl-10 w-full sm:w-64"
+            />
+          </div>
+        }
+      />
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-        
-        {/* Formulario */}
-        <div className="bg-white rounded-3xl p-8 border border-slate-200 shadow-sm h-fit">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 lg:gap-8">
+        <div className="card-container p-6 sm:p-8 h-fit">
           <div className="flex items-center gap-3 mb-6">
             <div className="w-10 h-10 rounded-xl bg-brand-50 flex items-center justify-center">
-              <UserPlus className="w-5 h-5 text-brand-600" />
+              <UserPlus className="w-5 h-5 text-brand-700" aria-hidden="true" />
             </div>
-            <h3 className="text-xl font-bold text-slate-800">Nuevo Gestor</h3>
+            <h3 className="text-xl font-semibold text-slate-800">Nuevo Gestor</h3>
           </div>
-          
+
           <form onSubmit={handleSubmit} className="space-y-5">
             <FormError message={formError} onDismiss={() => setFormError(null)} />
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Nombre Completo</label>
-              <input
-                type="text"
-                required
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-brand-500 outline-none transition-all"
-                value={formData.nombre}
-                onChange={e => setFormData({...formData, nombre: e.target.value})}
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Nombre de Usuario</label>
-              <div className="relative">
-                <User className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  required
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-brand-500 outline-none transition-all"
-                  value={formData.username}
-                  onChange={e => setFormData({...formData, username: e.target.value})}
-                />
-              </div>
-            </div>
 
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Seña de Acceso</label>
-              <input
-                type="password"
-                required
-                className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-brand-500 outline-none transition-all"
-                value={formData.contrasena}
-                onChange={e => setFormData({...formData, contrasena: e.target.value})}
-              />
-            </div>
+            <Field label="Nombre Completo" required>
+              <input type="text" className="input-field" value={formData.nombre} onChange={(e) => setFormData({ ...formData, nombre: e.target.value })} />
+            </Field>
 
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Nivel de Seguridad</label>
-              <div className="relative">
-                <Shield className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                <select
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-brand-500 outline-none transition-all appearance-none"
-                  value={formData.rolId}
-                  onChange={e => setFormData({...formData, rolId: parseInt(e.target.value)})}
-                >
-                  <option value={3}>Usuario Operativo</option>
-                  <option value={2}>Administrador Delegado</option>
-                </select>
-              </div>
-            </div>
+            <Field label="Nombre de Usuario" required>
+              <input type="text" className="input-field" value={formData.username} onChange={(e) => setFormData({ ...formData, username: e.target.value })} />
+            </Field>
 
-            <button
-              type="submit"
-              className="w-full py-3.5 px-4 mt-2 bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-xl shadow-[0_4px_14px_0_rgba(14,165,233,0.39)] transition-all active:scale-[0.98]"
-            >
-              Dar de Alta
+            <Field label="Seña de Acceso" required>
+              <input type="password" className="input-field" value={formData.contrasena} onChange={(e) => setFormData({ ...formData, contrasena: e.target.value })} />
+            </Field>
+
+            <Field label="Nivel de Seguridad">
+              <select className="input-field" value={formData.rolId} onChange={(e) => setFormData({ ...formData, rolId: parseInt(e.target.value, 10) })}>
+                <option value={3}>Usuario Operativo</option>
+                <option value={2}>Administrador Delegado</option>
+              </select>
+            </Field>
+
+            <button type="submit" disabled={crear.isPending} className="btn-primary w-full py-3 mt-2">
+              {crear.isPending ? 'Creando…' : 'Dar de Alta'}
             </button>
           </form>
         </div>
 
-        {/* Lista de Usuarios */}
-        <div className="xl:col-span-2 bg-white rounded-3xl p-8 border border-slate-200 shadow-sm overflow-hidden">
-          <h3 className="text-xl font-bold text-slate-800 mb-6">Directorio Activo</h3>
-          
-          <div className="overflow-x-auto w-full">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-slate-200 text-slate-500 text-sm">
-                  <th className="pb-3 font-semibold px-4 whitespace-nowrap">Nombre</th>
-                  <th className="pb-3 font-semibold px-4 whitespace-nowrap">Usuario</th>
-                  <th className="pb-3 font-semibold px-4 whitespace-nowrap">Rol</th>
-                  <th className="pb-3 font-semibold px-4 text-right whitespace-nowrap">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {usuarios.map((u, i) => (
-                  <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                    <td className="py-4 px-4 whitespace-nowrap">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-bold text-sm shadow-inner">
-                          {u.nombre.charAt(0).toUpperCase()}
-                        </div>
-                        <span className="font-semibold text-slate-700">{u.nombre}</span>
+        <div className="xl:col-span-2 space-y-3">
+          <h3 className="text-xl font-semibold text-slate-800">Directorio Activo</h3>
+          <TableCard>
+            <THead>
+              <Th>Nombre</Th>
+              <Th>Usuario</Th>
+              <Th>Rol</Th>
+            </THead>
+            <tbody>
+              <TableState
+                colSpan={3}
+                isLoading={isLoading}
+                isError={isError}
+                error={error}
+                onRetry={refetch}
+                isEmpty={filtrados.length === 0}
+                emptyIcon={UsersIcon}
+                emptyTitle={busqueda ? 'Sin coincidencias' : 'Todavía no hay personal registrado'}
+                emptyHint={busqueda ? 'Prueba con otro nombre o usuario.' : 'Crea el primero con el formulario de la izquierda.'}
+              />
+              {filtrados.map((u) => (
+                <Tr key={u.id}>
+                  <Td className="whitespace-nowrap">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 shrink-0 rounded-full bg-brand-100 text-brand-800 flex items-center justify-center font-semibold text-sm">
+                        {u.nombre.charAt(0).toUpperCase()}
                       </div>
-                    </td>
-                    <td className="py-4 px-4 text-slate-500 text-sm font-medium">@{u.username}</td>
-                    <td className="py-4 px-4">
-                      <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                        u.Role?.nombre.includes('Admin') ? 'bg-purple-100 text-purple-700 border border-purple-200' : 'bg-slate-100 text-slate-600 border border-slate-200'
-                      }`}>
-                        {u.Role?.nombre}
-                      </span>
-                    </td>
-                    <td className="py-4 px-4 text-right">
-                      <button className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      <span className="font-medium text-slate-800">{u.nombre}</span>
+                    </div>
+                  </Td>
+                  <Td className="text-slate-500 text-sm whitespace-nowrap">@{u.username}</Td>
+                  <Td>
+                    <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${
+                      u.Role?.nombre?.includes('Admin') ? 'bg-brand-100 text-brand-800' : 'bg-slate-100 text-slate-700'
+                    }`}>
+                      {u.Role?.nombre}
+                    </span>
+                  </Td>
+                </Tr>
+              ))}
+            </tbody>
+          </TableCard>
         </div>
-
       </div>
     </div>
   );

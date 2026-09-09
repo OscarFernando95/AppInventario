@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 
 import LoginProvider from './pages/LoginProvider';
@@ -54,6 +54,24 @@ const CambiarPasswordGuard = () => {
   return <CambiarPassword />;
 };
 
+// Antes era un <div> suelto con "404 - Ruta no encontrada" y sin ninguna forma
+// de volver: el usuario quedaba en un callejón sin salida.
+const NotFound = () => {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const rol = useAuthStore((s) => s.user?.rol);
+  const destino = !isAuthenticated ? '/login' : rol === 'BACKOFFICE_ADMIN' ? '/backoffice' : '/app';
+  return (
+    <div className="flex h-screen w-full flex-col items-center justify-center gap-4 bg-slate-50 px-6 text-center">
+      <p className="text-sm font-semibold uppercase tracking-widest text-slate-500">Error 404</p>
+      <h1 className="text-3xl font-bold text-slate-800">Esta página no existe</h1>
+      <p className="max-w-md text-slate-500">
+        La dirección que abriste no corresponde a ninguna sección de la aplicación.
+      </p>
+      <Link to={destino} className="btn-primary mt-2">Volver al inicio</Link>
+    </div>
+  );
+};
+
 const App = () => {
   return (
     <BrowserRouter>
@@ -95,7 +113,7 @@ const App = () => {
         </Route>
 
         <Route path="/" element={<Navigate to="/login" replace />} />
-        <Route path="*" element={<div className="flex h-screen w-full items-center justify-center bg-slate-50 text-2xl font-light text-slate-500">404 - Ruta no encontrada</div>} />
+        <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
   );

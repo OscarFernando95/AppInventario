@@ -1,5 +1,4 @@
 import { useState, useMemo } from 'react';
-import { createPortal } from 'react-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { PackageOpen, Users, Plus, ShoppingCart, Trash2, Tag, Search, CheckCircle, Truck, UserPlus, X, Box, Wallet, Eye, Receipt } from 'lucide-react';
@@ -8,12 +7,20 @@ import { useAuthStore } from '../../store/authStore';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
+import PageHeader from '../../components/ui/PageHeader';
+import Modal from '../../components/ui/Modal';
+import Field from '../../components/ui/Field';
+import { TableCard, THead, Th, Tr, Td } from '../../components/ui/Table';
+import { TableState } from '../../components/ui/DataState';
 
 const Compras = () => {
   const queryClient = useQueryClient();
   const modulos = useAuthStore((s) => s.activeEmpresa?.modulos) || [];
 
-  const { data: compras = [] } = useEmpresaQuery(['compras'], '/compras');
+  const {
+    data: compras = [], isLoading: cargandoCompras, isError: errorCompras,
+    error: errCompras, refetch: recargarCompras,
+  } = useEmpresaQuery(['compras'], '/compras');
   const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
   const { data: proveedores = [] } = useEmpresaQuery(['proveedores'], '/proveedores', { enabled: modulos.includes('Proveedores') });
   const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
@@ -176,62 +183,67 @@ const Compras = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h2 className="text-3xl font-black text-slate-800 tracking-tight">Registro de Ingresos (Compras)</h2>
-          <p className="text-slate-500 mt-1">Abastece tu inventario o registra gastos operacionales y salidas.</p>
-        </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setFormData({ proveedorId: '', detalles: [] }); setShowNewProv(false); setProvSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); setShowNewProd(false); }}>
-          <ShoppingCart className="w-5 h-5" /> Iniciar Compra
-        </button>
-      </div>
+      <PageHeader
+        title="Registro de Ingresos (Compras)"
+        description="Abastece tu inventario o registra gastos operacionales y salidas."
+        action={
+          <button className="btn-primary gap-2" onClick={() => { setFormData({ proveedorId: '', detalles: [] }); setShowNewProv(false); setProvSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); setShowNewProd(false); }}>
+            <ShoppingCart className="w-5 h-5" aria-hidden="true" /> Iniciar Compra
+          </button>
+        }
+      />
 
-      <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden mt-6">
-        <table className="w-full text-left">
-          <thead className="bg-slate-50/50 border-b border-slate-100">
-            <tr>
-              <th className="px-6 py-4 text-xs font-bold text-slate-500 tracking-wider uppercase">Referencia</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-500 tracking-wider uppercase">Proveedor / Beneficiario</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-500 tracking-wider uppercase text-center">Items (Qty)</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-500 tracking-wider uppercase">Fecha Ingreso</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-500 tracking-wider uppercase text-right">Monto Facturado</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-500 tracking-wider uppercase text-center">Acción</th>
-            </tr>
-          </thead>
-          <tbody>
-            {compras.length === 0 ? (
-              <tr><td colSpan="5" className="text-center py-12 text-slate-400 font-bold">Sin transacciones registradas.</td></tr>
-            ) : compras.map(c => (
-              <tr key={c.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                <td className="px-6 py-4 font-mono text-xs font-bold text-slate-400">#COMP-{c.id.toString().padStart(4, '0')}</td>
-                <td className="px-6 py-4 font-bold text-slate-800 flex items-center gap-2">
-                  <Truck className="w-4 h-4 text-brand-400"/>
+      <TableCard>
+        <THead>
+          <Th>Referencia</Th>
+          <Th>Proveedor / Beneficiario</Th>
+          <Th align="center">Items (Qty)</Th>
+          <Th>Fecha Ingreso</Th>
+          <Th align="right">Monto Facturado</Th>
+          <Th align="center">Acción</Th>
+        </THead>
+        <tbody>
+          <TableState
+            colSpan={6}
+            isLoading={cargandoCompras}
+            isError={errorCompras}
+            error={errCompras}
+            onRetry={recargarCompras}
+            isEmpty={compras.length === 0}
+            emptyIcon={Truck}
+            emptyTitle="Sin transacciones registradas"
+            emptyHint="Registra la primera con «Iniciar Compra»."
+          />
+          {compras.map(c => (
+            <Tr key={c.id}>
+              <Td className="font-mono text-xs text-slate-600 whitespace-nowrap">#COMP-{c.id.toString().padStart(4, '0')}</Td>
+              <Td className="font-medium text-slate-800">
+                <div className="flex items-center gap-2">
+                  <Truck className="w-4 h-4 text-slate-400 shrink-0" aria-hidden="true"/>
                   {c.Proveedor?.nombre || c.Proveedor?.razon_social || 'Gasto Anónimo / Sin Clasificar'}
-                </td>
-                <td className="px-6 py-4 font-bold text-slate-500 text-center">{c.CompraDetalles?.length || 0}</td>
-                <td className="px-6 py-4 font-medium text-slate-500">{new Date(c.fecha).toLocaleString('es-CO')}</td>
-                <td className="px-6 py-4 text-right font-black text-brand-600">
-                  {formatCOP(c.total)}
-                </td>
-                <td className="px-6 py-4 text-center">
-                  <button onClick={() => setViewDetalle(c)} className="p-2 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors" title="Ver Detalle de Compra">
-                     <Eye className="w-5 h-5"/>
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                </div>
+              </Td>
+              <Td align="center" className="text-slate-600">{c.CompraDetalles?.length || 0}</Td>
+              <Td className="text-slate-500 whitespace-nowrap">{new Date(c.fecha).toLocaleString('es-CO')}</Td>
+              <Td align="right" className="font-semibold text-slate-800 whitespace-nowrap">{formatCOP(c.total)}</Td>
+              <Td align="center">
+                <button onClick={() => setViewDetalle(c)} className="btn-icon" aria-label={`Ver detalle de la compra ${c.id}`}>
+                  <Eye className="w-5 h-5"/>
+                </button>
+              </Td>
+            </Tr>
+          ))}
+        </tbody>
+      </TableCard>
 
-      {showModal && createPortal(
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-[2px] flex items-center justify-center z-[9999] animate-fade-in xl:p-4 overflow-y-auto">
-          <div className="bg-slate-100 xl:rounded-[2rem] w-full min-h-screen xl:min-h-0 xl:max-w-7xl shadow-2xl xl:my-auto flex flex-col xl:flex-row overflow-hidden border border-slate-200">
+      <Modal open={showModal} onClose={() => setShowModal(false)} variant="bare" title="Registro de compra">
+        <div className="xl:p-4">
+          <div className="bg-slate-100 xl:rounded-3xl w-full min-h-screen xl:min-h-0 xl:max-w-7xl mx-auto shadow-2xl flex flex-col xl:flex-row overflow-hidden border border-slate-200">
             
             <div className="flex-1 bg-white p-6 xl:p-8 xl:border-r border-slate-200 flex flex-col relative h-[600px] xl:h-[800px]">
                <div className="flex justify-between items-center border-b border-slate-100 pb-4 mb-6">
-                 <h3 className="text-2xl font-black text-slate-800 flex items-center gap-2"><ShoppingCart className="text-brand-600" /> Terminal Ingresos</h3>
-                 <button className="xl:hidden p-2 bg-slate-100 rounded-full" onClick={()=>setShowModal(false)}><X className="w-5 h-5"/></button>
+                 <h3 className="text-2xl font-semibold text-slate-800 flex items-center gap-2"><ShoppingCart className="text-brand-700" /> Terminal Ingresos</h3>
+                 <button aria-label="Cerrar registro de compra" className="xl:hidden p-2 bg-slate-100 rounded-full" onClick={()=>setShowModal(false)}><X className="w-5 h-5"/></button>
                </div>
 
                <div className="mb-4"><FormError message={formError} onDismiss={() => setFormError(null)} /></div>
@@ -240,17 +252,26 @@ const Compras = () => {
                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-6">
                  <div className="flex justify-between items-end mb-3">
                    <label className="text-sm font-bold text-slate-700 flex items-center gap-2"><Truck className="w-4 h-4"/> 1. Identificar Proveedor (Opcional)</label>
-                   {!showNewProv && <button className="text-xs font-bold text-brand-600 hover:text-brand-800 flex items-center gap-1" onClick={()=>setShowNewProv(true)}><UserPlus className="w-3.5 h-3.5"/> Alta rápida</button>}
+                   {!showNewProv && <button className="text-xs font-bold text-brand-700 hover:text-brand-800 flex items-center gap-1" onClick={()=>setShowNewProv(true)}><UserPlus className="w-3.5 h-3.5"/> Alta rápida</button>}
                  </div>
 
                  {showNewProv ? (
                    <form onSubmit={handleCreateProv} className="bg-white p-4 rounded-xl border border-brand-100 shadow-sm animate-fade-in">
-                     <div className="flex items-center justify-between mb-3"><h4 className="font-bold text-brand-700 text-sm">Nuevo Proveedor Rápido</h4><button type="button" onClick={()=>setShowNewProv(false)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4"/></button></div>
-                     <div className="grid grid-cols-2 gap-3 mb-3">
-                       <input required placeholder="Razón Social / Nombre" className="input-field text-sm rounded-lg" value={newProvData.nombre} onChange={e=>setNewProvData({...newProvData, nombre: e.target.value})}/>
-                       <input required placeholder="NIT o Documento" className="input-field text-sm rounded-lg" value={newProvData.nit} onChange={e=>setNewProvData({...newProvData, nit: e.target.value})}/>
+                     <div className="flex items-center justify-between mb-3">
+                       <h4 className="font-bold text-brand-700 text-sm">Nuevo Proveedor Rápido</h4>
+                       <button type="button" aria-label="Cancelar alta rápida" onClick={()=>setShowNewProv(false)} className="text-slate-500 hover:text-slate-700"><X className="w-4 h-4"/></button>
                      </div>
-                     <button type="submit" className="w-full bg-brand-600 text-white font-bold text-sm py-2 rounded-lg hover:bg-brand-700">Guardar y Seleccionar</button>
+                     <div className="grid grid-cols-2 gap-3 mb-3">
+                       <Field label="Razón Social / Nombre" required>
+                         <input className="input-field text-sm" value={newProvData.nombre} onChange={e=>setNewProvData({...newProvData, nombre: e.target.value})}/>
+                       </Field>
+                       <Field label="NIT o Documento" required>
+                         <input className="input-field text-sm" value={newProvData.nit} onChange={e=>setNewProvData({...newProvData, nit: e.target.value})}/>
+                       </Field>
+                     </div>
+                     <button type="submit" disabled={crearProveedor.isPending} className="btn-primary w-full text-sm py-2">
+                       {crearProveedor.isPending ? 'Guardando…' : 'Guardar y Seleccionar'}
+                     </button>
                    </form>
                  ) : (
                     <>
@@ -258,22 +279,22 @@ const Compras = () => {
                         <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 p-3 rounded-xl">
                           <div>
                             <div className="font-bold text-emerald-800">{selectedProv?.nombre || selectedProv?.razon_social}</div>
-                            <div className="text-xs font-bold text-emerald-600">NIT: {selectedProv?.nit || 'N/A'}</div>
+                            <div className="text-xs font-bold text-emerald-700">NIT: {selectedProv?.nit || 'N/A'}</div>
                           </div>
-                          <button onClick={() => setFormData({...formData, proveedorId: ''})} className="p-1.5 hover:bg-emerald-100 rounded-lg text-emerald-600"><X className="w-4 h-4"/></button>
+                          <button onClick={() => setFormData({...formData, proveedorId: ''})} className="p-1.5 hover:bg-emerald-100 rounded-lg text-emerald-700"><X className="w-4 h-4"/></button>
                         </div>
                       ) : (
                         <div className="relative">
-                          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
-                          <input type="text" placeholder="Buscar proveedor por nombre o documento (min 3 letras)..." className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:ring-brand-500 font-medium placeholder:text-slate-400 outline-none" value={provSearch} onChange={e => setProvSearch(e.target.value)} />
+                          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"/>
+                          <input type="text" placeholder="Buscar proveedor por nombre o documento (min 3 letras)..." className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm focus:ring-brand-500 font-medium placeholder:text-slate-500 outline-none" value={provSearch} onChange={e => setProvSearch(e.target.value)} />
                           
                           {provSearch.length >= 3 && matchedProveedores.length > 0 && (
                              <div className="absolute top-full mt-2 left-0 right-0 bg-white border border-slate-200 rounded-xl shadow-lg z-50 overflow-hidden">
                                {matchedProveedores.map(p => (
                                  <button key={p.id} onClick={(e)=>{ e.preventDefault(); setFormData({...formData, proveedorId: p.id}); setProvSearch(''); }} className="w-full text-left px-4 py-3 hover:bg-slate-50 border-b border-slate-50 last:border-0 flex justify-between items-center group">
                                    <div>
-                                     <div className="font-bold text-slate-700 text-sm group-hover:text-brand-600">{p.nombre || p.razon_social}</div>
-                                     <div className="text-xs text-slate-400 font-mono mt-0.5">{p.nit || 'N/A'}</div>
+                                     <div className="font-bold text-slate-700 text-sm group-hover:text-brand-700">{p.nombre || p.razon_social}</div>
+                                     <div className="text-xs text-slate-500 font-mono mt-0.5">{p.nit || 'N/A'}</div>
                                    </div>
                                    <Plus className="w-4 h-4 text-brand-500 opacity-0 group-hover:opacity-100 transition-opacity"/>
                                  </button>
@@ -282,9 +303,9 @@ const Compras = () => {
                           )}
                           {provSearch.length === 0 && topProveedores.length > 0 && (
                             <div className="mt-3 flex flex-wrap gap-2">
-                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center mr-1">Frecuentes:</span>
+                              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center mr-1">Frecuentes:</span>
                               {topProveedores.map(p => (
-                                <button key={p.id} onClick={()=>setFormData({...formData, proveedorId: p.id})} className="text-xs font-bold bg-white text-slate-600 px-2.5 py-1 rounded-full border border-slate-200 hover:border-brand-300 hover:text-brand-600 shadow-sm transition-colors">{p.nombre || p.razon_social}</button>
+                                <button key={p.id} onClick={()=>setFormData({...formData, proveedorId: p.id})} className="text-xs font-bold bg-white text-slate-600 px-2.5 py-1 rounded-full border border-slate-200 hover:border-brand-300 hover:text-brand-700 shadow-sm transition-colors">{p.nombre || p.razon_social}</button>
                               ))}
                             </div>
                           )}
@@ -297,17 +318,17 @@ const Compras = () => {
                {/* ZONA ITEMS */}
                <div className="flex-1 flex flex-col overflow-hidden">
                  <div className="flex border-b border-slate-200 mb-4">
-                   <button className={`flex-1 py-3 font-bold text-sm flex items-center justify-center gap-2 transition-colors ${activeTab === 'P' ? 'border-b-2 border-brand-500 text-brand-600' : 'text-slate-500 hover:bg-slate-50'}`} onClick={()=>setActiveTab('P')}>
+                   <button className={`flex-1 py-3 font-bold text-sm flex items-center justify-center gap-2 transition-colors ${activeTab === 'P' ? 'border-b-2 border-brand-500 text-brand-700' : 'text-slate-500 hover:bg-slate-50'}`} onClick={()=>setActiveTab('P')}>
                      <Box className="w-4 h-4"/> Productos a Bodega
                    </button>
-                   <button className={`flex-1 py-3 font-bold text-sm flex items-center justify-center gap-2 transition-colors ${activeTab === 'G' ? 'border-b-2 border-brand-500 text-brand-600' : 'text-slate-500 hover:bg-slate-50'}`} onClick={()=>setActiveTab('G')}>
+                   <button className={`flex-1 py-3 font-bold text-sm flex items-center justify-center gap-2 transition-colors ${activeTab === 'G' ? 'border-b-2 border-brand-500 text-brand-700' : 'text-slate-500 hover:bg-slate-50'}`} onClick={()=>setActiveTab('G')}>
                      <Wallet className="w-4 h-4"/> Gastos / Insumos Ad-Hoc
                    </button>
                  </div>
 
                  {activeTab === 'P' && (
                    <div className="relative mb-4">
-                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"/>
+                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"/>
                      <input type="text" placeholder="Filtrar catálogo..." className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:ring-brand-500 font-medium outline-none transition-shadow" value={itemSearch} onChange={e => setItemSearch(e.target.value)} />
                    </div>
                  )}
@@ -317,7 +338,7 @@ const Compras = () => {
                      !showNewProd ? (
                        <>
                          <div className="flex justify-end mb-4 pr-1">
-                           <button onClick={() => setShowNewProd(true)} className="text-sm font-bold text-brand-600 hover:text-brand-700 flex items-center gap-1.5 bg-brand-50 px-3 py-1.5 rounded-lg"><Plus className="w-4 h-4"/> Nuevo Artículo</button>
+                           <button onClick={() => setShowNewProd(true)} className="text-sm font-bold text-brand-700 hover:text-brand-700 flex items-center gap-1.5 bg-brand-50 px-3 py-1.5 rounded-lg"><Plus className="w-4 h-4"/> Nuevo Artículo</button>
                          </div>
                          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 pb-8">
                            {displayList.map(item => (
@@ -325,8 +346,8 @@ const Compras = () => {
                                <div className="absolute top-0 right-0 w-16 h-16 bg-brand-50 rounded-bl-[100px] -z-0 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                                <h5 className="font-bold text-slate-800 text-sm leading-tight z-10 relative pr-4">{item.nombre_producto}</h5>
                                <div className="flex justify-between items-end mt-2 z-10 relative">
-                                 <div className="text-xs font-bold text-brand-600 bg-brand-50 px-2 py-0.5 rounded-md self-start">{formatCOP(item.precio_unitario)}</div>
-                                 <div className="text-[10px] font-bold text-slate-400 text-right">Stock: {formatCantidad(item.stock_actual)} ud</div>
+                                 <div className="text-xs font-bold text-brand-700 bg-brand-50 px-2 py-0.5 rounded-md self-start">{formatCOP(item.precio_unitario)}</div>
+                                 <div className="text-[10px] font-bold text-slate-500 text-right">Stock: {formatCantidad(item.stock_actual)} ud</div>
                                </div>
                              </div>
                            ))}
@@ -349,15 +370,15 @@ const Compras = () => {
                    ) : (
                      <div className="p-4 border border-brand-100 bg-brand-50/30 rounded-2xl flex flex-col gap-4">
                        <h4 className="font-bold text-slate-700 text-sm flex items-center gap-2">Registrar Nuevo Gasto</h4>
-                       <input type="text" placeholder="Descripción del gasto (Ej: Pago Nómina, Transporte)" className="input-field rounded-xl bg-white" value={gastoForm.descripcion} onChange={e => setGastoForm({...gastoForm, descripcion: e.target.value})}/>
+                       <input type="text" placeholder="Descripción del gasto (Ej: Pago Nómina, Transporte)" className="input-field bg-white" value={gastoForm.descripcion} onChange={e => setGastoForm({...gastoForm, descripcion: e.target.value})}/>
                        <div className="grid grid-cols-2 gap-3">
                          <div>
                             <label className="text-xs font-bold text-slate-500 ml-1">Cantidad</label>
-                            <input type="number" min="1" className="input-field rounded-xl bg-white mt-1" value={gastoForm.cantidad} onChange={e => setGastoForm({...gastoForm, cantidad: e.target.value})}/>
+                            <input type="number" min="1" className="input-field bg-white mt-1" value={gastoForm.cantidad} onChange={e => setGastoForm({...gastoForm, cantidad: e.target.value})}/>
                          </div>
                          <div>
                             <label className="text-xs font-bold text-slate-500 ml-1">Costo Unitario ($)</label>
-                            <input type="number" step="0.01" className="input-field rounded-xl bg-white mt-1" placeholder="$ 0.00" value={gastoForm.costo_unitario} onChange={e => setGastoForm({...gastoForm, costo_unitario: e.target.value})}/>
+                            <input type="number" step="0.01" className="input-field bg-white mt-1" placeholder="$ 0.00" value={gastoForm.costo_unitario} onChange={e => setGastoForm({...gastoForm, costo_unitario: e.target.value})}/>
                          </div>
                        </div>
                        <button type="button" onClick={() => addItemToCart(null, 'G')} className="btn-primary py-3 rounded-xl shadow-sm mt-2 flex justify-center items-center gap-2"><Plus className="w-5 h-5"/> Agregar a la Cesta</button>
@@ -370,37 +391,37 @@ const Compras = () => {
             {/* CARRITO */}
             <div className="w-full xl:w-[420px] bg-slate-50 xl:border-l border-slate-200 flex flex-col h-[600px] xl:h-[800px]">
               <div className="p-6 bg-slate-800 text-white shadow-md z-10 hidden xl:block">
-                <h3 className="text-lg font-black uppercase tracking-widest flex items-center gap-2"><ShoppingCart className="w-5 h-5 text-brand-400"/> Cesta Actual</h3>
+                <h3 className="text-lg font-semibold uppercase tracking-widest flex items-center gap-2"><ShoppingCart className="w-5 h-5 text-brand-400"/> Cesta Actual</h3>
               </div>
               
               <div className="flex-1 overflow-y-auto p-4 space-y-3 relative custom-scrollbar">
                 {formData.detalles.length === 0 ? (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
                     <PackageOpen className="w-16 h-16 mb-4 opacity-20" />
                     <span className="text-sm font-semibold">Agrega ítems cliqueando la grilla.</span>
                   </div>
                 ) : formData.detalles.map((d, idx) => (
                   <div key={idx} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-[0_2px_8px_-4px_rgba(0,0,0,0.1)] flex flex-col gap-3 relative animate-fade-in z-10">
-                    <button type="button" onClick={() => removeFromCart(idx)} className="absolute top-4 right-4 text-slate-300 hover:text-red-500 transition-colors">
+                    <button type="button" aria-label={`Quitar ${d.nombre} del carrito`} onClick={() => removeFromCart(idx)} className="absolute top-4 right-4 text-slate-500 hover:text-red-700 transition-colors">
                       <Trash2 className="w-4 h-4"/>
                     </button>
                     <div>
                       <div className="font-bold text-slate-800 text-sm pr-6 leading-tight flex items-center gap-1.5">
-                        {d.tipo === 'G' && <Wallet className="w-3.5 h-3.5 text-orange-500 translate-y-[-1px]"/>}
+                        {d.tipo === 'G' && <Wallet className="w-3.5 h-3.5 text-amber-700 translate-y-[-1px]"/>}
                         {d.nombre}
                       </div>
-                      <div className="text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-wider">{d.tipo === 'P' ? 'PRODUCTO INVENTARIABLE' : 'MOVIMIENTO OPERACIONAL'}</div>
+                      <div className="text-[10px] font-bold text-slate-500 mt-1 uppercase tracking-wider">{d.tipo === 'P' ? 'PRODUCTO INVENTARIABLE' : 'MOVIMIENTO OPERACIONAL'}</div>
                     </div>
                     
                     <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
                       <div className="flex items-center bg-slate-50 rounded-lg border border-slate-200 overflow-hidden w-24 shrink-0">
-                        <button type="button" className="px-2.5 py-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-800 font-bold" onClick={()=>updateCartItem(idx, 'cantidad', Math.max(1, d.cantidad - 1))}>−</button>
-                        <input type="number" min="1" className="w-full text-center font-bold text-sm bg-transparent outline-none p-0" value={d.cantidad} onChange={e=>updateCartItem(idx, 'cantidad', e.target.value)} />
-                        <button type="button" className="px-2.5 py-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-800 font-bold" onClick={()=>updateCartItem(idx, 'cantidad', d.cantidad + 1)}>+</button>
+                        <button type="button" aria-label={`Disminuir cantidad de ${d.nombre}`} className="px-2.5 py-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-800 font-bold" onClick={()=>updateCartItem(idx, 'cantidad', Math.max(1, d.cantidad - 1))}>−</button>
+                        <input type="number" min="1" aria-label={`Cantidad de ${d.nombre}`} className="w-full text-center font-semibold text-sm bg-transparent p-0 rounded outline-none focus-visible:ring-2 focus-visible:ring-brand-600" value={d.cantidad} onChange={e=>updateCartItem(idx, 'cantidad', e.target.value)} />
+                        <button type="button" aria-label={`Aumentar cantidad de ${d.nombre}`} className="px-2.5 py-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-800 font-bold" onClick={()=>updateCartItem(idx, 'cantidad', d.cantidad + 1)}>+</button>
                       </div>
                       <div className="flex flex-1 items-center gap-2">
                         <div className="relative flex-1">
-                           <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-xs">$</span>
+                           <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 font-bold text-xs">$</span>
                            <input type="number" step="0.01" className="w-full pl-6 pr-2 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs text-emerald-700 focus:ring-emerald-500 focus:border-emerald-500 outline-none" value={d.costo_unitario} onChange={e=>updateCartItem(idx, 'costo_unitario', e.target.value)} title="Costo Unitario Facturado" />
                         </div>
                       </div>
@@ -412,7 +433,7 @@ const Compras = () => {
               <div className="p-6 bg-white border-t border-slate-200 shadow-[0_-10px_30px_-15px_rgba(0,0,0,0.1)] z-10">
                 <div className="flex flex-col gap-1 mb-4">
                      <span className="text-sm font-bold text-slate-500 uppercase tracking-widest text-right">Egresos Totales</span>
-                     <span className="text-4xl font-black text-emerald-600 tracking-tight leading-none drop-shadow-sm text-right">{formatCOP(getTotal())}</span>
+                     <span className="text-4xl font-semibold text-emerald-700 tracking-tight leading-none drop-shadow-sm text-right">{formatCOP(getTotal())}</span>
                 </div>
                 <div className="flex flex-col gap-3 font-sans">
                   <button type="button" onClick={handleSubmit} disabled={registrarCompra.isPending} className="btn-primary bg-emerald-600 hover:bg-emerald-700 ring-emerald-500 flex items-center justify-center gap-2 rounded-xl h-12 text-lg shadow-lg shadow-emerald-500/30 disabled:opacity-50">
@@ -424,51 +445,57 @@ const Compras = () => {
 
             </div>
           </div>
-        </div>,
-        document.body
-      )}
+        </div>
+      </Modal>
 
-      {viewDetalle && createPortal(
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[9999] animate-fade-in p-4">
-          <div className="bg-white rounded-[2rem] w-full max-w-2xl shadow-2xl overflow-hidden border border-slate-200">
-            <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-              <div>
-                <h3 className="text-xl font-black text-slate-800 flex items-center gap-2"><Receipt className="text-brand-600" /> Detalle de Compra</h3>
-                <p className="text-xs font-bold text-slate-400 font-mono mt-1">#COMP-{viewDetalle.id.toString().padStart(4, '0')} - {new Date(viewDetalle.fecha).toLocaleString('es-CO')}</p>
+      {/* Los hijos de <Modal> se evalúan siempre, aunque Modal decida no
+          renderizarlos: con open={!!viewDetalle} pero `viewDetalle.id` leído
+          sin más ahí dentro, el primer render (viewDetalle === null) reventaba
+          con un TypeError antes de que Modal llegara a su `if (!open)`, y la
+          página quedaba en blanco. Este `{viewDetalle && (...)}` reproduce el
+          corto-circuito que tenía el `createPortal` original. */}
+      {viewDetalle && (
+        <Modal open onClose={() => setViewDetalle(null)} variant="bare" title="Detalle de compra">
+          <div className="p-4 flex items-center justify-center">
+            <div className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden border border-slate-200">
+              <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                <div>
+                  <h3 className="text-xl font-semibold text-slate-800 flex items-center gap-2"><Receipt className="text-brand-700" /> Detalle de Compra</h3>
+                  <p className="text-xs font-bold text-slate-500 font-mono mt-1">#COMP-{viewDetalle.id.toString().padStart(4, '0')} - {new Date(viewDetalle.fecha).toLocaleString('es-CO')}</p>
+                </div>
+                <button className="p-2 bg-white hover:bg-slate-200 rounded-full transition-colors" onClick={() => setViewDetalle(null)}><X className="w-5 h-5"/></button>
               </div>
-              <button className="p-2 bg-white hover:bg-slate-200 rounded-full transition-colors" onClick={() => setViewDetalle(null)}><X className="w-5 h-5"/></button>
-            </div>
-            <div className="p-6">
-              <div className="mb-6 flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-200">
-                <span className="font-bold text-slate-600 flex items-center gap-2"><Truck className="w-4 h-4"/> Proveedor:</span>
-                <span className="font-black text-slate-800">{viewDetalle.Proveedor?.nombre || viewDetalle.Proveedor?.razon_social || 'Gasto Anónimo / Sin Clasificar'}</span>
-              </div>
-              <h4 className="font-bold text-sm text-slate-400 uppercase tracking-widest mb-3">Ítems Ingresados</h4>
-              <div className="space-y-3 max-h-[40vh] overflow-y-auto custom-scrollbar pr-2">
-                 {viewDetalle.CompraDetalles?.map(d => (
-                   <div key={d.id} className="flex justify-between items-center p-3 border border-slate-100 rounded-xl bg-white shadow-sm">
-                      <div>
-                        <div className="font-bold text-sm text-slate-800 flex items-center gap-1.5">
-                          {d.descripcion_gasto ? <Wallet className="w-3.5 h-3.5 text-orange-500"/> : <Box className="w-3.5 h-3.5 text-brand-500"/>}
-                          {d.Producto?.nombre_producto || `(Gasto) ${d.descripcion_gasto}`}
+              <div className="p-6">
+                <div className="mb-6 flex justify-between items-center bg-slate-50 p-4 rounded-xl border border-slate-200">
+                  <span className="font-bold text-slate-600 flex items-center gap-2"><Truck className="w-4 h-4"/> Proveedor:</span>
+                  <span className="font-semibold text-slate-800">{viewDetalle.Proveedor?.nombre || viewDetalle.Proveedor?.razon_social || 'Gasto Anónimo / Sin Clasificar'}</span>
+                </div>
+                <h4 className="font-bold text-sm text-slate-500 uppercase tracking-widest mb-3">Ítems Ingresados</h4>
+                <div className="space-y-3 max-h-[40vh] overflow-y-auto custom-scrollbar pr-2">
+                   {viewDetalle.CompraDetalles?.map(d => (
+                     <div key={d.id} className="flex justify-between items-center p-3 border border-slate-100 rounded-xl bg-white shadow-sm">
+                        <div>
+                          <div className="font-bold text-sm text-slate-800 flex items-center gap-1.5">
+                            {d.descripcion_gasto ? <Wallet className="w-3.5 h-3.5 text-amber-700"/> : <Box className="w-3.5 h-3.5 text-brand-500"/>}
+                            {d.Producto?.nombre_producto || `(Gasto) ${d.descripcion_gasto}`}
+                          </div>
+                          <div className="text-xs font-bold text-slate-500 mt-0.5">{d.cantidad} ud x {formatCOP(d.costo_unitario)}</div>
                         </div>
-                        <div className="text-xs font-bold text-slate-500 mt-0.5">{d.cantidad} ud x {formatCOP(d.costo_unitario)}</div>
-                      </div>
-                      <div className="font-black text-brand-600 text-sm">{formatCOP(d.cantidad * d.costo_unitario)}</div>
-                   </div>
-                 ))}
-                 {(!viewDetalle.CompraDetalles || viewDetalle.CompraDetalles.length === 0) && (
-                   <p className="text-center text-slate-400 py-4 font-bold text-sm">Este ingreso no tiene detalles registrados.</p>
-                 )}
+                        <div className="font-semibold text-brand-700 text-sm">{formatCOP(d.cantidad * d.costo_unitario)}</div>
+                     </div>
+                   ))}
+                   {(!viewDetalle.CompraDetalles || viewDetalle.CompraDetalles.length === 0) && (
+                     <p className="text-center text-slate-500 py-4 font-bold text-sm">Este ingreso no tiene detalles registrados.</p>
+                   )}
+                </div>
               </div>
-            </div>
-            <div className="p-6 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
-              <span className="font-black text-slate-500 uppercase tracking-widest text-sm">Total Facturado</span>
-              <span className="font-black text-2xl text-emerald-600">{formatCOP(viewDetalle.total)}</span>
+              <div className="p-6 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
+                <span className="font-semibold text-slate-500 uppercase tracking-widest text-sm">Total Facturado</span>
+                <span className="font-semibold text-2xl text-emerald-700">{formatCOP(viewDetalle.total)}</span>
+              </div>
             </div>
           </div>
-        </div>,
-        document.body
+        </Modal>
       )}
     </div>
   );

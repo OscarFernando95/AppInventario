@@ -1,5 +1,4 @@
 import { useState, useMemo } from 'react';
-import { createPortal } from 'react-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { PackageOpen, Users, Plus, ShoppingCart, Trash2, Search, CheckCircle, Truck, UserPlus, X, Box, Printer, FileText, Download } from 'lucide-react';
@@ -8,12 +7,20 @@ import { useAuthStore } from '../../store/authStore';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
+import PageHeader from '../../components/ui/PageHeader';
+import Modal from '../../components/ui/Modal';
+import Field from '../../components/ui/Field';
+import { TableCard, THead, Th, Tr, Td } from '../../components/ui/Table';
+import { TableState } from '../../components/ui/DataState';
 
 const Pedidos = () => {
   const queryClient = useQueryClient();
   const modulos = useAuthStore((s) => s.activeEmpresa?.modulos) || [];
 
-  const { data: pedidos = [] } = useEmpresaQuery(['pedidos'], '/pedidos');
+  const {
+    data: pedidos = [], isLoading: cargandoPedidos, isError: errorPedidos,
+    error: errPedidos, refetch: recargarPedidos,
+  } = useEmpresaQuery(['pedidos'], '/pedidos');
   const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
   const { data: proveedores = [] } = useEmpresaQuery(['proveedores'], '/proveedores', { enabled: modulos.includes('Proveedores') });
   const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
@@ -195,137 +202,148 @@ const Pedidos = () => {
 
   return (
     <div className="space-y-6 animate-fade-in print:hidden">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h2 className="text-3xl font-black text-slate-800 tracking-tight">Registro de Órdenes de Pedido</h2>
-          <p className="text-slate-500 mt-1">Genera PDFs, solicita productos a proveedores y valídalos al recibirlos.</p>
-        </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setFormData({ proveedorId: '', detalles: [] }); setShowNewProv(false); setProvSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); }}>
-          <FileText className="w-5 h-5" /> Nueva Orden
-        </button>
-      </div>
+      <PageHeader
+        title="Registro de Órdenes de Pedido"
+        description="Genera PDFs, solicita productos a proveedores y valídalos al recibirlos."
+        action={
+          <button className="btn-primary gap-2" onClick={() => { setFormData({ proveedorId: '', detalles: [] }); setShowNewProv(false); setProvSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); }}>
+            <FileText className="w-5 h-5" aria-hidden="true" /> Nueva Orden
+          </button>
+        }
+      />
 
-      <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden mt-6">
-        <table className="w-full text-left">
-          <thead className="bg-slate-50/50 border-b border-slate-100">
-            <tr>
-              <th className="px-6 py-4 text-xs font-bold text-slate-500 tracking-wider uppercase">Orden #</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-500 tracking-wider uppercase">Proveedor</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-500 tracking-wider uppercase">Fecha y Estado</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-500 tracking-wider uppercase text-right">Monto Estimado</th>
-              <th className="px-6 py-4 text-xs font-bold text-slate-500 tracking-wider uppercase text-center">Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pedidos.length === 0 ? (
-              <tr><td colSpan="5" className="text-center py-12 text-slate-400 font-bold">Sin órdenes registradas.</td></tr>
-            ) : pedidos.map(p => (
-              <tr key={p.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                <td className="px-6 py-4 font-mono text-xs font-bold text-slate-400">#ORD-{p.id.toString().padStart(4, '0')}</td>
-                <td className="px-6 py-4 font-bold text-slate-800 flex items-center gap-2">
-                  <Truck className="w-4 h-4 text-brand-400"/>
+      <TableCard>
+        <THead>
+          <Th>Orden #</Th>
+          <Th>Proveedor</Th>
+          <Th>Fecha y Estado</Th>
+          <Th align="right">Monto Estimado</Th>
+          <Th align="center">Acciones</Th>
+        </THead>
+        <tbody>
+          <TableState
+            colSpan={5}
+            isLoading={cargandoPedidos}
+            isError={errorPedidos}
+            error={errPedidos}
+            onRetry={recargarPedidos}
+            isEmpty={pedidos.length === 0}
+            emptyIcon={FileText}
+            emptyTitle="Sin órdenes registradas"
+            emptyHint="Crea la primera con «Nueva Orden»."
+          />
+          {pedidos.map(p => (
+            <Tr key={p.id}>
+              <Td className="font-mono text-xs text-slate-600 whitespace-nowrap">#ORD-{p.id.toString().padStart(4, '0')}</Td>
+              <Td className="font-medium text-slate-800">
+                <div className="flex items-center gap-2">
+                  <Truck className="w-4 h-4 text-slate-400 shrink-0" aria-hidden="true"/>
                   {p.Proveedor?.nombre || p.Proveedor?.razon_social || 'Proveedor Desconocido'}
-                </td>
-                <td className="px-6 py-4">
-                  <div className="font-medium text-slate-500 mb-1">{new Date(p.fecha_pedido).toLocaleDateString()}</div>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-black tracking-widest uppercase ${p.estado === 'PENDIENTE' ? 'bg-amber-100 text-amber-700' : p.estado === 'COMPLETADO' ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                    {p.estado}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-right font-black text-brand-600">
-                  {formatCOP(p.total_estimado)}
-                </td>
-                <td className="px-6 py-4 text-center">
-                  <div className="flex items-center justify-center gap-2">
-                    <button onClick={() => setViewDetalle(p)} className="p-2 text-slate-400 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors" title="Ver / Imprimir Orden">
-                       <Printer className="w-5 h-5"/>
+                </div>
+              </Td>
+              <Td>
+                <div className="text-slate-500 mb-1 whitespace-nowrap">{new Date(p.fecha_pedido).toLocaleDateString()}</div>
+                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold tracking-wide uppercase ${p.estado === 'PENDIENTE' ? 'bg-amber-100 text-amber-800' : p.estado === 'COMPLETADO' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                  {p.estado}
+                </span>
+              </Td>
+              <Td align="right" className="font-semibold text-slate-800 whitespace-nowrap">{formatCOP(p.total_estimado)}</Td>
+              <Td align="center">
+                <div className="flex items-center justify-center gap-2">
+                  <button onClick={() => setViewDetalle(p)} className="btn-icon" aria-label={`Ver e imprimir la orden ${p.id}`}>
+                    <Printer className="w-5 h-5"/>
+                  </button>
+                  {p.estado === 'PENDIENTE' && (
+                    <button onClick={() => openCheckIn(p)} className="btn-icon hover:text-emerald-700 hover:bg-emerald-50" aria-label={`Registrar recepción de la orden ${p.id}`}>
+                      <Download className="w-5 h-5"/>
                     </button>
-                    {p.estado === 'PENDIENTE' && (
-                      <button onClick={() => openCheckIn(p)} className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors" title="Recibir Mercancía (Check-in)">
-                         <Download className="w-5 h-5"/>
-                      </button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                  )}
+                </div>
+              </Td>
+            </Tr>
+          ))}
+        </tbody>
+      </TableCard>
 
       {/* Modal CREAR PEDIDO */}
-      {showModal && createPortal(
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-end z-[9999] animate-fade-in print:hidden">
-          <div className="bg-slate-50 w-full max-w-5xl h-full shadow-2xl flex flex-col animate-slide-in-right overflow-hidden">
+      <Modal open={showModal} onClose={() => setShowModal(false)} variant="bare" title="Nueva orden de compra">
+        <div className="fixed inset-0 flex justify-end pointer-events-none">
+          <div className="bg-slate-50 w-full max-w-5xl h-full shadow-2xl flex flex-col animate-slide-in-right overflow-hidden pointer-events-auto">
             <div className="px-8 py-6 bg-white border-b border-slate-200 flex justify-between items-center shadow-sm z-10">
-              <h3 className="text-2xl font-black text-slate-800 flex items-center gap-3">
-                <FileText className="text-brand-600 w-7 h-7" /> Nueva Orden de Compra
+              <h3 className="text-2xl font-semibold text-slate-800 flex items-center gap-3">
+                <FileText className="text-brand-700 w-7 h-7" /> Nueva Orden de Compra
               </h3>
-              <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 p-2 rounded-full transition-colors"><X className="w-6 h-6"/></button>
+              <button onClick={() => setShowModal(false)} aria-label="Cerrar nueva orden de compra" className="text-slate-500 hover:text-slate-700 hover:bg-slate-100 p-2 rounded-full transition-colors"><X className="w-6 h-6"/></button>
             </div>
             <div className="px-8 pt-4"><FormError message={formError} onDismiss={() => setFormError(null)} /></div>
 
             <div className="flex-1 flex overflow-hidden">
               <div className="w-1/2 p-6 overflow-y-auto custom-scrollbar border-r border-slate-200">
                 <div className="mb-6">
-                  <h4 className="font-bold text-sm text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2"><Truck className="w-4 h-4"/> 1. Selección de Proveedor</h4>
+                  <h4 className="font-bold text-sm text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2"><Truck className="w-4 h-4"/> 1. Selección de Proveedor</h4>
                   {!showNewProv ? (
                     <div className="space-y-4">
-                      {topProveedores.length > 0 && <div className="flex flex-wrap gap-2 mb-2"><span className="text-xs font-bold text-slate-400 py-1">Frecuentes:</span>{topProveedores.map(p => (<button key={p.id} onClick={() => setFormData({ ...formData, proveedorId: p.id })} className={`px-3 py-1 text-xs font-bold rounded-full transition-colors ${formData.proveedorId === p.id ? 'bg-brand-600 text-white shadow-md' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}>{p.nombre || p.razon_social}</button>))}</div>}
+                      {topProveedores.length > 0 && <div className="flex flex-wrap gap-2 mb-2"><span className="text-xs font-bold text-slate-500 py-1">Frecuentes:</span>{topProveedores.map(p => (<button key={p.id} onClick={() => setFormData({ ...formData, proveedorId: p.id })} className={`px-3 py-1 text-xs font-bold rounded-full transition-colors ${formData.proveedorId === p.id ? 'bg-brand-600 text-white shadow-md' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}>{p.nombre || p.razon_social}</button>))}</div>}
                       <div className="relative">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
-                        <input type="text" placeholder="Buscar proveedor (Mínimo 3 letras)..." value={provSearch} onChange={(e) => setProvSearch(e.target.value)} className="w-full pl-11 pr-4 py-3 bg-white border-2 border-slate-200 rounded-2xl focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 font-medium text-slate-700 transition-all outline-none placeholder:text-slate-400" />
+                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 w-5 h-5" />
+                        <input type="text" placeholder="Buscar proveedor (Mínimo 3 letras)..." value={provSearch} onChange={(e) => setProvSearch(e.target.value)} className="w-full pl-11 pr-4 py-3 bg-white border-2 border-slate-200 rounded-2xl focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 font-medium text-slate-700 transition-all outline-none placeholder:text-slate-500" />
                       </div>
                       {matchedProveedores.length > 0 && (
                         <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden max-h-48 overflow-y-auto custom-scrollbar">
                           {matchedProveedores.map(p => (
                             <button key={p.id} onClick={() => { setFormData(prev => ({ ...prev, proveedorId: p.id })); setProvSearch(''); }} className="w-full text-left px-4 py-3 hover:bg-slate-50 border-b border-slate-50 last:border-0 font-bold text-slate-700 flex flex-col gap-1 transition-colors">
-                              <span>{p.nombre || p.razon_social}</span><span className="text-xs text-slate-400 font-mono">NIT: {p.nit || 'N/A'}</span>
+                              <span>{p.nombre || p.razon_social}</span><span className="text-xs text-slate-500 font-mono">NIT: {p.nit || 'N/A'}</span>
                             </button>
                           ))}
                         </div>
                       )}
                       <div className="flex justify-start">
-                        <button onClick={() => setShowNewProv(true)} className="text-sm font-bold text-brand-600 hover:text-brand-700 flex items-center gap-1.5 bg-brand-50 px-3 py-1.5 rounded-lg"><UserPlus className="w-4 h-4"/> Nuevo Proveedor</button>
+                        <button onClick={() => setShowNewProv(true)} className="text-sm font-bold text-brand-700 hover:text-brand-700 flex items-center gap-1.5 bg-brand-50 px-3 py-1.5 rounded-lg"><UserPlus className="w-4 h-4"/> Nuevo Proveedor</button>
                       </div>
                     </div>
                   ) : (
                     <form onSubmit={handleCreateProv} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
                       <div className="grid grid-cols-2 gap-3">
-                         <input required type="text" value={newProvData.nombre} onChange={e => setNewProvData({...newProvData, nombre: e.target.value})} placeholder="Nombre Comercial/Razón Social" className="col-span-2 px-4 py-2 border-2 border-slate-200 rounded-xl focus:border-brand-500 outline-none font-medium" />
-                         <input required type="text" value={newProvData.nit} onChange={e => setNewProvData({...newProvData, nit: e.target.value})} placeholder="NIT/Documento" className="col-span-2 px-4 py-2 border-2 border-slate-200 rounded-xl focus:border-brand-500 outline-none font-medium" />
+                         <Field label="Nombre Comercial/Razón Social" required className="col-span-2">
+                           <input type="text" value={newProvData.nombre} onChange={e => setNewProvData({...newProvData, nombre: e.target.value})} className="input-field font-medium" />
+                         </Field>
+                         <Field label="NIT/Documento" required className="col-span-2">
+                           <input type="text" value={newProvData.nit} onChange={e => setNewProvData({...newProvData, nit: e.target.value})} className="input-field font-medium" />
+                         </Field>
                       </div>
                       <div className="flex gap-2 justify-end pt-2 border-t border-slate-100">
-                        <button type="button" onClick={() => setShowNewProv(false)} className="px-4 py-2 text-sm font-bold text-slate-500 hover:bg-slate-100 rounded-lg">Cancelar</button>
-                        <button type="submit" className="px-4 py-2 text-sm font-bold bg-brand-600 text-white rounded-lg shadow-md hover:bg-brand-700">Crear y Seleccionar</button>
+                        <button type="button" onClick={() => setShowNewProv(false)} className="btn-secondary text-sm">Cancelar</button>
+                        <button type="submit" disabled={crearProveedor.isPending} className="btn-primary text-sm">
+                          {crearProveedor.isPending ? 'Creando…' : 'Crear y Seleccionar'}
+                        </button>
                       </div>
                     </form>
                   )}
                 </div>
 
                 <div>
-                  <h4 className="font-bold text-sm text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2"><Box className="w-4 h-4"/> 2. Catálogo de Artículos</h4>
+                  <h4 className="font-bold text-sm text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2"><Box className="w-4 h-4"/> 2. Catálogo de Artículos</h4>
                   <div className="relative mb-4">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
-                    <input type="text" placeholder="Buscar producto a pedir..." value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} className="w-full pl-11 pr-4 py-3 bg-white border-2 border-slate-200 rounded-2xl focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 font-medium text-slate-700 transition-all outline-none placeholder:text-slate-400" />
+                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 w-5 h-5" />
+                    <input type="text" placeholder="Buscar producto a pedir..." value={itemSearch} onChange={(e) => setItemSearch(e.target.value)} className="w-full pl-11 pr-4 py-3 bg-white border-2 border-slate-200 rounded-2xl focus:border-brand-500 focus:ring-4 focus:ring-brand-500/10 font-medium text-slate-700 transition-all outline-none placeholder:text-slate-500" />
                   </div>
                   
                   {!showNewProd ? (
                     <>
                       <div className="flex justify-end mb-4">
-                        <button onClick={() => setShowNewProd(true)} className="text-sm font-bold text-brand-600 hover:text-brand-700 flex items-center gap-1.5 bg-brand-50 px-3 py-1.5 rounded-lg"><Plus className="w-4 h-4"/> Nuevo Artículo</button>
+                        <button onClick={() => setShowNewProd(true)} className="text-sm font-bold text-brand-700 hover:text-brand-700 flex items-center gap-1.5 bg-brand-50 px-3 py-1.5 rounded-lg"><Plus className="w-4 h-4"/> Nuevo Artículo</button>
                       </div>
                       <div className="grid grid-cols-2 gap-3">
                         {displayList.map(p => (
                           <button key={p.id} onClick={() => addItemToCart(p)} className="text-left bg-white p-4 rounded-2xl border-2 border-slate-100 hover:border-brand-300 hover:shadow-md transition-all group flex flex-col justify-between h-28">
                             <div>
-                              <p className="font-black text-slate-800 text-sm leading-tight group-hover:text-brand-700 transition-colors line-clamp-2">{p.nombre_producto}</p>
-                              <p className="text-xs font-mono text-slate-400 mt-1">{p.codigo}</p>
+                              <p className="font-semibold text-slate-800 text-sm leading-tight group-hover:text-brand-700 transition-colors line-clamp-2">{p.nombre_producto}</p>
+                              <p className="text-xs font-mono text-slate-500 mt-1">{p.codigo}</p>
                             </div>
-                            <div className="font-black text-brand-600 text-sm self-end">{formatCOP(p.precio_unitario)}</div>
+                            <div className="font-semibold text-brand-700 text-sm self-end">{formatCOP(p.precio_unitario)}</div>
                           </button>
                         ))}
-                        {displayList.length === 0 && <div className="col-span-2 py-8 text-center text-slate-400 font-bold bg-white rounded-2xl border-2 border-dashed border-slate-200">No hay productos locales.</div>}
+                        {displayList.length === 0 && <div className="col-span-2 py-8 text-center text-slate-500 font-bold bg-white rounded-2xl border-2 border-dashed border-slate-200">No hay productos locales.</div>}
                       </div>
                     </>
                   ) : (
@@ -347,12 +365,12 @@ const Pedidos = () => {
 
               <div className="w-1/2 bg-slate-50 flex flex-col">
                 <div className="p-6 bg-slate-100 border-b border-slate-200 text-center">
-                   <h4 className="font-black text-slate-800 text-lg">Resumen de la Orden</h4>
-                   <p className="text-sm font-bold text-brand-600 mt-1">{selectedProv?.nombre || selectedProv?.razon_social || 'Ningún proveedor seleccionado'}</p>
+                   <h4 className="font-semibold text-slate-800 text-lg">Resumen de la Orden</h4>
+                   <p className="text-sm font-bold text-brand-700 mt-1">{selectedProv?.nombre || selectedProv?.razon_social || 'Ningún proveedor seleccionado'}</p>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-3">
                   {formData.detalles.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-3">
+                    <div className="h-full flex flex-col items-center justify-center text-slate-500 gap-3">
                       <ShoppingCart className="w-12 h-12 opacity-20" />
                       <p className="font-bold">El carrito está vacío</p>
                     </div>
@@ -360,23 +378,23 @@ const Pedidos = () => {
                     <div key={idx} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center justify-between gap-4 relative overflow-hidden group">
                       <div className="absolute left-0 top-0 bottom-0 w-1 bg-brand-500"></div>
                       <div className="flex-1">
-                        <p className="font-black text-slate-800 line-clamp-1 text-sm">{d.nombre}</p>
+                        <p className="font-semibold text-slate-800 line-clamp-1 text-sm">{d.nombre}</p>
                         <div className="flex gap-4 mt-2">
-                           <div><span className="text-[10px] uppercase tracking-wider font-black text-slate-400 block mb-0.5">Cant Pedida</span><input type="number" min="1" value={d.cantidad_pedida} onChange={(e) => updateCartItem(idx, 'cantidad_pedida', e.target.value)} className="w-16 px-2 py-1 text-sm font-bold border-2 border-slate-100 rounded-lg text-center focus:border-brand-500 outline-none"/></div>
-                           <div><span className="text-[10px] uppercase tracking-wider font-black text-slate-400 block mb-0.5">Costo Ud.</span><input type="number" min="0" value={d.costo_estimado} onChange={(e) => updateCartItem(idx, 'costo_estimado', e.target.value)} className="w-24 px-2 py-1 text-sm font-bold border-2 border-slate-100 rounded-lg focus:border-brand-500 outline-none"/></div>
+                           <div><span className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 block mb-0.5">Cant Pedida</span><input type="number" min="1" value={d.cantidad_pedida} onChange={(e) => updateCartItem(idx, 'cantidad_pedida', e.target.value)} className="w-16 px-2 py-1 text-sm font-bold border-2 border-slate-100 rounded-lg text-center focus:border-brand-500 outline-none"/></div>
+                           <div><span className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 block mb-0.5">Costo Ud.</span><input type="number" min="0" value={d.costo_estimado} onChange={(e) => updateCartItem(idx, 'costo_estimado', e.target.value)} className="w-24 px-2 py-1 text-sm font-bold border-2 border-slate-100 rounded-lg focus:border-brand-500 outline-none"/></div>
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="font-black text-brand-600 mb-2">{formatCOP(Number(d.cantidad_pedida) * Number(d.costo_estimado))}</p>
-                        <button onClick={() => removeFromCart(idx)} className="p-1.5 text-rose-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition-colors"><Trash2 className="w-4 h-4"/></button>
+                        <p className="font-semibold text-brand-700 mb-2">{formatCOP(Number(d.cantidad_pedida) * Number(d.costo_estimado))}</p>
+                        <button onClick={() => removeFromCart(idx)} aria-label={`Quitar ${d.nombre} del pedido`} className="p-1.5 text-slate-500 hover:bg-red-50 hover:text-red-700 rounded-lg transition-colors"><Trash2 className="w-4 h-4"/></button>
                       </div>
                     </div>
                   ))}
                 </div>
                 <div className="p-6 bg-white border-t border-slate-200 shadow-[0_-4px_20px_-10px_rgba(0,0,0,0.1)] z-10">
                   <div className="flex justify-between items-center mb-6">
-                    <span className="text-sm font-black text-slate-500 uppercase tracking-widest">Estimado Total</span>
-                    <span className="text-4xl font-black text-emerald-600 tracking-tight">{formatCOP(getTotal())}</span>
+                    <span className="text-sm font-semibold text-slate-500 uppercase tracking-widest">Estimado Total</span>
+                    <span className="text-4xl font-semibold text-emerald-700 tracking-tight">{formatCOP(getTotal())}</span>
                   </div>
                   <button onClick={handleSubmitPedido} disabled={crearPedido.isPending} className="w-full btn-primary py-4 text-lg font-bold shadow-xl shadow-brand-500/30 flex items-center justify-center gap-2 disabled:opacity-50">
                     <CheckCircle className="w-6 h-6" /> {crearPedido.isPending ? 'Procesando…' : 'Procesar Orden de Compra'}
@@ -385,21 +403,20 @@ const Pedidos = () => {
               </div>
             </div>
           </div>
-        </div>,
-        document.body
-      )}
+        </div>
+      </Modal>
 
       {/* CHECK-IN MODAL */}
-      {checkInPedido && createPortal(
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[9999] animate-fade-in p-4 print:hidden">
-          <div className="bg-white rounded-[2rem] w-full max-w-4xl shadow-2xl overflow-hidden border border-slate-200">
+      <Modal open={!!checkInPedido} onClose={() => setCheckInPedido(null)} variant="bare" elevated title="Recepción de mercancía">
+        <div className="p-4 flex items-center justify-center">
+          <div className="bg-white rounded-3xl w-full max-w-4xl shadow-2xl overflow-hidden border border-slate-200">
             <div className="p-6 bg-emerald-50 border-b border-emerald-100 flex justify-between items-center">
               <div>
-                <h3 className="text-2xl font-black text-emerald-800 flex items-center gap-2"><Download className="text-emerald-600" /> Recepción de Pedido</h3>
-                <p className="text-xs font-bold text-emerald-600/70 uppercase tracking-widest mt-1">Ingreso a Bodega</p>
+                <h3 className="text-2xl font-semibold text-emerald-800 flex items-center gap-2"><Download className="text-emerald-700" /> Recepción de Pedido</h3>
+                <p className="text-xs font-bold text-emerald-700/70 uppercase tracking-widest mt-1">Ingreso a Bodega</p>
                 <div className="mt-3"><FormError message={formError} onDismiss={() => setFormError(null)} /></div>
               </div>
-              <button className="p-2 bg-white hover:bg-emerald-100 hover:text-emerald-800 rounded-full transition-colors text-emerald-600" onClick={() => setCheckInPedido(null)}><X className="w-5 h-5"/></button>
+              <button className="p-2 bg-white hover:bg-emerald-100 hover:text-emerald-800 rounded-full transition-colors text-emerald-700" onClick={() => setCheckInPedido(null)}><X className="w-5 h-5"/></button>
             </div>
             
             <div className="p-8">
@@ -411,10 +428,10 @@ const Pedidos = () => {
                <table className="w-full text-left mb-6">
                   <thead className="border-b-2 border-slate-200">
                       <tr>
-                        <th className="py-3 text-sm text-slate-400 uppercase">Producto</th>
-                        <th className="py-3 text-sm text-slate-400 uppercase text-center">Esperado</th>
-                        <th className="py-3 text-sm text-brand-600 font-bold uppercase text-center w-40">Recibido Real</th>
-                        <th className="py-3 text-sm text-slate-400 uppercase text-right w-32">Costo U.</th>
+                        <th className="py-3 text-sm text-slate-500 uppercase">Producto</th>
+                        <th className="py-3 text-sm text-slate-500 uppercase text-center">Esperado</th>
+                        <th className="py-3 text-sm text-brand-700 font-bold uppercase text-center w-40">Recibido Real</th>
+                        <th className="py-3 text-sm text-slate-500 uppercase text-right w-32">Costo U.</th>
                       </tr>
                   </thead>
                   <tbody>
@@ -423,7 +440,7 @@ const Pedidos = () => {
                             <td className="py-4 font-bold text-slate-800">{d.nombre}</td>
                             <td className="py-4 text-center font-bold text-slate-500">{formatCantidad(d.cantidad_pedida)}</td>
                             <td className="py-4 text-center">
-                              <input type="number" min="0" value={d.cantidad_llegada} onChange={(e) => updateCheckInItem(idx, 'cantidad_llegada', e.target.value)} className="w-full max-w-[100px] text-center px-3 py-2 border-2 border-brand-200 focus:border-brand-500 rounded-xl font-black text-brand-700 bg-brand-50 outline-none transition-all"/>
+                              <input type="number" min="0" value={d.cantidad_llegada} onChange={(e) => updateCheckInItem(idx, 'cantidad_llegada', e.target.value)} className="w-full max-w-[100px] text-center px-3 py-2 border-2 border-brand-200 focus:border-brand-500 rounded-xl font-semibold text-brand-700 bg-brand-50 outline-none transition-all"/>
                             </td>
                             <td className="py-4 text-right">
                               <input type="number" min="0" value={d.costo_estimado} onChange={(e) => updateCheckInItem(idx, 'costo_estimado', e.target.value)} className="w-full text-right px-2 py-1 border border-slate-200 rounded-lg text-sm font-bold text-slate-600"/>
@@ -434,25 +451,31 @@ const Pedidos = () => {
                </table>
                
                <div className="flex justify-end pt-4 border-t border-slate-200">
-                  <button onClick={submitCheckIn} disabled={recepcionar.isPending} className="px-8 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-[0_8px_20px_-8px_rgba(5,150,105,0.6)] flex items-center gap-2 transition-transform active:scale-95 disabled:opacity-50">
+                  <button onClick={submitCheckIn} disabled={recepcionar.isPending} className="px-8 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-[0_8px_20px_-8px_rgba(5,150,105,0.6)] flex items-center gap-2 transition-transform active:scale-95 disabled:opacity-50">
                     <CheckCircle className="w-5 h-5"/> {recepcionar.isPending ? 'Procesando…' : 'Confirmar Check-in y Abonar Stock'}
                   </button>
                </div>
             </div>
           </div>
-        </div>,
-        document.body
-      )}
+        </div>
+      </Modal>
 
-      {/* MODAL PRINT PDF / VER DETALLE */}
-      {viewDetalle && createPortal(
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-md flex items-center justify-center z-[10000] animate-fade-in p-8">
+      {/* MODAL PRINT PDF / VER DETALLE.
+          Los hijos de <Modal> se evalúan siempre, aunque Modal decida no
+          renderizarlos: con open={!!viewDetalle} pero `viewDetalle.id` leído
+          sin más ahí dentro, el primer render (viewDetalle === null) reventaba
+          con un TypeError antes de que Modal llegara a su `if (!open)`, y la
+          página quedaba en blanco. Este `{viewDetalle && (...)}` reproduce el
+          corto-circuito que tenía el `createPortal` original. */}
+      {viewDetalle && (
+      <Modal open onClose={() => setViewDetalle(null)} variant="bare" elevated printable title="Visualizador de documento">
+        <div className="p-4 sm:p-8 flex items-center justify-center">
           <div className="bg-slate-100 w-full max-w-3xl max-h-full flex flex-col rounded-3xl overflow-hidden shadow-2xl print:bg-white print:m-0 print:p-0 print:rounded-none print:shadow-none print:w-full">
             <div className="p-4 bg-slate-800 text-slate-300 flex justify-between items-center print:hidden border-b border-slate-700">
                <span className="font-bold text-sm tracking-widest uppercase">Visualizador de Documento</span>
                <div className="flex gap-2">
-                 <button onClick={() => window.print()} className="px-4 py-2 bg-brand-600 text-white rounded-lg font-bold hover:bg-brand-500 flex items-center gap-2 transition-colors"><Printer className="w-4 h-4"/> Imprimir PDF</button>
-                 <button className="p-2 hover:bg-slate-700 rounded-full transition-colors text-slate-400" onClick={() => setViewDetalle(null)}><X className="w-5 h-5"/></button>
+                 <button onClick={() => window.print()} className="px-4 py-2 bg-brand-700 hover:bg-brand-600 text-white rounded-lg font-bold hover:bg-brand-500 flex items-center gap-2 transition-colors"><Printer className="w-4 h-4"/> Imprimir PDF</button>
+                 <button aria-label="Cerrar visualizador" className="p-2 hover:bg-slate-700 rounded-full transition-colors text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-400" onClick={() => setViewDetalle(null)}><X className="w-5 h-5"/></button>
                </div>
             </div>
 
@@ -461,23 +484,23 @@ const Pedidos = () => {
                <div className="bg-white rounded-none md:rounded-xl shadow-sm border border-slate-200 p-10 print:border-none print:shadow-none max-w-[800px] mx-auto min-h-[1056px] print:min-h-0 text-slate-800">
                   <div className="flex justify-between items-start border-b-2 border-slate-800 pb-6 mb-8">
                      <div>
-                       <h1 className="text-4xl font-black uppercase tracking-tighter text-slate-900">Orden de Compra</h1>
+                       <h1 className="text-4xl font-semibold uppercase tracking-tighter text-slate-900">Orden de Compra</h1>
                        <p className="text-sm font-bold text-slate-500 mt-2">Documento NO Válido como Factura</p>
                      </div>
                      <div className="text-right">
-                        <p className="font-mono text-xl font-bold text-brand-600">#ORD-{viewDetalle.id.toString().padStart(4, '0')}</p>
+                        <p className="font-mono text-xl font-bold text-brand-700">#ORD-{viewDetalle.id.toString().padStart(4, '0')}</p>
                         <p className="text-sm font-bold text-slate-600 mt-1">{new Date(viewDetalle.fecha_pedido).toLocaleDateString()}</p>
                      </div>
                   </div>
                   
                   <div className="grid grid-cols-2 gap-8 mb-10">
                      <div>
-                        <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-2">Comprador (Nuestra Empresa)</p>
+                        <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 mb-2">Comprador (Nuestra Empresa)</p>
                         <p className="font-bold text-lg text-slate-800">AppInventario Corp.</p>
                         <p className="text-sm text-slate-600 mt-1">Generado vía Sistema Administrativo</p>
                      </div>
                      <div>
-                        <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-2">Proveedor / Vendedor</p>
+                        <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 mb-2">Proveedor / Vendedor</p>
                         <p className="font-bold text-lg text-slate-800">{viewDetalle.Proveedor?.nombre || viewDetalle.Proveedor?.razon_social}</p>
                         <p className="text-sm text-slate-600 mt-1 font-mono">NIT: {viewDetalle.Proveedor?.nit || 'N/A'}</p>
                         <p className="text-sm text-slate-600 mt-1">{viewDetalle.Proveedor?.contacto}</p>
@@ -509,20 +532,20 @@ const Pedidos = () => {
 
                   <div className="flex justify-end mt-8">
                      <div className="w-64 bg-slate-50 p-6 rounded-2xl border border-slate-200">
-                        <p className="text-xs font-black uppercase tracking-widest text-slate-400 mb-2">Total Estimado</p>
-                        <p className="text-3xl font-black text-brand-600 tracking-tight">{formatCOP(viewDetalle.total_estimado)}</p>
+                        <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 mb-2">Total Estimado</p>
+                        <p className="text-3xl font-semibold text-brand-700 tracking-tight">{formatCOP(viewDetalle.total_estimado)}</p>
                      </div>
                   </div>
 
-                  <div className="mt-24 border-t-2 border-slate-200 pt-8 text-center text-xs font-bold text-slate-400">
+                  <div className="mt-24 border-t-2 border-slate-200 pt-8 text-center text-xs font-bold text-slate-500">
                      <p>Software AppInventario POS &copy; {new Date().getFullYear()}</p>
                      <p className="mt-1">Favor confirmar recibido de esta orden de compra adjuntando factura formal de venta.</p>
                   </div>
                </div>
             </div>
           </div>
-        </div>,
-        document.body
+        </div>
+      </Modal>
       )}
 
     </div>

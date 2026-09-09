@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { Building2, Users } from 'lucide-react';
+import { Building2, Users, AlertTriangle } from 'lucide-react';
 
 const useCount = (key, url) =>
   useQuery({
@@ -11,48 +11,46 @@ const useCount = (key, url) =>
     },
   });
 
+const StatCard = ({ label, value, icon, tone, isLoading, isError }) => {
+  const Icon = icon;
+  return (
+    <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+      <div className="flex justify-between items-start gap-4">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-slate-500 mb-2 tracking-wider uppercase">{label}</p>
+          {isLoading ? (
+            <div className="h-10 w-24 bg-slate-100 rounded-lg animate-pulse" role="status" aria-label={`Cargando ${label}`} />
+          ) : isError ? (
+            <span className="flex items-center gap-1.5 text-sm font-medium text-slate-500 h-10">
+              <AlertTriangle className="w-4 h-4 text-red-600" aria-hidden="true" /> Sin datos
+            </span>
+          ) : (
+            <h3 className="text-4xl font-bold text-slate-900 tabular-nums truncate">{value}</h3>
+          )}
+        </div>
+        <div className={`w-14 h-14 shrink-0 rounded-2xl flex items-center justify-center ${tone}`}>
+          <Icon className="w-7 h-7" aria-hidden="true" />
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const DashboardAdmin = () => {
-  const { data: empresas = 0 } = useCount('empresas', '/empresas');
-  const { data: usuarios = 0 } = useCount('usuarios', '/usuarios');
+  const empresas = useCount('empresas', '/empresas');
+  const usuarios = useCount('usuarios', '/usuarios');
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-
-        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.03)] hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-sm font-semibold text-slate-500 mb-1 tracking-wide">EMPRESAS ACTIVAS</p>
-              <h3 className="text-4xl font-extrabold text-slate-800">{empresas}</h3>
-            </div>
-            <div className="w-14 h-14 rounded-2xl bg-brand-50 flex items-center justify-center shadow-inner">
-              <Building2 className="w-7 h-7 text-brand-600" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.03)] hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-sm font-semibold text-slate-500 mb-1 tracking-wide">USUARIOS TOTALES</p>
-              <h3 className="text-4xl font-extrabold text-slate-800">{usuarios}</h3>
-            </div>
-            <div className="w-14 h-14 rounded-2xl bg-indigo-50 flex items-center justify-center shadow-inner">
-              <Users className="w-7 h-7 text-indigo-600" />
-            </div>
-          </div>
-        </div>
-
-      </div>
-
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-[0_4px_25px_-5px_rgba(0,0,0,0.05)] p-10 mt-10 relative overflow-hidden">
-        <div className="absolute top-0 right-0 p-12 opacity-5 pointer-events-none">
-          <Building2 className="w-64 h-64" />
-        </div>
-        <h2 className="text-2xl font-black text-slate-800 mb-4">Bienvenido al Centro de Control Modular</h2>
-        <p className="text-slate-600 text-lg max-w-2xl leading-relaxed">
-          Has ingresado al portal omnisciente (Súper Admin). Desde aquí gobernarás las instancias de empresas y usuarios asignados a nuestra infraestructura Multi-Tenant. Utiliza el panel izquierdo para agregar o modificar compañías y asignar sus privilegios.
-        </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+        <StatCard
+          label="Empresas activas" icon={Building2} tone="bg-brand-50 text-brand-700"
+          value={empresas.data ?? 0} isLoading={empresas.isLoading} isError={empresas.isError}
+        />
+        <StatCard
+          label="Usuarios totales" icon={Users} tone="bg-slate-100 text-slate-700"
+          value={usuarios.data ?? 0} isLoading={usuarios.isLoading} isError={usuarios.isError}
+        />
       </div>
     </div>
   );

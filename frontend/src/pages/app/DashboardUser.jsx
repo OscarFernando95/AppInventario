@@ -1,20 +1,80 @@
-import { Boxes, Package, ShoppingCart, TrendingUp, PlusCircle, ArrowRight, ClipboardList } from 'lucide-react';
+import { Boxes, Package, ShoppingCart, TrendingUp, PlusCircle, ArrowRight, ClipboardList, AlertTriangle } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import api from '../../api/axios';
 import { formatCOP } from '../../utils/format';
 
+/**
+ * Tarjeta de KPI.
+ *
+ * Durante la carga muestra un skeleton, no un cero: antes el dashboard hacía
+ * `dash?.totalProductos ?? 0` y pintaba "Ventas Mes: $0" mientras la petición
+ * estaba en vuelo. Un skeleton se ignora; un cero se cree, y en una pantalla
+ * cuya única función es reportar magnitudes eso es dar un dato falso.
+ */
+const StatCard = ({ label, value, icon, tone, isLoading, isError }) => {
+  const Icon = icon;
+  return (
+    <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
+      <div className="flex justify-between items-start gap-4">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-slate-500 mb-2 tracking-wider uppercase">{label}</p>
+          {isLoading ? (
+            <div className="h-9 w-28 bg-slate-100 rounded-lg animate-pulse" role="status" aria-label={`Cargando ${label}`} />
+          ) : isError ? (
+            <span className="flex items-center gap-1.5 text-sm font-medium text-slate-500 h-9">
+              <AlertTriangle className="w-4 h-4 text-red-600" aria-hidden="true" /> Sin datos
+            </span>
+          ) : (
+            <h3 className="text-4xl font-bold text-slate-900 tabular-nums truncate">{value}</h3>
+          )}
+        </div>
+        <div className={`w-14 h-14 shrink-0 rounded-2xl flex items-center justify-center ${tone}`}>
+          <Icon className="w-7 h-7" aria-hidden="true" />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ACCESOS = [
+  {
+    path: '/app/ventas', icon: PlusCircle, title: 'Nueva Venta', cta: 'Iniciar',
+    text: 'Crea una factura POS rápida y descuenta del inventario.',
+    tone: 'bg-emerald-100 text-emerald-800', link: 'text-emerald-800',
+  },
+  {
+    path: '/app/pedidos', icon: ClipboardList, title: 'Nuevo Pedido', cta: 'Generar Orden',
+    text: 'Solicita abastecimiento a tus proveedores vía PDF.',
+    tone: 'bg-amber-100 text-amber-800', link: 'text-amber-800',
+  },
+  {
+    path: '/app/compras', icon: Package, title: 'Ingresar Gasto', cta: 'Registrar',
+    text: 'Registra operaciones comerciales e insumos varios.',
+    tone: 'bg-brand-100 text-brand-800', link: 'text-brand-800',
+  },
+  {
+    path: '/app/inventario', icon: Boxes, title: 'Ver Inventario', cta: 'Explorar',
+    text: 'Revisa tu stock actual, precios y edita productos.',
+    tone: 'bg-slate-100 text-slate-700', link: 'text-slate-700',
+  },
+];
+
 const DashboardUser = () => {
   const { user, activeEmpresa } = useAuthStore();
   const navigate = useNavigate();
 
   // Endpoint agregado y cacheado en el backend (1 consulta en vez de 4).
-  const { data: dash } = useEmpresaQuery(['dashboard'], '/reportes/dashboard');
+  const { data: dash, isLoading, isError } = useEmpresaQuery(['dashboard'], '/reportes/dashboard');
 
   // Total de pedidos: solo si la empresa tiene el módulo (evita un 403).
   const tienePedidos = (activeEmpresa?.modulos || []).includes('Pedidos');
-  const { data: totalPedidos } = useEmpresaQuery(
+  const {
+    data: totalPedidos,
+    isLoading: loadingPedidos,
+    isError: errorPedidos,
+  } = useEmpresaQuery(
     ['pedidos', 'count'],
     async () => {
       const res = await api.get('/pedidos', { params: { limit: 1 } });
@@ -23,103 +83,65 @@ const DashboardUser = () => {
     { enabled: tienePedidos }
   );
 
-  const stats = {
-    prod: dash?.totalProductos ?? 0,
-    ventMes: dash?.ventasMes ?? 0,
-    compMes: dash?.comprasMes ?? 0,
-    pedidos: totalPedidos ?? 0,
-  };
-
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-
-        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.03)] hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-xs font-bold text-slate-500 mb-1 tracking-wider uppercase">Productos</p>
-              <h3 className="text-3xl font-extrabold text-slate-800">{stats.prod}</h3>
-            </div>
-            <div className="w-14 h-14 rounded-2xl bg-brand-50 flex items-center justify-center shadow-inner">
-              <Boxes className="w-7 h-7 text-brand-600" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.03)] hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-xs font-bold text-slate-500 mb-1 tracking-wider uppercase">Ventas Mes</p>
-              <h3 className="text-3xl font-extrabold text-slate-800">{formatCOP(stats.ventMes)}</h3>
-            </div>
-            <div className="w-14 h-14 rounded-2xl bg-emerald-50 flex items-center justify-center shadow-inner">
-              <TrendingUp className="w-7 h-7 text-emerald-600" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.03)] hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-xs font-bold text-slate-500 mb-1 tracking-wider uppercase">Compras Mes</p>
-              <h3 className="text-3xl font-extrabold text-slate-800">{formatCOP(stats.compMes)}</h3>
-            </div>
-            <div className="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center shadow-inner">
-              <Package className="w-7 h-7 text-blue-600" />
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.03)] hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-xs font-bold text-slate-500 mb-1 tracking-wider uppercase">Pedidos</p>
-              <h3 className="text-3xl font-extrabold text-slate-800">{stats.pedidos}</h3>
-            </div>
-            <div className="w-14 h-14 rounded-2xl bg-orange-50 flex items-center justify-center shadow-inner">
-              <ShoppingCart className="w-7 h-7 text-orange-600" />
-            </div>
-          </div>
-        </div>
+    <div className="space-y-8 animate-fade-in">
+      {/* El saludo va en una línea de texto normal. Antes era un bloque
+          bg-slate-800 con p-10 y text-3xl font-black: el elemento de mayor
+          contraste de la pantalla principal, y con cero información. */}
+      <div>
+        <h2 className="text-2xl font-bold text-slate-800 tracking-tight">
+          Hola, {user?.nombre}
+        </h2>
+        <p className="text-slate-500 mt-1">
+          {activeEmpresa?.nombre ? `Resumen de ${activeEmpresa.nombre}.` : 'Resumen de tu operación.'}
+        </p>
       </div>
 
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-[0_4px_25px_-5px_rgba(0,0,0,0.05)] overflow-hidden mt-10">
-        <div className="p-10 bg-slate-800 text-white relative isolate">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-brand-500 rounded-full blur-[100px] opacity-30 -z-10 transform translate-x-1/2 -translate-y-1/2"></div>
-          <h2 className="text-3xl font-black mb-2 tracking-tight">¡Hola, {user?.nombre}!</h2>
-          <p className="text-slate-300 text-lg max-w-2xl leading-relaxed">
-            Bienvenido a tu panel de control {activeEmpresa?.nombre ? `de ${activeEmpresa.nombre}` : ''}. Utiliza los accesos directos a continuación para agilizar tus operaciones diarias o explora el menú lateral para herramientas avanzadas.
-          </p>
-        </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
+        <StatCard
+          label="Productos" icon={Boxes} tone="bg-brand-50 text-brand-700"
+          value={dash?.totalProductos ?? 0} isLoading={isLoading} isError={isError}
+        />
+        <StatCard
+          label="Ventas Mes" icon={TrendingUp} tone="bg-emerald-50 text-emerald-700"
+          value={formatCOP(dash?.ventasMes)} isLoading={isLoading} isError={isError}
+        />
+        <StatCard
+          label="Compras Mes" icon={Package} tone="bg-slate-100 text-slate-700"
+          value={formatCOP(dash?.comprasMes)} isLoading={isLoading} isError={isError}
+        />
+        <StatCard
+          label="Pedidos" icon={ShoppingCart} tone="bg-amber-50 text-amber-700"
+          value={tienePedidos ? (totalPedidos ?? 0) : '—'}
+          isLoading={tienePedidos && loadingPedidos}
+          isError={tienePedidos && errorPedidos}
+        />
+      </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-slate-100 bg-white">
-          <button onClick={() => navigate('/app/ventas')} className="p-8 text-left hover:bg-slate-50 transition-colors group">
-            <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><PlusCircle className="w-6 h-6"/></div>
-            <h4 className="font-bold text-slate-800 text-lg mb-1">Nueva Venta</h4>
-            <p className="text-sm text-slate-500 mb-4 h-10">Crea una factura POS rápida y descuenta del inventario.</p>
-            <span className="text-emerald-600 font-bold text-sm flex items-center gap-1">Iniciar <ArrowRight className="w-4 h-4"/></span>
-          </button>
-
-          <button onClick={() => navigate('/app/pedidos')} className="p-8 text-left hover:bg-slate-50 transition-colors group">
-            <div className="w-12 h-12 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><ClipboardList className="w-6 h-6"/></div>
-            <h4 className="font-bold text-slate-800 text-lg mb-1">Nuevo Pedido</h4>
-            <p className="text-sm text-slate-500 mb-4 h-10">Solicita abastecimiento a tus proveedores vía PDF.</p>
-            <span className="text-orange-600 font-bold text-sm flex items-center gap-1">Generar Orden <ArrowRight className="w-4 h-4"/></span>
-          </button>
-
-          <button onClick={() => navigate('/app/compras')} className="p-8 text-left hover:bg-slate-50 transition-colors group">
-            <div className="w-12 h-12 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><Package className="w-6 h-6"/></div>
-            <h4 className="font-bold text-slate-800 text-lg mb-1">Ingresar Gasto</h4>
-            <p className="text-sm text-slate-500 mb-4 h-10">Registra operaciones comerciales e insumos varios.</p>
-            <span className="text-blue-600 font-bold text-sm flex items-center gap-1">Registrar <ArrowRight className="w-4 h-4"/></span>
-          </button>
-
-          <button onClick={() => navigate('/app/inventario')} className="p-8 text-left hover:bg-slate-50 transition-colors group">
-            <div className="w-12 h-12 rounded-xl bg-brand-100 text-brand-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><Boxes className="w-6 h-6"/></div>
-            <h4 className="font-bold text-slate-800 text-lg mb-1">Ver Inventario</h4>
-            <p className="text-sm text-slate-500 mb-4 h-10">Revisa tu stock actual, precios y edita productos.</p>
-            <span className="text-brand-600 font-bold text-sm flex items-center gap-1">Explorar <ArrowRight className="w-4 h-4"/></span>
-          </button>
+      <div className="card-container">
+        <h3 className="px-6 pt-6 pb-2 text-sm font-semibold text-slate-500 tracking-wider uppercase">
+          Accesos directos
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-slate-100">
+          {ACCESOS.map((a) => {
+            const Icon = a.icon;
+            return (
+              <button
+                key={a.path}
+                onClick={() => navigate(a.path)}
+                className="p-6 text-left hover:bg-slate-50 transition-colors group focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-600"
+              >
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-4 transition-transform group-hover:scale-110 ${a.tone}`}>
+                  <Icon className="w-6 h-6" aria-hidden="true" />
+                </div>
+                <h4 className="font-semibold text-slate-800 mb-1">{a.title}</h4>
+                <p className="text-sm text-slate-500 mb-4 min-h-10">{a.text}</p>
+                <span className={`font-medium text-sm flex items-center gap-1 ${a.link}`}>
+                  {a.cta} <ArrowRight className="w-4 h-4" aria-hidden="true" />
+                </span>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>

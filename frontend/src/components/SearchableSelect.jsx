@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Check, X } from 'lucide-react';
 
 /**
@@ -32,12 +32,16 @@ const SearchableSelect = ({
   id,
   allowClear = true,
   maxVisible = 200,
+  'aria-describedby': ariaDescribedBy,
+  'aria-invalid': ariaInvalid,
 }) => {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [activeIdx, setActiveIdx] = useState(0);
   const rootRef = useRef(null);
   const listRef = useRef(null);
+  const reactId = useId();
+  const listId = `${id || reactId}-listbox`;
 
   const selected = useMemo(
     () => options.find((o) => String(o.value) === String(value)) || null,
@@ -122,8 +126,15 @@ const SearchableSelect = ({
         <input
           id={id}
           type="text"
-          className="input-field rounded-xl pr-16"
+          className="input-field pr-16"
           autoComplete="off"
+          role="combobox"
+          aria-expanded={open}
+          aria-controls={listId}
+          aria-autocomplete="list"
+          aria-activedescendant={open && filtered[safeIdx] ? `${listId}-opt-${safeIdx}` : undefined}
+          aria-describedby={ariaDescribedBy}
+          aria-invalid={ariaInvalid}
           disabled={disabled}
           placeholder={placeholder}
           value={inputValue}
@@ -132,40 +143,43 @@ const SearchableSelect = ({
           onFocus={() => !disabled && openDropdown()}
           onKeyDown={onKeyDown}
         />
-        <div className="absolute inset-y-0 right-2 flex items-center gap-1 text-slate-400">
+        <div className="absolute inset-y-0 right-2 flex items-center gap-1 text-slate-500">
           {allowClear && value && !disabled && (
             <button
               type="button"
               tabIndex={-1}
               onClick={() => commit(null)}
-              className="hover:text-slate-600"
+              className="hover:text-slate-800 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
               aria-label="Limpiar"
             >
               <X className="w-4 h-4" />
             </button>
           )}
-          <ChevronDown className="w-4 h-4" />
+          <ChevronDown className="w-4 h-4" aria-hidden="true" />
         </div>
       </div>
 
       {open && !disabled && (
         <ul
           ref={listRef}
-          className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-xl"
+          id={listId}
+          role="listbox"
+          className="absolute z-dropdown mt-1 max-h-64 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-xl"
         >
           {filtered.length === 0 ? (
-            <li className="px-3 py-2 text-sm text-slate-400">Sin coincidencias</li>
+            <li className="px-3 py-2 text-sm text-slate-500">Sin coincidencias</li>
           ) : (
             filtered.map((o, idx) => {
               const isSel = String(o.value) === String(value);
               return (
-                <li key={o.value}>
+                <li key={o.value} role="option" id={`${listId}-opt-${idx}`} aria-selected={isSel}>
                   <button
                     type="button"
+                    tabIndex={-1}
                     onMouseEnter={() => setActiveIdx(idx)}
                     onClick={() => commit(o)}
                     className={`flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm ${
-                      idx === safeIdx ? 'bg-brand-50 text-brand-700' : 'text-slate-700'
+                      idx === safeIdx ? 'bg-brand-50 text-brand-800' : 'text-slate-700'
                     }`}
                   >
                     <span className="truncate">{o.label}</span>
@@ -176,7 +190,7 @@ const SearchableSelect = ({
             })
           )}
           {options.length > filtered.length && (
-            <li className="px-3 py-1.5 text-xs text-slate-400">
+            <li className="px-3 py-1.5 text-xs text-slate-500">
               Mostrando {filtered.length} de {options.length}. Escribe para filtrar…
             </li>
           )}
