@@ -4,6 +4,9 @@ const Empresa = require('./Empresa');
 const Role = require('./Role');
 const Usuario = require('./Usuario');
 const Modulo = require('./Modulo');
+const Departamento = require('./Departamento');
+const Municipio = require('./Municipio');
+const ActividadCiiu = require('./ActividadCiiu');
 const Producto = require('./Producto');
 const Proveedor = require('./Proveedor');
 const Compra = require('./Compra');
@@ -77,5 +80,6 @@ Servicio.hasMany(VentaDetalle, { foreignKey: 'servicioId' });
 VentaDetalle.belongsTo(Servicio, { foreignKey: 'servicioId' });
 
 module.exports = {
-  sequelize, Empresa, Role, Usuario, Modulo, Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle
+  sequelize, Empresa, Role, Usuario, Modulo, Departamento, Municipio, ActividadCiiu,
+  Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle
 };

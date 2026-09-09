@@ -3,12 +3,15 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { UserPlus, Shield, Mail, Search, Trash2, User } from 'lucide-react';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import FormError from '../../components/FormError';
+import { apiError } from '../../utils/apiError';
 
 const EMPTY = { nombre: '', username: '', contrasena: '', rolId: 3 }; // 3 = FRONT_USER
 
 const AdminUsuarios = () => {
   const queryClient = useQueryClient();
   const [formData, setFormData] = useState(EMPTY);
+  const [formError, setFormError] = useState(null);
 
   const { data: usuarios = [] } = useEmpresaQuery(['usuarios-empresa'], '/usuarios');
 
@@ -17,12 +20,14 @@ const AdminUsuarios = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['empresa'] });
       setFormData(EMPTY);
+      setFormError(null);
     },
-    onError: () => alert('Error en API al crear usuario. Verifica el backend.'),
+    onError: (err) => setFormError(apiError(err, 'No se pudo crear el usuario')),
   });
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    setFormError(null);
     crear.mutate(formData);
   };
 
@@ -55,6 +60,7 @@ const AdminUsuarios = () => {
           </div>
           
           <form onSubmit={handleSubmit} className="space-y-5">
+            <FormError message={formError} onDismiss={() => setFormError(null)} />
             <div>
               <label className="block text-sm font-semibold text-slate-700 mb-1.5">Nombre Completo</label>
               <input

@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { UserPlus, User } from 'lucide-react';
+import FormError from '../../components/FormError';
+import { apiError } from '../../utils/apiError';
 
 const EMPTY = { nombre: '', username: '', contrasena: '', rolId: 2, empresaIds: [] };
 
@@ -11,6 +13,7 @@ const Usuarios = () => {
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState(null);
   const [formData, setFormData] = useState(EMPTY);
+  const [formError, setFormError] = useState(null);
 
   const { data: usuarios = [] } = useQuery({
     queryKey: ['bo-usuarios'],
@@ -37,14 +40,16 @@ const Usuarios = () => {
       setShowModal(false);
       setEditId(null);
       setFormData(EMPTY);
+      setFormError(null);
     },
-    onError: () => alert('Error al guardar el administrador'),
+    onError: (err) => setFormError(apiError(err, 'No se pudo guardar el administrador')),
   });
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    setFormError(null);
     if (formData.rolId !== 1 && formData.empresaIds.length === 0) {
-      alert('Debe seleccionar al menos una empresa para usuarios inquilinos');
+      setFormError('Debe seleccionar al menos una empresa para usuarios inquilinos.');
       return;
     }
     guardar.mutate(formData);
@@ -57,7 +62,7 @@ const Usuarios = () => {
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">Cuentas de Acceso</h2>
           <p className="text-slate-500 mt-1">Gestión global de credenciales y administradores de inquilinos (Tenants).</p>
         </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setEditId(null); setFormData(EMPTY); setShowModal(true); }}>
+        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setEditId(null); setFormData(EMPTY); setFormError(null); setShowModal(true); }}>
           <UserPlus className="w-5 h-5"/> Asignar Administrador
         </button>
       </div>
@@ -100,7 +105,7 @@ const Usuarios = () => {
                   </td>
                   <td className="px-6 py-4 text-right">
                     <button 
-                      onClick={() => { setEditId(u.id); setFormData({ nombre: u.nombre, username: u.username, contrasena: '', rolId: u.rolId, estado: u.estado, empresaIds: u.Empresas ? u.Empresas.map(e=>e.id) : [] }); setShowModal(true); }}
+                      onClick={() => { setEditId(u.id); setFormError(null); setFormData({ nombre: u.nombre, username: u.username, contrasena: '', rolId: u.rolId, estado: u.estado, empresaIds: u.Empresas ? u.Empresas.map(e=>e.id) : [] }); setShowModal(true); }}
                       className="text-brand-600 hover:text-brand-800 font-bold text-sm px-3 py-1.5 bg-brand-50 rounded-lg hover:bg-brand-100 transition-colors"
                     >Editar</button>
                   </td>
@@ -116,6 +121,7 @@ const Usuarios = () => {
           <div className="bg-white rounded-[2rem] p-8 sm:p-10 w-full max-w-md shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] relative my-auto">
             <h3 className="text-2xl font-bold mb-6 text-slate-800 border-b border-slate-100 pb-4">{editId ? 'Editar Usuario' : 'Vincular Usuario'}</h3>
             <form onSubmit={handleSubmit} className="space-y-5">
+              <FormError message={formError} onDismiss={() => setFormError(null)} />
               <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Nombre Ref.</label><input required className="input-field rounded-xl" placeholder="Juan Gerente" value={formData.nombre} onChange={e=>setFormData({...formData,nombre:e.target.value})}/></div>
               <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Username (Log-In)</label>
                 <div className="relative">

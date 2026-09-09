@@ -20,6 +20,20 @@ describe('ventaCreate', () => {
     expect(r.success).toBe(false);
   });
 
+  it('tolera el id complementario en null (payload del POS)', () => {
+    // El POS manda servicioId:null en una línea de producto y viceversa.
+    const r = ventaCreate.safeParse({
+      clienteId: 5,
+      detalles: [
+        { productoId: 1, servicioId: null, cantidad: 1, precio_unitario: 100, precio_base: 100 },
+        { productoId: null, servicioId: 2, cantidad: 1, precio_unitario: 50 },
+      ],
+    });
+    expect(r.success).toBe(true);
+    expect(r.data.detalles[0].servicioId).toBeUndefined();
+    expect(r.data.detalles[1].productoId).toBeUndefined();
+  });
+
   it('rechaza cantidad <= 0', () => {
     const r = ventaCreate.safeParse({ detalles: [{ servicioId: 1, cantidad: 0, precio_unitario: 10 }] });
     expect(r.success).toBe(false);
@@ -40,6 +54,17 @@ describe('compraCreate', () => {
     const r = compraCreate.safeParse({
       proveedorId: 3,
       detalles: [{ descripcion_gasto: 'Flete', cantidad: 1, costo_unitario: 20000 }],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('tolera productoId:null / descripcion_gasto:null (payload del POS)', () => {
+    const r = compraCreate.safeParse({
+      proveedorId: 3,
+      detalles: [
+        { productoId: 7, descripcion_gasto: null, cantidad: 2, costo_unitario: 100 },
+        { productoId: null, descripcion_gasto: 'Flete', cantidad: 1, costo_unitario: 50 },
+      ],
     });
     expect(r.success).toBe(true);
   });

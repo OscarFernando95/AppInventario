@@ -63,9 +63,13 @@ const clienteRoutes = require('./routes/clienteRoutes');
 const servicioRoutes = require('./routes/servicioRoutes');
 const pedidoRoutes = require('./routes/pedidoRoutes');
 const informeRoutes = require('./routes/informeRoutes');
+const catalogoRoutes = require('./routes/catalogoRoutes');
+const moduloRoutes = require('./routes/moduloRoutes');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/empresas', empresaRoutes);
+app.use('/api/modulos', moduloRoutes);
+app.use('/api/catalogos', catalogoRoutes);
 app.use('/api/usuarios', usuarioRoutes);
 app.use('/api/reportes', reporteRoutes);
 app.use('/api/productos', productoRoutes);

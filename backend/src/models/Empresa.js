@@ -79,6 +79,11 @@ const Empresa = sequelize.define('Empresa', {
     type: DataTypes.STRING,
     allowNull: true,
   },
+  tipo_empresa: {
+    type: DataTypes.STRING(30),
+    allowNull: false,
+    defaultValue: 'SIMPLE', // SIMPLE | FACTURACION_ELECTRONICA
+  },
   activa: {
     type: DataTypes.BOOLEAN,
     defaultValue: true,

@@ -5,6 +5,8 @@ import api from '../../api/axios';
 import { Briefcase, Plus, Edit } from 'lucide-react';
 import { formatCOP } from '../../utils/format';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import FormError from '../../components/FormError';
+import { apiError } from '../../utils/apiError';
 
 const EMPTY = {
   nombre: '', descripcion: '', precio: '',
@@ -16,6 +18,7 @@ const Servicios = () => {
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
+  const [formError, setFormError] = useState(null);
 
   const { data: servicios = [] } = useEmpresaQuery(['servicios'], '/servicios');
 
@@ -26,18 +29,21 @@ const Servicios = () => {
       setShowModal(false);
       setEditId(null);
       setFormData(EMPTY);
+      setFormError(null);
     },
-    onError: () => alert('Error al guardar servicio'),
+    onError: (err) => setFormError(apiError(err, 'No se pudo guardar el servicio')),
   });
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    setFormError(null);
     guardar.mutate(formData);
   };
 
   const startEdit = (s) => {
     setEditId(s.id);
-    setFormData({ 
+    setFormError(null);
+    setFormData({
       nombre: s.nombre, descripcion: s.descripcion, precio: s.precio,
       porcentaje_iva: s.porcentaje_iva || '19', unidad_medida: s.unidad_medida || 'ZZ', codigo_estandar: s.codigo_estandar || ''
     });
@@ -54,6 +60,7 @@ const Servicios = () => {
         <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => {
           setEditId(null);
           setFormData(EMPTY);
+          setFormError(null);
           setShowModal(true);
         }}>
           <Plus className="w-5 h-5" /> Nuevo Servicio
@@ -96,6 +103,7 @@ const Servicios = () => {
           <div className="bg-white rounded-[2rem] p-8 w-full max-w-lg shadow-xl relative my-auto">
             <h3 className="text-2xl font-bold mb-6 text-slate-800 border-b border-slate-100 pb-4">{editId ? 'Editar Servicio' : 'Nuevo Servicio'}</h3>
             <form onSubmit={handleSubmit} className="space-y-4">
+              <FormError message={formError} onDismiss={() => setFormError(null)} />
               <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Nombre del Servicio</label><input required className="input-field rounded-xl" value={formData.nombre || ''} onChange={e => setFormData({...formData, nombre: e.target.value})}/></div>
               
               <div className="grid grid-cols-2 gap-4">

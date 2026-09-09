@@ -23,7 +23,11 @@ module.exports = (err, req, res, next) => {
     return res.status(409).json({ error: 'Ya existe un registro con esos datos.' });
   }
   if (err && err.name === 'SequelizeValidationError') {
-    return res.status(400).json({ error: 'Datos inválidos.' });
+    const detalle = err.errors && err.errors[0] && err.errors[0].message;
+    return res.status(400).json({ error: detalle ? `Datos inválidos: ${detalle}` : 'Datos inválidos.' });
+  }
+  if (err && err.name === 'SequelizeForeignKeyConstraintError') {
+    return res.status(400).json({ error: 'Referencia inválida: uno de los datos seleccionados no existe.' });
   }
   if (err && err.type === 'entity.too.large') {
     return res.status(413).json({ error: 'La solicitud es demasiado grande.' });

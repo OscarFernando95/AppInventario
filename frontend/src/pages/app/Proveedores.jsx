@@ -4,14 +4,21 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { Truck, Plus, Edit, Phone, Mail, UserCircle, MapPin } from 'lucide-react';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import DaneLocationFields from '../../components/DaneLocationFields';
+import FormError from '../../components/FormError';
+import { apiError } from '../../utils/apiError';
 
-const EMPTY = { nombre: '', nit: '', contacto: '', telefono: '', email: '', direccion: '' };
+const EMPTY = {
+  nombre: '', nit: '', contacto: '', telefono: '', email: '', direccion: '',
+  departamento_dane: '', municipio_dane: '',
+};
 
 const Proveedores = () => {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
+  const [formError, setFormError] = useState(null);
 
   const { data: proveedores = [] } = useEmpresaQuery(['proveedores'], '/proveedores');
 
@@ -22,18 +29,24 @@ const Proveedores = () => {
       setShowModal(false);
       setEditId(null);
       setFormData(EMPTY);
+      setFormError(null);
     },
-    onError: () => alert('Error al guardar proveedor'),
+    onError: (err) => setFormError(apiError(err, 'No se pudo guardar el proveedor')),
   });
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    setFormError(null);
     guardar.mutate(formData);
   };
 
   const startEdit = (p) => {
     setEditId(p.id);
-    setFormData({ nombre: p.nombre, nit: p.nit, contacto: p.contacto, telefono: p.telefono, email: p.email, direccion: p.direccion });
+    setFormError(null);
+    setFormData({
+      nombre: p.nombre, nit: p.nit, contacto: p.contacto, telefono: p.telefono, email: p.email,
+      direccion: p.direccion, departamento_dane: p.departamento_dane || '', municipio_dane: p.municipio_dane || '',
+    });
     setShowModal(true);
   };
 
@@ -44,7 +57,7 @@ const Proveedores = () => {
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">Directorio Proveedores</h2>
           <p className="text-slate-500 mt-1">Registra a quienes te suministran inventario físico.</p>
         </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setEditId(null); setFormData(EMPTY); setShowModal(true); }}>
+        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setEditId(null); setFormData(EMPTY); setFormError(null); setShowModal(true); }}>
           <Plus className="w-5 h-5" /> Nuevo Proveedor
         </button>
       </div>
@@ -86,6 +99,7 @@ const Proveedores = () => {
           <div className="bg-white rounded-[2rem] p-8 w-full max-w-xl shadow-xl relative my-auto">
             <h3 className="text-2xl font-bold mb-6 text-slate-800 border-b border-slate-100 pb-4">{editId ? 'Editar Proveedor' : 'Nuevo Proveedor'}</h3>
             <form onSubmit={handleSubmit} className="space-y-4">
+              <FormError message={formError} onDismiss={() => setFormError(null)} />
               <div className="grid grid-cols-2 gap-4">
                 <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Razón Social</label><input required className="input-field rounded-xl" value={formData.nombre} onChange={e => setFormData({...formData, nombre: e.target.value})}/></div>
                 <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">NIT</label><input required className="input-field rounded-xl" value={formData.nit} onChange={e => setFormData({...formData, nit: e.target.value})}/></div>
@@ -95,7 +109,12 @@ const Proveedores = () => {
                 <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Teléfono Directo</label><input className="input-field rounded-xl" value={formData.telefono} onChange={e => setFormData({...formData, telefono: e.target.value})}/></div>
                 <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Correo</label><input type="email" className="input-field rounded-xl" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})}/></div>
               </div>
-              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Sede Principal Físcia</label><input className="input-field rounded-xl" value={formData.direccion} onChange={e => setFormData({...formData, direccion: e.target.value})}/></div>
+              <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Sede Principal Física</label><input className="input-field rounded-xl" value={formData.direccion} onChange={e => setFormData({...formData, direccion: e.target.value})}/></div>
+              <DaneLocationFields
+                departamento={formData.departamento_dane}
+                municipio={formData.municipio_dane}
+                onChange={(patch) => setFormData({ ...formData, ...patch })}
+              />
               <div className="flex justify-end gap-3 mt-8 pt-4 border-t border-slate-100">
                 <button type="button" className="btn-secondary rounded-xl" onClick={() => setShowModal(false)}>Cancelar</button>
                 <button type="submit" className="btn-primary rounded-xl px-6">{editId ? 'Actualizar' : 'Agregar'}</button>

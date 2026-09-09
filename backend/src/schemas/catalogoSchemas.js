@@ -24,6 +24,8 @@ const proveedor = z.object({
   telefono: textoOpc,
   email: emailOpc,
   direccion: textoOpc,
+  departamento_dane: z.string().trim().max(2).optional(),
+  municipio_dane: z.string().trim().max(5).optional(),
 });
 const proveedorUpdate = proveedor.partial();
 

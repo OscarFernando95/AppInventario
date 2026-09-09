@@ -5,6 +5,8 @@ import api from '../../api/axios';
 import { PackageOpen, Plus, Loader2 } from 'lucide-react';
 import { formatCOP } from '../../utils/format';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import FormError from '../../components/FormError';
+import { apiError } from '../../utils/apiError';
 
 const EMPTY_FORM = {
   codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
@@ -15,6 +17,7 @@ const Inventario = () => {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState(EMPTY_FORM);
+  const [formError, setFormError] = useState(null);
 
   const { data: productos = [], isLoading } = useEmpresaQuery(['productos'], '/productos');
 
@@ -24,12 +27,14 @@ const Inventario = () => {
       queryClient.invalidateQueries({ queryKey: ['empresa'] });
       setShowModal(false);
       setFormData(EMPTY_FORM);
+      setFormError(null);
     },
-    onError: () => alert('Error al crear producto'),
+    onError: (err) => setFormError(apiError(err, 'No se pudo crear el producto')),
   });
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    setFormError(null);
     crearProducto.mutate({ ...formData, stock_actual: parseInt(formData.stock_actual, 10) || 0 });
   };
 
@@ -42,6 +47,7 @@ const Inventario = () => {
         </div>
         <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => {
           setFormData(EMPTY_FORM);
+          setFormError(null);
           setShowModal(true);
         }}>
           <Plus className="w-5 h-5" /> Nuevo Producto
@@ -97,6 +103,7 @@ const Inventario = () => {
           <div className="bg-white rounded-[2rem] p-8 sm:p-10 w-full max-w-lg shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] relative my-auto">
             <h3 className="text-2xl font-bold mb-6 text-slate-800 border-b border-slate-100 pb-4">Crear Artículo</h3>
             <form onSubmit={handleSubmit} className="space-y-4">
+              <FormError message={formError} onDismiss={() => setFormError(null)} />
               <div className="grid grid-cols-2 gap-4">
                 <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Código SKU</label><input required className="input-field rounded-xl" placeholder="PROD-001" value={formData.codigo || ''} onChange={e => setFormData({...formData, codigo: e.target.value})}/></div>
                 <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Código Estandar</label><input className="input-field rounded-xl" placeholder="999999" value={formData.codigo_estandar || ''} onChange={e => setFormData({...formData, codigo_estandar: e.target.value})}/></div>

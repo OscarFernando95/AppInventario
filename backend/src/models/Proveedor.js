@@ -34,6 +34,14 @@ const Proveedor = sequelize.define('Proveedor', {
   direccion: {
     type: DataTypes.STRING,
     allowNull: true,
+  },
+  departamento_dane: {
+    type: DataTypes.STRING(2),
+    allowNull: true,
+  },
+  municipio_dane: {
+    type: DataTypes.STRING(5),
+    allowNull: true,
   }
 }, {
   tableName: 'proveedores',

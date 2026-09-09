@@ -4,6 +4,9 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { Users, Plus, Edit, Mail, Phone, MapPin, IdCard } from 'lucide-react';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import DaneLocationFields from '../../components/DaneLocationFields';
+import FormError from '../../components/FormError';
+import { apiError } from '../../utils/apiError';
 
 const EMPTY = {
   nombre: '', documento: '', email: '', telefono: '', direccion: '',
@@ -16,6 +19,7 @@ const Clientes = () => {
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
+  const [formError, setFormError] = useState(null);
 
   const { data: clientes = [] } = useEmpresaQuery(['clientes'], '/clientes');
 
@@ -26,17 +30,20 @@ const Clientes = () => {
       setShowModal(false);
       setEditId(null);
       setFormData(EMPTY);
+      setFormError(null);
     },
-    onError: () => alert('Error al guardar cliente'),
+    onError: (err) => setFormError(apiError(err, 'No se pudo guardar el cliente')),
   });
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    setFormError(null);
     guardar.mutate(formData);
   };
 
   const startEdit = (c) => {
     setEditId(c.id);
+    setFormError(null);
     setFormData({ 
       nombre: c.nombre, documento: c.documento, email: c.email, telefono: c.telefono, direccion: c.direccion,
       tipo_documento: c.tipo_documento || '13', dv: c.dv || '', tipo_persona: c.tipo_persona || '2', regimen_fiscal: c.regimen_fiscal || 'R-99-PN',
@@ -55,6 +62,7 @@ const Clientes = () => {
         <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => {
           setEditId(null);
           setFormData(EMPTY);
+          setFormError(null);
           setShowModal(true);
         }}>
           <Plus className="w-5 h-5" /> Nuevo Cliente
@@ -97,6 +105,7 @@ const Clientes = () => {
           <div className="bg-white rounded-[2rem] p-8 w-full max-w-2xl shadow-xl relative my-auto">
             <h3 className="text-2xl font-bold mb-6 text-slate-800 border-b border-slate-100 pb-4">{editId ? 'Editar Cliente' : 'Nuevo Cliente'}</h3>
             <form onSubmit={handleSubmit} className="space-y-4">
+              <FormError message={formError} onDismiss={() => setFormError(null)} />
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-4">
                   <h4 className="font-bold text-brand-600 border-b pb-1 mb-2 text-sm">Información Básica</h4>
@@ -140,11 +149,12 @@ const Clientes = () => {
                     </div>
                   </div>
 
-                  <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Dirección Físcia</label><input className="input-field rounded-xl" value={formData.direccion || ''} onChange={e => setFormData({...formData, direccion: e.target.value})}/></div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Cod. Dpto</label><input className="input-field rounded-xl" placeholder="11" value={formData.departamento_dane || ''} onChange={e => setFormData({...formData, departamento_dane: e.target.value})}/></div>
-                    <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Cod. Mpio</label><input className="input-field rounded-xl" placeholder="11001" value={formData.municipio_dane || ''} onChange={e => setFormData({...formData, municipio_dane: e.target.value})}/></div>
-                  </div>
+                  <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Dirección Física</label><input className="input-field rounded-xl" value={formData.direccion || ''} onChange={e => setFormData({...formData, direccion: e.target.value})}/></div>
+                  <DaneLocationFields
+                    departamento={formData.departamento_dane || ''}
+                    municipio={formData.municipio_dane || ''}
+                    onChange={(patch) => setFormData({ ...formData, ...patch })}
+                  />
                 </div>
               </div>
 

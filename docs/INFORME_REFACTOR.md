@@ -414,14 +414,82 @@ Verificado E2E con la pila Docker: migración de índices aplicada, dashboard re
 - [x] **P5** `bulkCreate` de detalles en venta/compra/pedido/recepción.
 - [x] **C5 (parcial)** Migradas a TanStack Query: `DashboardUser`, `Inventario`, `Clientes`, `Proveedores`, `Servicios`, `AdminUsuarios`, `DashboardAdmin`, backoffice `Empresas` y `Usuarios`. _Pendientes: `Ventas`, `Compras`, `Pedidos`, `Informes` (formularios POS complejos; su lectura de listas sigue con `useEffect`)._
 
-Verificado E2E con la pila Docker: cookie httpOnly (login/navegación/reload/logout, invisible a JS), creación de cliente vía formulario migrado con invalidación de caché, validación zod (`""` de formularios, campos desconocidos), recálculo de `total` de venta tras el refactor a servicio, todas las páginas cargan sin errores de consola, 40 tests en verde, contenedor backend como `node`.
+Verificado E2E con la pila Docker: cookie httpOnly (login/navegación/reload/logout, invisible a JS), creación de cliente vía formulario migrado con invalidación de caché, validación zod (`""` de formularios, campos desconocidos), recálculo de `total` de venta tras el refactor a servicio, todas las páginas cargan sin errores de consola, 42 tests en verde, contenedor backend como `node`.
 
-### Deuda restante (Fase 4, opcional)
+**Regresión encontrada y corregida (2026-09-08):** los esquemas zod de venta/compra
+rechazaban el `null` explícito que el POS manda en el id que no aplica
+(`servicioId:null` en una línea de producto, `productoId:null`/`descripcion_gasto:null`
+en compra). Habría roto **todas las ventas y compras**. Corregido con `optionalId`/
+`optionalText` (preprocesan `null`/`""` → `undefined`) + 2 tests nuevos. Verificado E2E
+con los payloads exactos del POS (venta producto+servicio, compra producto+gasto,
+pedido, recepción → stock correcto).
 
-- Migrar `Ventas`/`Compras`/`Pedidos`/`Informes` a TanStack Query.
+### Fase 4 — Alta de inquilinos y catálogos DANE/CIIU — ✅ COMPLETADA (2026-09-09)
+
+Ajustes pedidos por el usuario sobre el alta de empresas (tenants) en el BackOffice.
+
+- [x] **Bug de alta (500 opaco).** El frontend ofrecía 8 módulos hardcodeados pero el
+  seeder solo sembró 1–5; marcar Clientes/Servicios/Pedidos → `SequelizeForeignKeyConstraintError`
+  → 500 genérico. **Fix:** seeder `20260909120200-modulos-faltantes` (idempotente, por
+  `nombre_codigo`), `GET /api/modulos` y el formulario carga la lista de la BD (no más drift),
+  validación de `modulosIds` en `empresaController` (→ `ValidationError` 400 con los ids),
+  y `errorHandler` mapea `SequelizeForeignKeyConstraintError` → 400 legible.
+- [x] **Errores transparentes en formularios (todos).** Nuevo `components/FormError.jsx` +
+  `utils/apiError.js`. Sustituido `onError: () => alert('Error…')` por un banner rojo con el
+  mensaje real del backend en: `Empresas`, `Clientes`, `Proveedores`, `Servicios`, `Inventario`,
+  backoffice `Usuarios`, `AdminUsuarios`. `empresaCreate` con mensajes zod en español para
+  `nombre` y `tipo_empresa`.
+- [x] **Tipo de empresa.** Columna `empresas.tipo_empresa` (`STRING(30)`, default `SIMPLE`).
+  Al crear, un paso selector: **Empresa simple** (formulario reducido: razón social, NIT+DV,
+  contacto, departamento, ciudad, dirección, CIIU, módulos) o **Facturación electrónica**
+  (formulario completo actual). `regimen_fiscal`/`tipo_persona` en SIMPLE usan el default del modelo.
+- [x] **Catálogos DANE/CIIU.** Migración `20260909120000` crea `departamentos` (33),
+  `municipios` (1123) y `actividades_ciiu` (500 clases CIIU Rev. 4 A.C.). Datos vendorizados en
+  `backend/src/seeders/data/` (ver `FUENTES.md`), sembrados por `20260909120100`.
+  Servicio en memoria `services/catalogos.js` + endpoints `GET /api/catalogos/{departamentos,municipios,ciiu}`
+  (solo `authenticate`; los consume BackOffice y Front). `utils/ciiu.js#flattenCiiu` aplana el JSON
+  jerárquico y descarta entradas basura de la fuente.
+- [x] **Selects buscables (código por detrás, nombre visible).** `components/SearchableSelect.jsx`
+  (sin dependencias: input + lista filtrada, teclado, click-fuera) y `components/DaneLocationFields.jsx`
+  (par departamento/municipio: la ciudad se filtra por el departamento; elegir ciudad sin
+  departamento lo autoselecciona). Aplicado a **Empresas, Clientes y Proveedores**
+  (a `proveedores` se le añadieron las columnas `departamento_dane`/`municipio_dane`).
+- [x] **Inventario preseleccionado** por defecto en el alta (con etiqueta "base"; desmarcable).
+- [x] **DV automático** del NIT (algoritmo módulo 11 oficial DIAN) en `utils/nit.js` (front) y
+  `backend/src/utils/nit.js`; en el formulario SIMPLE es de solo lectura.
+- [x] **Favicon.** `frontend/public/favicon.svg` reemplazado por el icono *Boxes* (mismo del
+  logo in-app) sobre fondo `brand-600`, en vez del cubo tipo Docker anterior.
+- [x] **Tests.** +11 (`nit.test.js`, `catalogos.test.js`): DV conocidos, aplanado CIIU,
+  integridad de DIVIPOLA, `tipo_empresa` en el esquema. Total **53** en verde.
+
+Verificado E2E con la pila Docker: migración + seeders aplicados (33/1123/500 filas, módulos 6–8),
+`POST /api/empresas` SIMPLE con códigos DANE/CIIU guardados, errores 400 legibles (módulo
+inexistente, nombre vacío, tipo inválido), y por navegador: login → alta de empresa simple
+completa con los combobox de departamento/ciudad, Inventario premarcado, DV `890903938→8`,
+0 errores de consola.
+
+### Backlog (revisión — no realizado)
+
+El usuario decidió cerrar la refactorización tras la Fase 3. Queda pendiente,
+como backlog, y **sin auditar en profundidad**:
+
+**Mejoras (Fase 4):**
+- Migrar `Ventas`/`Compras`/`Pedidos`/`Informes` a TanStack Query (su lectura de listas sigue con `useEffect` + `set-state-in-effect` silenciado).
 - Refresh tokens si se necesita sesión más larga sin re-login.
-- Tests de integración HTTP (supertest contra un Postgres de test).
-- `getVentas` incluye `Empresa` (atributos limitados) — se puede quitar si el frontend no lo usa.
+- Tests de integración HTTP (supertest contra un Postgres de test) — hoy solo hay 53 tests unitarios de lógica pura.
+- `getVentas` incluye `Empresa` (atributos limitados) — quitar si el frontend no lo usa.
+
+**Zonas que la revisión original NO cubrió a fondo (riesgo residual):**
+- Flujos POS completos: descuento por línea, cliente inline, edición de carrito (`Ventas`/`Compras`/`Pedidos`, ~1500 líneas).
+- Generación de PDF de factura ([`generateInvoicePDF.js`](../frontend/src/utils/generateInvoicePDF.js), 355 líneas) y su aritmética de fallback.
+- Manejo de dinero extremo a extremo: Postgres devuelve `DECIMAL` como string; el frontend hace `parseFloat`/`Number` en varios sitios — no se auditó precisión ni redondeo acumulado.
+- Campos de facturación electrónica DIAN (`cufe`, `qr_data`, `pdf_url`, `xml_url`, `estado_fe`) — parecen un stub sin integración; sin revisar.
+- Autorización por módulos: el gating vive solo en el frontend (`FrontLayout` filtra el menú por `activeEmpresa.modulos`); el backend **no** comprueba que la empresa tenga el módulo contratado antes de servir el endpoint.
+- Zona horaria en informes/dashboard (`new Date(...)` en el contenedor UTC vs. fechas locales).
+
+> ⚠️ Durante el cierre se encontró y corrigió una regresión que habría roto
+> todas las ventas y compras (esquemas zod rechazaban `null` del POS). Es
+> plausible que queden regresiones similares en los flujos no probados de arriba.
 
 ---
 

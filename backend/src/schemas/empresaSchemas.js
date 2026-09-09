@@ -1,9 +1,9 @@
 'use strict';
 
-const { z, nombre, textoOpc, emailOpc, enteroOpc } = require('./common');
+const { z, textoOpc, emailOpc, enteroOpc } = require('./common');
 
 const base = z.object({
-  nombre,
+  nombre: z.string({ error: 'El nombre de la empresa es obligatorio.' }).trim().min(1, 'El nombre de la empresa es obligatorio.').max(255),
   nit: textoOpc,
   contacto: textoOpc,
   dv: z.string().trim().max(1).optional(),
@@ -21,6 +21,7 @@ const base = z.object({
   fecha_vigencia_desde: z.string().trim().optional().transform((v) => v || undefined),
   fecha_vigencia_hasta: z.string().trim().optional().transform((v) => v || undefined),
   clave_tecnica: textoOpc,
+  tipo_empresa: z.enum(['SIMPLE', 'FACTURACION_ELECTRONICA'], { error: 'Tipo de empresa no válido.' }).optional(),
   modulosIds: z.array(z.coerce.number().int().positive()).optional(),
 });
 
