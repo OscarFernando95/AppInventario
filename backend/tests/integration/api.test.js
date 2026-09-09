@@ -297,3 +297,46 @@ describe('N10 — recepción de pedido enlaza la compra y valida los productos',
     expect(compra.pedidoId).toBe(ped.body.id);
   });
 });
+
+describe('Fase 9 — recepción de pedido concurrente (doble abono de stock)', () => {
+  it('dos check-ins simultáneos del mismo pedido: solo uno abona stock', async () => {
+    const ped = await conEmpresa(agent.post('/api/pedidos')).send({
+      proveedorId: ctx.proveedor.id,
+      detalles: [{ productoId: ctx.producto.id, cantidad_pedida: 3, costo_estimado: 800 }],
+    });
+    expect(ped.status).toBe(201);
+
+    const antes = Number((await models.Producto.findByPk(ctx.producto.id)).stock_actual);
+
+    const payload = { detalles_recibidos: [{ productoId: ctx.producto.id, cantidad: 3, costo_unitario: 800 }] };
+    const [r1, r2] = await Promise.all([
+      conEmpresa(agent.post(`/api/pedidos/${ped.body.id}/checkin`)).send(payload),
+      conEmpresa(agent.post(`/api/pedidos/${ped.body.id}/checkin`)).send(payload),
+    ]);
+
+    const estados = [r1.status, r2.status].sort();
+    expect(estados).toEqual([200, 400]);
+
+    const despues = Number((await models.Producto.findByPk(ctx.producto.id)).stock_actual);
+    expect(despues).toBe(antes + 3); // no + 6
+
+    const compras = await models.Compra.findAll({ where: { pedidoId: ped.body.id } });
+    expect(compras.length).toBe(1);
+  });
+});
+
+describe('Fase 9 — NIT de empresa único', () => {
+  it('rechaza una segunda empresa con el mismo NIT (normalizado)', async () => {
+    await models.Empresa.create({ nombre: 'NIT-A', nit: '901222333', tipo_empresa: 'SIMPLE' });
+    await expect(
+      models.Empresa.create({ nombre: 'NIT-B', nit: '901222333', tipo_empresa: 'SIMPLE' })
+    ).rejects.toMatchObject({ name: 'SequelizeUniqueConstraintError' });
+  });
+
+  it('permite varias empresas sin NIT (índice parcial)', async () => {
+    await models.Empresa.create({ nombre: 'SinNit-1', tipo_empresa: 'SIMPLE' });
+    await expect(
+      models.Empresa.create({ nombre: 'SinNit-2', tipo_empresa: 'SIMPLE' })
+    ).resolves.toBeTruthy();
+  });
+});

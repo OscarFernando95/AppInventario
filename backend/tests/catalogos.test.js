@@ -67,4 +67,15 @@ describe('empresaCreate — tipo_empresa', () => {
     expect(r.data).not.toHaveProperty('id');
     expect(r.data.modulosIds).toEqual([1, 2]);
   });
+
+  it('normaliza el NIT: quita puntos, guiones y espacios (Fase 9)', () => {
+    const r = empresaCreate.safeParse({ nombre: 'X', nit: ' 900.123.456-7 ' });
+    expect(r.success).toBe(true);
+    expect(r.data.nit).toBe('9001234567');
+  });
+
+  it('un NIT vacío o solo separadores queda como undefined', () => {
+    expect(empresaCreate.safeParse({ nombre: 'X', nit: '   ' }).data.nit).toBeUndefined();
+    expect(empresaCreate.safeParse({ nombre: 'X', nit: '--' }).data.nit).toBeUndefined();
+  });
 });

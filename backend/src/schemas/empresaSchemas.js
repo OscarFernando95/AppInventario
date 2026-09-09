@@ -2,9 +2,24 @@
 
 const { z, textoOpc, emailOpc, enteroOpc } = require('./common');
 
+// NIT normalizado: sin puntos, guiones ni espacios. Debe coincidir con la
+// normalización de la migración `20260913120000` para que el índice único
+// parcial de `empresas.nit` se comporte de forma predecible.
+const nitOpc = z
+  .string()
+  .trim()
+  .max(20)
+  .optional()
+  .nullable()
+  .transform((v) => {
+    if (!v) return undefined;
+    const limpio = v.replace(/[.\- ]/g, '');
+    return limpio || undefined;
+  });
+
 const base = z.object({
   nombre: z.string({ error: 'El nombre de la empresa es obligatorio.' }).trim().min(1, 'El nombre de la empresa es obligatorio.').max(255),
-  nit: textoOpc,
+  nit: nitOpc,
   contacto: textoOpc,
   dv: z.string().trim().max(1).optional(),
   tipo_persona: z.string().trim().max(1).optional(),

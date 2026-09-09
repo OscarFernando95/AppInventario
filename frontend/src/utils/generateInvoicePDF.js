@@ -9,12 +9,29 @@ import { formatCOP, formatDocumento, formatNIT, formatCantidad } from './format'
  * @param {Object} [options] - { autoOpen: true }
  */
 export const generateInvoicePDF = (venta, empresa, options = {}) => {
-  const { autoOpen = true } = options;
+  // `autoOpen`: abre el PDF en una pestaña nueva. `save`: dispara la descarga.
+  // Los tests pasan ambos en `false` para ejercitar la construcción del PDF sin
+  // tocar el navegador ni el disco.
+  const { autoOpen = true, save = true } = options;
+
+  if (!venta || typeof venta !== 'object') {
+    throw new Error('generateInvoicePDF: falta el objeto de la venta.');
+  }
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' });
   const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
   const margin = 18;
   const contentW = pageW - margin * 2;
+
+  // Recorta un texto a un ancho máximo en mm (para no desbordar el encabezado).
+  const fit = (txt, maxW, size) => {
+    doc.setFontSize(size);
+    let s = String(txt ?? '');
+    if (doc.getTextWidth(s) <= maxW) return s;
+    while (s.length > 1 && doc.getTextWidth(`${s}…`) > maxW) s = s.slice(0, -1);
+    return `${s}…`;
+  };
 
   // ──── COLOR PALETTE ────
   const primary = [30, 58, 95];       // Dark navy
@@ -26,8 +43,12 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
   const divider = [226, 232, 240];
   const discountColor = [220, 38, 38]; // Red for discounts
 
-  const invoiceNo = `FACT-${venta.id.toString().padStart(4, '0')}`;
-  const fecha = new Date(venta.fecha).toLocaleDateString('es-CO', {
+  const invoiceNo = venta.id != null
+    ? `FACT-${venta.id.toString().padStart(4, '0')}`
+    : 'FACT-BORRADOR';
+  const fechaBase = venta.fecha ? new Date(venta.fecha) : new Date();
+  const fechaValida = Number.isNaN(fechaBase.getTime()) ? new Date() : fechaBase;
+  const fecha = fechaValida.toLocaleDateString('es-CO', {
     year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
   });
 
@@ -41,7 +62,7 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(20);
   doc.setTextColor(...white);
-  doc.text((empresa?.nombre || 'Mi Empresa').toUpperCase(), margin, 17);
+  doc.text(fit((empresa?.nombre || 'Mi Empresa').toUpperCase(), contentW - 45, 20), margin, 17);
 
   // Company details
   doc.setFontSize(9);
@@ -235,9 +256,11 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
   const totalImpuestos = Number(venta.total_impuestos) || 0;
   
   const itemDiscountTotal = subtotalAtBase - subtotalAtSale;
-  const globalDiscountPct = Number(venta.descuento_global || 0);
+  const globalDiscountPct = Number(venta.descuento_global || 0) || 0;
   const globalDiscountAmount = subtotalAtSale * (globalDiscountPct / 100);
-  const total = Number(venta.total);
+  const total = Number.isFinite(Number(venta.total))
+    ? Number(venta.total)
+    : Math.max(0, subtotalAtSale - subtotalAtSale * (globalDiscountPct / 100));
 
   const hasGlobalDiscount = globalDiscountPct > 0;
   const totalsX = pageW - margin - 90;
@@ -256,6 +279,13 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
   if (hasGlobalDiscount) boxH += 8;
   boxH += 4; // divider space
   boxH += 10; // total line
+
+  // Si la tabla terminó cerca del pie (facturas con muchas líneas), el bloque de
+  // totales se pasaría de página / pisaría el footer: lo llevamos a una hoja nueva.
+  if (cursorY + boxH > pageH - 32) {
+    doc.addPage();
+    cursorY = margin + 8;
+  }
 
   doc.setFillColor(...lightBg);
   doc.roundedRect(totalsX - 4, cursorY - 2, totalsW + 8, boxH, 3, 3, 'F');
@@ -334,9 +364,21 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...textMuted);
   doc.text(
-    `Documento generado electrónicamente por ${empresa?.nombre || 'Sistema'} — ${new Date().toLocaleDateString('es-CO')}`,
+    fit(`Documento generado electrónicamente por ${empresa?.nombre || 'Sistema'} — ${new Date().toLocaleDateString('es-CO')}`, contentW, 7),
     pageW / 2, footerY + 14, { align: 'center' }
   );
+
+  // Numeración de páginas (solo si la factura ocupó más de una hoja).
+  const totalPages = doc.internal.getNumberOfPages();
+  if (totalPages > 1) {
+    for (let i = 1; i <= totalPages; i += 1) {
+      doc.setPage(i);
+      doc.setFontSize(7);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...textMuted);
+      doc.text(`Página ${i} de ${totalPages}`, pageW - margin, pageH - 10, { align: 'right' });
+    }
+  }
 
   // ═══════════════════════════════════════════════
   // OUTPUT
@@ -350,6 +392,6 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
     setTimeout(() => URL.revokeObjectURL(url), 30000);
   }
 
-  doc.save(fileName);
+  if (save) doc.save(fileName);
   return fileName;
 };

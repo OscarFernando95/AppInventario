@@ -57,6 +57,14 @@ const Venta = sequelize.define('Venta', {
     type: DataTypes.DECIMAL(14, 2),
     defaultValue: 0,
   },
+  // ─────────────────────────────────────────────────────────────────────────
+  // Facturación electrónica DIAN — NO IMPLEMENTADA.
+  // Estos campos son un stub para cuando se integre un proveedor tecnológico
+  // (PAC). Hoy `estado_fe` siempre queda en 'NO_EMITIDA' y ningún endpoint lo
+  // transiciona. Antes de habilitar la FE hay que auditar: firmado XML,
+  // numeración por resolución, concurrencia de consecutivos y almacenaje
+  // del XML/PDF. Ver `docs/INFORME_REFACTOR.md` §6.
+  // ─────────────────────────────────────────────────────────────────────────
   estado_fe: {
     type: DataTypes.STRING,
     defaultValue: 'NO_EMITIDA', // NO_EMITIDA, EMITIDA, RECHAZADA

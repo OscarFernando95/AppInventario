@@ -7,6 +7,16 @@ const { invalidateAllProfiles } = require('../middlewares/auth');
  * (p.ej. porque el frontend ofrecía más módulos de los sembrados) reventaba en
  * `setModulos` con un error de FK que se traducía en un 500 opaco.
  */
+/** Traduce la violación del índice único de `empresas.nit` a un 409 legible. */
+function traducirNitDuplicado(err) {
+  if (err && err.name === 'SequelizeUniqueConstraintError') {
+    const e = new ValidationError('Ya existe una empresa registrada con ese NIT.');
+    e.status = 409;
+    return e;
+  }
+  return err;
+}
+
 async function validarModulos(modulosIds) {
   if (!modulosIds || modulosIds.length === 0) return;
   const encontrados = await Modulo.findAll({ where: { id: modulosIds }, attributes: ['id'] });
@@ -26,7 +36,12 @@ exports.createEmpresa = async (req, res) => {
   const { modulosIds, ...datos } = req.body;
   await validarModulos(modulosIds);
 
-  const empresa = await Empresa.create(datos);
+  let empresa;
+  try {
+    empresa = await Empresa.create(datos);
+  } catch (err) {
+    throw traducirNitDuplicado(err);
+  }
   if (modulosIds && modulosIds.length > 0) {
     await empresa.setModulos(modulosIds);
   }
@@ -43,7 +58,11 @@ exports.updateEmpresa = async (req, res) => {
 
   await validarModulos(modulosIds);
 
-  await empresa.update(datos);
+  try {
+    await empresa.update(datos);
+  } catch (err) {
+    throw traducirNitDuplicado(err);
+  }
   if (modulosIds) {
     await empresa.setModulos(modulosIds);
     // El cambio de módulos afecta el gating de todos los usuarios de la empresa.

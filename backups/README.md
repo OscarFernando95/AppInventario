@@ -38,9 +38,15 @@ docker compose exec -T db pg_dump -U <POSTGRES_USER> -d <POSTGRES_DB> > backups/
 
 ## Restaurar un backup
 
-**Antes de restaurar:** esto sobreescribe datos existentes con conflicto de
-claves (usuarios, IDs, etc.) puede fallar a mitad de camino si la base ya
-tiene información. Lo más seguro es restaurar sobre una base **vacía**.
+> **Drill verificado (2026-09-09).** Se probó el ciclo completo: `backup.sh`
+> genera el dump (~112 KB para la base actual), y `psql < dump` sobre una base
+> **recién creada** restaura sin un solo error (esquema + 8 migraciones + datos;
+> conteos de filas idénticos al origen). El runbook de abajo es el que se
+> ejecutó.
+
+**Antes de restaurar:** el dump es SQL en texto plano (`pg_dump -F p`). Sobre una
+base que ya tiene datos, los `INSERT`/`CREATE` chocan con lo existente y la
+restauración puede quedar a medias. **Restaura siempre sobre una base vacía.**
 
 1. Detén el backend para que no escriba mientras restauras:
 
@@ -48,11 +54,11 @@ tiene información. Lo más seguro es restaurar sobre una base **vacía**.
    docker compose stop backend
    ```
 
-2. (Opcional pero recomendado) Recrea la base vacía. **Esto borra todos los
-   datos actuales de la base**, tenlo claro antes de correrlo:
+2. Recrea la base vacía. **Esto borra todos los datos actuales de la base**,
+   tenlo claro antes de correrlo:
 
    ```bash
-   docker compose exec db psql -U <POSTGRES_USER> -d postgres -c "DROP DATABASE \"<POSTGRES_DB>\";"
+   docker compose exec db psql -U <POSTGRES_USER> -d postgres -c "DROP DATABASE IF EXISTS \"<POSTGRES_DB>\" WITH (FORCE);"
    docker compose exec db psql -U <POSTGRES_USER> -d postgres -c "CREATE DATABASE \"<POSTGRES_DB>\";"
    ```
 
@@ -70,3 +76,14 @@ tiene información. Lo más seguro es restaurar sobre una base **vacía**.
 
 Reemplaza `<POSTGRES_USER>` y `<POSTGRES_DB>` por los valores de tu `.env`
 (por defecto `appinventario` y `appinventario`).
+
+### Probar la restauración sin tocar la base real
+
+Para un simulacro periódico, restaura en una base descartable y compara conteos:
+
+```bash
+docker compose exec -T db psql -U <POSTGRES_USER> -d postgres -c 'CREATE DATABASE restore_test;'
+docker compose exec -T db psql -U <POSTGRES_USER> -d restore_test < backups/dumps/<dump>.sql
+docker compose exec -T db psql -U <POSTGRES_USER> -d restore_test -c '\dt' -c 'SELECT count(*) FROM usuarios;'
+docker compose exec -T db psql -U <POSTGRES_USER> -d postgres -c 'DROP DATABASE restore_test;'
+```

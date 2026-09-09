@@ -87,9 +87,14 @@ exports.checkInPedido = async (req, res) => {
     const { id } = req.params;
     const { detalles_recibidos } = req.body;
 
+    // Lock de la fila del pedido: dos recepciones concurrentes del mismo pedido
+    // no pueden leer ambas `estado = 'PENDIENTE'` y abonar el stock dos veces.
+    // `of: Pedido` porque con el include a PedidoDetalle un FOR UPDATE plano
+    // fallaría sobre el lado nullable del LEFT JOIN.
     const pedido = await Pedido.findOne({
       where: { id, empresaId: req.empresaId },
       include: [{ model: PedidoDetalle }],
+      lock: { level: t.LOCK.UPDATE, of: Pedido },
       transaction: t,
     });
     if (!pedido || pedido.estado !== 'PENDIENTE') {

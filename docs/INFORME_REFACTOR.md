@@ -1,6 +1,6 @@
 # Informe de refactorización — AppInventario
 
-**Última actualización:** 2026-09-09 (análisis #2 + Fases 5, 6, 7 y 8 completadas — refactor cerrado)
+**Última actualización:** 2026-09-09 (análisis #2 + Fases 5–9 completadas — refactor cerrado)
 **Alcance:** backend (Express + Sequelize + PostgreSQL 16), frontend (React 19 + Vite + TanStack Query), infraestructura Docker.
 **Historial:** primer informe 2026-09-06 → Fases 0–4 implementadas y verificadas E2E → este documento re-audita el estado real y define las Fases 5–8.
 
@@ -24,8 +24,8 @@ generación de PDF, zonas horarias), encontró:
 | 🟡 Medio | 8 | **N6** → ✅ Fase 5 · **N9, N10, N14** → ✅ Fase 6 · **N5, N7, N8, N11, N12** → ✅ Fase 7 |
 | 🔵 Bajo | 6 | **N15, N16 (base), N20** → ✅ Fases 6–7 · **N13, N17, N19** → ✅ Fase 8 |
 
-**Plan:** Fases **5–8** en la sección 5.
-**Fases 5, 6, 7 y 8 — ✅ completadas el 2026-09-09. Refactor cerrado; sin hallazgos abiertos.**
+**Plan:** Fases **5–8** en la sección 5; la **Fase 9** (riesgo residual del §6) va tras la Fase 8.
+**Fases 5–9 — ✅ completadas el 2026-09-09. Refactor cerrado; sin hallazgos abiertos.**
 - Fase 5: el POS cobra bien el descuento global (%), precio de línea validado, cantidades fraccionarias.
 - Fase 6: autorización por módulo en el backend, rutas del frontend gated, sesiones revocables.
 - Fase 7: zona horaria (`TZ=America/Bogota`), informes limpios y cacheados, catálogos validados,
@@ -34,7 +34,11 @@ generación de PDF, zonas horarias), encontró:
   (sin `eslint-disable react-hooks/set-state-in-effect`); los `alert()` de los POS sustituidos por
   `FormError` + `apiError`; `getVentas` ya no incluye `Empresa` (N13); UI "cerrar mis otras sesiones"
   en `CambiarPassword`; `eslint frontend/src` a 0 errores.
-- Suite de integración: **23 tests** (`npm run test:integration`); **62 unitarios**; E2E Docker verificado.
+- Fase 9: NIT de empresa único (índice parcial + normalización), lock de fila en la recepción de
+  pedido concurrente, `generateInvoicePDF` endurecido + arnés de tests del frontend, drill de
+  backup/restore verificado, `axios` y `react-router-dom` actualizados por CVE.
+- Suites: **26 integración** (`npm run test:integration`) · **64 unitarias backend** ·
+  **9 frontend** (`cd frontend && npm test`); E2E Docker verificado.
 
 ---
 
@@ -545,23 +549,57 @@ lo adelantó la Fase 6).
       `logout-all` con y sin `mantener_actual`. **62 unitarios + 23 integración** en verde.
 
 **N20/I6** ya se había cerrado en la Fase 6 (`config/database.js` sin `authenticate()`).
-_Pendiente no bloqueante:_ revisión visual fina del layout del PDF (la aritmética ya está verificada).
+
+### Fase 9 — Riesgo residual del §6 — ✅ COMPLETADA (2026-09-09)
+
+- [x] **`empresas.nit` único** — migración `20260913120000` con índice único
+      **parcial** (`WHERE nit IS NOT NULL AND nit <> ''`, así varias empresas sin
+      NIT siguen siendo válidas) + normalización del NIT (quita `.`, `-`, espacios)
+      en la migración y en el esquema `zod` (`nitOpc`). El controlador traduce la
+      violación a **409 "Ya existe una empresa registrada con ese NIT."**.
+- [x] **Recepción de pedido concurrente** — `checkInPedido` ahora toma
+      `SELECT ... FOR UPDATE OF pedidos` sobre la fila del pedido. Dos check-ins
+      simultáneos del mismo pedido: uno abona stock (200), el otro recibe 400 y el
+      stock sube una sola vez. Test de integración concurrente que lo prueba.
+- [x] **`generateInvoicePDF.js` endurecido** — guardas para `venta` ausente,
+      `id`/`fecha`/`total` inválidos (el total se recalcula), 0 ítems, nombres de
+      empresa largos (se recortan) y **desborde del bloque de totales en facturas
+      multipágina** (salta a hoja nueva) + numeración "Página X de Y". Arnés de
+      test del frontend nuevo (`vitest` + `jsdom`): **9 casos límite del PDF**.
+- [x] **Drill de backup/restore** — se ejecutó `backup.sh` y se restauró el dump
+      sobre una base nueva sin errores (esquema + migraciones + datos, conteos
+      idénticos). Runbook verificado y ampliado en `backups/README.md`.
+- [x] **Stub DIAN** — comentario `NO IMPLEMENTADA` en `models/Venta.js` junto a los
+      campos de FE; ningún endpoint transiciona `estado_fe` (sigue siendo el punto
+      abierto de abajo, ahora explícito en el código).
+- [x] **Dependencias del frontend con CVE** — `axios 1.13.6 → 1.20.0` (SSRF/prototype
+      pollution; el rango vulnerable `1.0.0–1.17.0`) y `react-router-dom 7.13.1 → 7.18.3`
+      (DoS por route-matching, open-redirect por `\` y `//`). Ambos bumps son menores,
+      sin cambios de API; `npm run build` + `npm test` + `eslint` en verde. Lo que queda
+      en `npm audit` es tooling de build (`vite`, `postcss`, `esbuild`…) que **no viaja
+      en el bundle** (Dockerfile multi-stage: solo se publica `dist/`) o transitivos de
+      `jspdf` (`dompurify`, `fflate`) en rutas que esta app no ejercita (sin HTML/SVG a
+      jspdf).
 
 ---
 
 ## 6. Riesgo residual / no auditado
 
 - **Facturación electrónica DIAN** (`cufe`, `qr_data`, `pdf_url`, `xml_url`,
-  `estado_fe`, resolución, clave técnica): son campos de un stub sin integración
-  real. Cuando se integre habrá que auditar firmado, numeración por resolución,
-  concurrencia de consecutivos y almacenamiento del XML/PDF.
-- **`generateInvoicePDF.js`** (355 líneas): solo se revisó la aritmética de totales
-  (→ N1). El layout, el manejo de páginas múltiples y los casos límite (0 ítems,
-  nombres muy largos) no se probaron.
-- **Concurrencia** más allá del stock: dos recepciones del mismo pedido en paralelo,
-  dos altas de empresa con el mismo NIT (no hay `unique` en `empresas.nit`).
-- **Backups**: el servicio opcional `docker-compose.backup.yml` no se ejecutó ni se
-  probó la restauración en este ciclo.
+  `estado_fe`, resolución, clave técnica): son campos de un stub **sin integración
+  real** (marcado así en `models/Venta.js`). Cuando se integre un PAC habrá que
+  auditar firmado XML, numeración por resolución, concurrencia de consecutivos y
+  almacenamiento del XML/PDF. **No accionable hasta elegir proveedor.**
+- **`generateInvoicePDF.js`**: la aritmética (N1) y los casos límite están cubiertos
+  por tests (Fase 9). Queda pendiente una **revisión visual fina** del layout con
+  un diseñador / con facturas reales del cliente (espaciados, saltos de página en
+  casos raros) — cosmético, no funcional.
+- **Concurrencia** — cubierto lo conocido (stock en venta/compra, recepción de
+  pedido, NIT de empresa). No se hizo un análisis exhaustivo de *todas* las rutas
+  de escritura concurrentes.
+- **`docker-compose.backup.yml`**: el ciclo backup→restore se probó a mano
+  (Fase 9). No hay todavía una **alerta** si una corrida nocturna falla (hoy solo
+  queda en `docker compose logs backup`).
 
 ---
 
