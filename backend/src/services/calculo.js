@@ -3,23 +3,31 @@
 /** Redondeo a 2 decimales, estable frente al ruido de coma flotante. */
 const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
+const clampPct = (n) => Math.min(100, Math.max(0, Number(n) || 0));
+
 /**
  * Calcula los importes de una venta (modo POS: el precio unitario YA incluye IVA).
  * Función pura — no toca la base de datos.
  *
+ * `descuentoGlobalPct` es un **porcentaje 0–100** (así lo maneja la UI y el PDF).
+ * `precioBase` de cada línea es el precio de lista (viene de la BD, no del
+ * cliente); la diferencia `precioBase - precioConIva` es el descuento por línea.
+ *
  * @param {{productoId?, servicioId?, cantidad:number, precioConIva:number,
- *          porcentajeIva:number, precioBase?:number}[]} lineas
- * @param {number} [descuentoGlobal=0]
+ *          porcentajeIva:number, precioBase:number}[]} lineas
+ * @param {number} [descuentoGlobalPct=0]
  * @returns {{subtotal_bruto:number, total_impuestos:number, descuento_global:number,
- *           total:number, detalles:object[]}}
+ *           total_descuentos:number, total:number, detalles:object[]}}
  */
-function calcularVenta(lineas, descuentoGlobal = 0) {
+function calcularVenta(lineas, descuentoGlobalPct = 0) {
   let subtotalBruto = 0;
   let totalImpuestos = 0;
+  let descuentoItems = 0;
 
   const detalles = lineas.map((l) => {
     const cantidad = Number(l.cantidad);
     const precioConIva = Number(l.precioConIva);
+    const precioBase = Number(l.precioBase ?? l.precioConIva);
     const iva = Number(l.porcentajeIva || 0);
 
     const precioSinIva = precioConIva / (1 + iva / 100);
@@ -29,27 +37,30 @@ function calcularVenta(lineas, descuentoGlobal = 0) {
 
     subtotalBruto += subtotalLinea;
     totalImpuestos += ivaLinea;
+    descuentoItems += Math.max(0, precioBase - precioConIva) * cantidad;
 
     return {
       productoId: l.productoId || null,
       servicioId: l.servicioId || null,
       cantidad,
       precio_unitario: precioConIva,
-      precio_base: l.precioBase || precioConIva,
+      precio_base: precioBase,
       porcentaje_iva: iva,
       valor_iva: ivaLinea,
       subtotal_bruto: subtotalLinea,
     };
   });
 
-  const descuento = round2(Math.max(0, Number(descuentoGlobal) || 0));
-  const total = round2(subtotalBruto + totalImpuestos - descuento);
+  const pct = clampPct(descuentoGlobalPct);
+  const totalConIva = subtotalBruto + totalImpuestos;
+  const descuentoGlobalMonto = round2(totalConIva * (pct / 100));
 
   return {
     subtotal_bruto: round2(subtotalBruto),
     total_impuestos: round2(totalImpuestos),
-    descuento_global: descuento,
-    total,
+    descuento_global: pct, // porcentaje 0–100
+    total_descuentos: round2(descuentoItems + descuentoGlobalMonto),
+    total: round2(totalConIva - descuentoGlobalMonto),
     detalles,
   };
 }
@@ -61,4 +72,4 @@ function calcularTotalCompra(lineas) {
   );
 }
 
-module.exports = { round2, calcularVenta, calcularTotalCompra };
+module.exports = { round2, clampPct, calcularVenta, calcularTotalCompra };

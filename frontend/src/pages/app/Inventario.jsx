@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { PackageOpen, Plus, Loader2 } from 'lucide-react';
-import { formatCOP } from '../../utils/format';
+import { formatCOP, formatCantidad } from '../../utils/format';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
@@ -84,8 +84,8 @@ const Inventario = () => {
                   <td className="px-6 py-4 font-mono text-sm font-semibold text-slate-500">{p.codigo}</td>
                   <td className="px-6 py-4 font-bold text-slate-800">{p.nombre_producto}</td>
                   <td className="px-6 py-4 text-center">
-                    <span className={`px-4 py-1.5 rounded-full text-xs font-extrabold tracking-wide ${p.stock_actual >= 10 ? 'bg-emerald-100 text-emerald-700' : p.stock_actual > 0 ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
-                      {p.stock_actual} UD
+                    <span className={`px-4 py-1.5 rounded-full text-xs font-extrabold tracking-wide ${Number(p.stock_actual) >= 10 ? 'bg-emerald-100 text-emerald-700' : Number(p.stock_actual) > 0 ? 'bg-orange-100 text-orange-700' : 'bg-red-100 text-red-700'}`}>
+                      {formatCantidad(p.stock_actual)} UD
                     </span>
                   </td>
                   <td className="px-6 py-4 text-right font-bold text-slate-700">

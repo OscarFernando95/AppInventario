@@ -1,48 +1,38 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { ShoppingCart, Trash2, Search, CheckCircle, Tag, Users, UserPlus, X, Percent, Eye, Receipt, Box, Briefcase, Minus, Plus, PackageOpen, FileDown } from 'lucide-react';
-import { formatCOP, formatDocumento } from '../../utils/format';
+import { formatCOP, formatDocumento, formatCantidad } from '../../utils/format';
 import { generateInvoicePDF } from '../../utils/generateInvoicePDF';
 import { useAuthStore } from '../../store/authStore';
+import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import FormError from '../../components/FormError';
+import { apiError } from '../../utils/apiError';
 
 const Ventas = () => {
   const { activeEmpresa } = useAuthStore();
-  const [clientes, setClientes] = useState([]);
-  const [productos, setProductos] = useState([]);
-  const [servicios, setServicios] = useState([]);
-  const [ventas, setVentas] = useState([]);
-  
+  const queryClient = useQueryClient();
+  const modulos = activeEmpresa?.modulos || [];
+
+  const { data: ventas = [] } = useEmpresaQuery(['ventas'], '/ventas');
+  const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
+  const { data: clientes = [] } = useEmpresaQuery(['clientes'], '/clientes', { enabled: modulos.includes('Clientes') });
+  const { data: servicios = [] } = useEmpresaQuery(['servicios'], '/servicios', { enabled: modulos.includes('Servicios') });
+  const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
+
   const [showModal, setShowModal] = useState(false);
   const [clientSearch, setClientSearch] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [activeTab, setActiveTab] = useState('P'); // 'P' or 'S'
   const [viewDetalle, setViewDetalle] = useState(null);
-  
+  const [formError, setFormError] = useState(null);
+
   const [formData, setFormData] = useState({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' });
   const [activeDiscountIdx, setActiveDiscountIdx] = useState(null);
   const [globalDiscount, setGlobalDiscount] = useState(0);
   const [newClientData, setNewClientData] = useState({ nombre: '', documento: '', telefono: '', email: '', direccion: '' });
   const [showNewClient, setShowNewClient] = useState(false);
-
-
-  const fetchData = async () => {
-    try {
-      const [cliRes, prodRes, servRes, venRes] = await Promise.all([
-        api.get('/clientes'),
-        api.get('/productos'),
-        api.get('/servicios'),
-        api.get('/ventas')
-      ]);
-      setClientes(cliRes.data);
-      setProductos(prodRes.data);
-      setServicios(servRes.data);
-      setVentas(venRes.data);
-    } catch (err) { console.error(err); }
-  };
-
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- carga inicial; pendiente migrar a TanStack Query (ver INFORME_REFACTOR Fase 3)
-  useEffect(() => { fetchData(); }, []);
 
   // Compute Frequencies to sort components
   const freq = useMemo(() => {
@@ -70,7 +60,7 @@ const Ventas = () => {
   const displayList = useMemo(() => {
     const lower = itemSearch.toLowerCase();
     if (activeTab === 'P') {
-      let filtered = productos.filter(p => p.stock_actual > 0 && ((p.nombre_producto || '').toLowerCase().includes(lower) || (p.codigo || '').toLowerCase().includes(lower)));
+      let filtered = productos.filter(p => Number(p.stock_actual) > 0 && ((p.nombre_producto || '').toLowerCase().includes(lower) || (p.codigo || '').toLowerCase().includes(lower)));
       return filtered.sort((a,b) => (freq.pFreq[b.id] || 0) - (freq.pFreq[a.id] || 0));
     } else {
       let filtered = servicios.filter(s => (s.nombre || '').toLowerCase().includes(lower));
@@ -78,16 +68,24 @@ const Ventas = () => {
     }
   }, [activeTab, itemSearch, productos, servicios, freq]);
 
-  const handleCreateClient = async () => {
-    if (!newClientData.nombre || !newClientData.documento) return alert('Nombre y documento son obligatorios');
-    try {
-      const res = await api.post('/clientes', newClientData);
-      setClientes(prev => [...prev, res.data]);
+  const crearCliente = useMutation({
+    mutationFn: (data) => api.post('/clientes', data),
+    onSuccess: (res) => {
+      invalidar();
       setFormData(prev => ({ ...prev, clienteId: res.data.id }));
       setShowNewClient(false);
       setNewClientData({ nombre: '', documento: '', telefono: '', email: '', direccion: '' });
       setClientSearch('');
-    } catch { alert('Sucedió un error creando el cliente'); }
+      setFormError(null);
+    },
+    onError: (err) => setFormError(apiError(err, 'No se pudo crear el cliente')),
+  });
+
+  const handleCreateClient = () => {
+    if (!newClientData.nombre || !newClientData.documento) {
+      return setFormError('Nombre y documento son obligatorios');
+    }
+    crearCliente.mutate(newClientData);
   };
 
   const addItemToCart = (item, type) => {
@@ -96,9 +94,11 @@ const Ventas = () => {
     // Check if already in cart
     const existingIdx = formData.detalles.findIndex(d => isP ? d.productoId === item.id : d.servicioId === item.id);
     
+    const stock = Number(item.stock_actual);
+    const precio = Number(isP ? item.precio_unitario : item.precio);
     if (existingIdx >= 0) {
-      if (isP && formData.detalles[existingIdx].cantidad + 1 > item.stock_actual) {
-        return alert(`Stock insuficiente. Solo quedan ${item.stock_actual} ud.`);
+      if (isP && formData.detalles[existingIdx].cantidad + 1 > stock) {
+        return setFormError(`Stock insuficiente de ${item.nombre_producto}. Solo quedan ${formatCantidad(stock)} ud.`);
       }
       const newDet = [...formData.detalles];
       newDet[existingIdx].cantidad += 1;
@@ -111,10 +111,10 @@ const Ventas = () => {
           servicioId: !isP ? item.id : null,
           nombre: isP ? item.nombre_producto : `(Serv.) ${item.nombre}`,
           cantidad: 1,
-          precio_base: isP ? item.precio_unitario : item.precio, // Keep track of base
-          precio_unitario: isP ? item.precio_unitario : item.precio,
+          precio_base: precio, // precio de lista
+          precio_unitario: precio,
           tipo: type,
-          maxStock: isP ? item.stock_actual : null
+          maxStock: isP ? stock : null
         }]
       }));
     }
@@ -129,7 +129,7 @@ const Ventas = () => {
       return;
     }
     if (item.tipo === 'P' && newQ > item.maxStock) {
-       return alert(`Límite físico de stock alcanzado (${item.maxStock})`);
+       return setFormError(`Límite físico de stock alcanzado (${formatCantidad(item.maxStock)} ud).`);
     }
     item.cantidad = newQ;
     setFormData(prev => ({ ...prev, detalles: newDet }));
@@ -165,44 +165,48 @@ const Ventas = () => {
     return sub - (sub * (globalDiscount / 100));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!formData.clienteId) return alert('Debe seleccionar un cliente para registrar la venta.');
-    if (formData.detalles.length === 0) return alert('El carrito está vacío');
+  const descargarPDF = async (ventaId) => {
     try {
-      const res = await api.post('/ventas', { 
-        clienteId: parseInt(formData.clienteId),
-        total: getTotal(),
-        descuento_global: globalDiscount || 0,
-        forma_pago: formData.forma_pago,
-        medio_pago: formData.medio_pago,
-        detalles: formData.detalles.map(d => ({ 
-          productoId: d.productoId, 
-          servicioId: d.servicioId, 
-          cantidad: Number(d.cantidad), 
-          precio_unitario: Number(d.precio_unitario),
-          precio_base: Number(d.precio_base || d.precio_unitario)
-        }))
-      });
+      const { data } = await api.get(`/ventas/${ventaId}`); // incluye Empresa
+      generateInvoicePDF(data, data.Empresa || activeEmpresa);
+    } catch (err) {
+      setFormError(apiError(err, 'No se pudo generar el PDF'));
+    }
+  };
+
+  const emitirVenta = useMutation({
+    mutationFn: (payload) => api.post('/ventas', payload),
+    onSuccess: async (res) => {
+      invalidar();
       setShowModal(false);
       setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' });
       setClientSearch('');
       setItemSearch('');
       setGlobalDiscount(0);
       setActiveDiscountIdx(null);
-      fetchData();
+      setFormError(null);
+      await descargarPDF(res.data.id); // factura automática
+    },
+    onError: (err) => setFormError(apiError(err, 'No se pudo facturar la venta')),
+  });
 
-      // Generate PDF invoice automatically
-      try {
-        const ventaFull = await api.get(`/ventas/${res.data.id}`);
-        generateInvoicePDF(ventaFull.data, ventaFull.data.Empresa || activeEmpresa);
-      } catch (_pdfErr) {
-        console.warn('No se pudo generar el PDF automáticamente:', _pdfErr);
-      }
-    } catch (err) { 
-      const errMsg = err.response?.data?.error || err.message || 'Desconocido';
-      alert(`Sucedió un problema al facturar: ${errMsg}`); 
-    }
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!formData.clienteId) return setFormError('Debes seleccionar un cliente para registrar la venta.');
+    if (formData.detalles.length === 0) return setFormError('El carrito está vacío.');
+    emitirVenta.mutate({
+      clienteId: parseInt(formData.clienteId),
+      descuento_global: globalDiscount || 0,
+      forma_pago: formData.forma_pago,
+      medio_pago: formData.medio_pago,
+      detalles: formData.detalles.map(d => ({
+        productoId: d.productoId,
+        servicioId: d.servicioId,
+        cantidad: Number(d.cantidad),
+        precio_unitario: Number(d.precio_unitario),
+        precio_base: Number(d.precio_base || d.precio_unitario),
+      })),
+    });
   };
 
   const selectedClient = clientes.find(c => c.id === parseInt(formData.clienteId));
@@ -214,7 +218,7 @@ const Ventas = () => {
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">Registro POS de Ventas</h2>
           <p className="text-slate-500 mt-1">Caja registradora. Factura rápido filtrando productos o escaneando clientes.</p>
         </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' }); setGlobalDiscount(0); setShowNewClient(false); setClientSearch(''); setItemSearch(''); setShowModal(true); }}>
+        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' }); setGlobalDiscount(0); setShowNewClient(false); setClientSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); }}>
           <Tag className="w-5 h-5" /> Iniciar POS (Caja)
         </button>
       </div>
@@ -266,6 +270,8 @@ const Ventas = () => {
                  <h3 className="text-2xl font-black text-slate-800 flex items-center gap-2"><ShoppingCart className="text-brand-600" /> Terminal Registradora</h3>
                  <button className="xl:hidden p-2 bg-slate-100 rounded-full" onClick={()=>setShowModal(false)}><X className="w-5 h-5"/></button>
                </div>
+
+               <div className="mb-4"><FormError message={formError} onDismiss={() => setFormError(null)} /></div>
 
                {/* ZONA CLIENTE */}
                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-6">
@@ -332,9 +338,11 @@ const Ventas = () => {
                    <button className={`flex-1 py-3 font-bold text-sm flex items-center justify-center gap-2 transition-colors ${activeTab === 'P' ? 'border-b-2 border-brand-500 text-brand-600' : 'text-slate-500 hover:bg-slate-50'}`} onClick={()=>setActiveTab('P')}>
                      <Box className="w-4 h-4"/> Productos Físicos
                    </button>
-                   <button className={`flex-1 py-3 font-bold text-sm flex items-center justify-center gap-2 transition-colors ${activeTab === 'S' ? 'border-b-2 border-brand-500 text-brand-600' : 'text-slate-500 hover:bg-slate-50'}`} onClick={()=>setActiveTab('S')}>
-                     <Briefcase className="w-4 h-4"/> Servicios (Asesorías)
-                   </button>
+                   {modulos.includes('Servicios') && (
+                     <button className={`flex-1 py-3 font-bold text-sm flex items-center justify-center gap-2 transition-colors ${activeTab === 'S' ? 'border-b-2 border-brand-500 text-brand-600' : 'text-slate-500 hover:bg-slate-50'}`} onClick={()=>setActiveTab('S')}>
+                       <Briefcase className="w-4 h-4"/> Servicios (Asesorías)
+                     </button>
+                   )}
                  </div>
                  <div className="p-4 border-b border-slate-100 bg-white">
                    <div className="relative">
@@ -354,7 +362,7 @@ const Ventas = () => {
                        </div>
                        <div>
                          <div className="font-black text-brand-600">{formatCOP(activeTab==='P'?item.precio_unitario:item.precio)}</div>
-                         {activeTab === 'P' && <div className="text-[10px] font-bold text-slate-400 mt-1">Disp: {item.stock_actual} ud</div>}
+                         {activeTab === 'P' && <div className="text-[10px] font-bold text-slate-400 mt-1">Disp: {formatCantidad(item.stock_actual)} ud</div>}
                        </div>
                      </div>
                    ))}
@@ -483,8 +491,8 @@ const Ventas = () => {
                   </div>
                 </div>
                 <div className="flex flex-col gap-3 font-sans">
-                  <button type="button" onClick={handleSubmit} className="btn-primary flex items-center justify-center gap-2 rounded-xl h-14 text-lg shadow-lg shadow-brand-500/30">
-                    <CheckCircle className="w-6 h-6"/> Emitir Factura
+                  <button type="button" onClick={handleSubmit} disabled={emitirVenta.isPending} className="btn-primary flex items-center justify-center gap-2 rounded-xl h-14 text-lg shadow-lg shadow-brand-500/30 disabled:opacity-50">
+                    <CheckCircle className="w-6 h-6"/> {emitirVenta.isPending ? 'Emitiendo…' : 'Emitir Factura'}
                   </button>
                   <button type="button" className="btn-secondary rounded-xl font-bold h-12" onClick={() => setShowModal(false)}>Cancelar Operación</button>
                 </div>
@@ -517,9 +525,9 @@ const Ventas = () => {
                    <div key={d.id} className="flex justify-between items-center p-3 border border-slate-100 rounded-xl bg-white shadow-sm">
                       <div>
                         <div className="font-bold text-sm text-slate-800">{d.Producto?.nombre_producto || d.Servicio?.nombre || 'Ítem Desconocido'}</div>
-                        <div className="text-xs font-bold text-slate-500 mt-0.5">{d.cantidad} ud x {formatCOP(d.precio_unitario)}</div>
+                        <div className="text-xs font-bold text-slate-500 mt-0.5">{formatCantidad(d.cantidad)} ud x {formatCOP(d.precio_unitario)}</div>
                       </div>
-                      <div className="font-black text-brand-600 text-sm">{formatCOP(d.cantidad * d.precio_unitario)}</div>
+                      <div className="font-black text-brand-600 text-sm">{formatCOP(Number(d.cantidad) * Number(d.precio_unitario))}</div>
                    </div>
                  ))}
                  {(!viewDetalle.VentaDetalles || viewDetalle.VentaDetalles.length === 0) && (
@@ -533,7 +541,7 @@ const Ventas = () => {
                 <span className="font-black text-2xl text-emerald-600">{formatCOP(viewDetalle.total)}</span>
               </div>
               <button
-                onClick={() => generateInvoicePDF(viewDetalle, viewDetalle.Empresa || activeEmpresa)}
+                onClick={() => descargarPDF(viewDetalle.id)}
                 className="btn-primary flex items-center gap-2 rounded-xl px-5 py-3 shadow-lg shadow-brand-500/30 text-sm"
               >
                 <FileDown className="w-5 h-5" /> Descargar Factura PDF

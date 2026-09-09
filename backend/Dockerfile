@@ -10,10 +10,13 @@ COPY . .
 # ---------- Stage 2: production ----------
 FROM node:20-alpine AS production
 ENV NODE_ENV=production
+# Zona horaria por defecto (los informes y el "mes en curso" se calculan con la
+# hora local). Se puede sobreescribir con la variable TZ en docker-compose.
+ENV TZ=America/Bogota
 WORKDIR /app
 
-# postgresql-client aporta pg_isready, usado por entrypoint.sh para esperar a la BD.
-RUN apk add --no-cache postgresql-client
+# postgresql-client -> pg_isready (entrypoint). tzdata -> la zona horaria de TZ.
+RUN apk add --no-cache postgresql-client tzdata
 
 # Dependencias de producción únicamente (sin nodemon ni sequelize-cli).
 COPY package.json package-lock.json ./

@@ -2,6 +2,7 @@ const { sequelize, Pedido, PedidoDetalle, Proveedor, Producto, Compra, CompraDet
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { invalidateDashboard } = require('./reporteController');
+const { invalidateInforme } = require('./informeController');
 const { calcularTotalCompra } = require('../services/calculo');
 
 exports.getPedidos = async (req, res) => {
@@ -86,16 +87,24 @@ exports.checkInPedido = async (req, res) => {
     const { id } = req.params;
     const { detalles_recibidos } = req.body;
 
-    const pedido = await Pedido.findOne({ where: { id, empresaId: req.empresaId }, transaction: t });
+    const pedido = await Pedido.findOne({
+      where: { id, empresaId: req.empresaId },
+      include: [{ model: PedidoDetalle }],
+      transaction: t,
+    });
     if (!pedido || pedido.estado !== 'PENDIENTE') {
       throw new ValidationError('Pedido no encontrado o ya procesado');
     }
+    const productosDelPedido = new Set((pedido.PedidoDetalles || []).map((d) => d.productoId));
 
-    // Validar todo (tenant + lock de stock) antes de tocar nada.
+    // Validar todo (pertenencia al pedido + tenant + lock de stock) antes de tocar nada.
     const items = [];
     for (const item of detalles_recibidos) {
       const cantidad = Number(item.cantidad);
       if (cantidad === 0) continue;
+      if (!productosDelPedido.has(Number(item.productoId))) {
+        throw new ValidationError('Se recibió un producto que no estaba en el pedido.');
+      }
       const producto = await Producto.findOne({
         where: { id: item.productoId, empresaId: req.empresaId },
         transaction: t,
@@ -112,6 +121,7 @@ exports.checkInPedido = async (req, res) => {
       empresaId: req.empresaId,
       proveedorId: pedido.proveedorId,
       usuarioId: req.userId,
+      pedidoId: pedido.id, // trazabilidad
       total: totalReal,
     }, { transaction: t });
 
@@ -126,13 +136,17 @@ exports.checkInPedido = async (req, res) => {
     );
 
     for (const i of items) {
-      await i.producto.update({ stock_actual: i.producto.stock_actual + i.cantidad }, { transaction: t });
+      await i.producto.update(
+        { stock_actual: Number(i.producto.stock_actual) + i.cantidad },
+        { transaction: t }
+      );
     }
 
     await pedido.update({ estado: 'COMPLETADO' }, { transaction: t });
 
     await t.commit();
     invalidateDashboard(req.empresaId);
+    invalidateInforme(req.empresaId);
     res.status(200).json({ compraId: compra.id, message: 'Recepción completada exitosamente' });
   } catch (error) {
     await t.rollback();

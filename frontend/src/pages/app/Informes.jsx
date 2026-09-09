@@ -1,7 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { TrendingUp, TrendingDown, PackageOpen, Target, Box, CreditCard, PieChart, Printer, Calendar, FileText, Download } from 'lucide-react';
 import { formatCOP } from '../../utils/format';
+import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import FormError from '../../components/FormError';
+import { apiError } from '../../utils/apiError';
 
 // eslint-disable-next-line no-unused-vars -- `Icon` sí se usa como componente en el JSX de abajo
 const KPIBox = ({ title, value, subtitle, icon: Icon, colorClass }) => (
@@ -19,13 +23,12 @@ const KPIBox = ({ title, value, subtitle, icon: Icon, colorClass }) => (
 );
 
 const Informes = () => {
-  const [data, setData] = useState({
-    totalProductos: 0,
-    ventasMes: 0,
-    comprasMes: 0,
-    productosBajoStock: []
-  });
-  const [isLoading, setIsLoading] = useState(true);
+  const { data = {}, isLoading } = useEmpresaQuery(['reportes', 'dashboard'], '/reportes/dashboard');
+  const {
+    totalProductos = 0,
+    ventasMes = 0,
+    comprasMes = 0,
+  } = data;
 
   // Report Generator State
   const [informeParams, setInformeParams] = useState({
@@ -34,27 +37,18 @@ const Informes = () => {
     tipo: 'ventas_resumen'
   });
   const [informeData, setInformeData] = useState(null);
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [formError, setFormError] = useState(null);
 
-  useEffect(() => {
-    const fetchDashboard = async () => {
-      try {
-        const res = await api.get('/reportes/dashboard');
-        setData(res.data);
-      } catch (err) { console.error(err); }
-      setIsLoading(false);
-    };
-    fetchDashboard();
-  }, []);
+  const generar = useMutation({
+    mutationFn: (params) => api.get('/informes', { params }).then((r) => r.data),
+    onSuccess: (rows) => { setInformeData(rows); setFormError(null); },
+    onError: (err) => setFormError(apiError(err, 'Sucedió un error o no hay datos.')),
+  });
 
-  const handleGenerate = async (e) => {
+  const handleGenerate = (e) => {
     e.preventDefault();
-    setIsGenerating(true);
-    try {
-      const res = await api.get('/informes', { params: informeParams });
-      setInformeData(res.data);
-    } catch { alert("Sucedió un error o no hay datos."); }
-    setIsGenerating(false);
+    setFormError(null);
+    generar.mutate(informeParams);
   };
 
   const currentReportName = {
@@ -151,7 +145,7 @@ const Informes = () => {
 
   if (isLoading) return <div className="p-8 text-center text-slate-500 font-bold animate-pulse">Analizando métricas y compilando reportes...</div>;
 
-  const mrg = data.ventasMes - data.comprasMes;
+  const mrg = ventasMes - comprasMes;
   const isHealthyMargin = mrg >= 0;
 
   return (
@@ -168,10 +162,10 @@ const Informes = () => {
 
       {/* KPI Globales - Oculto en Print */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 print:hidden">
-        <KPIBox title="Facturación Mes en Curso" value={formatCOP(data.ventasMes)} icon={TrendingUp} colorClass={{ bg: 'bg-brand-100', text: 'text-brand-600' }} />
-        <KPIBox title="Gastos Mes en Curso" value={formatCOP(data.comprasMes)} icon={TrendingDown} colorClass={{ bg: 'bg-orange-100', text: 'text-orange-600' }} />
+        <KPIBox title="Facturación Mes en Curso" value={formatCOP(ventasMes)} icon={TrendingUp} colorClass={{ bg: 'bg-brand-100', text: 'text-brand-600' }} />
+        <KPIBox title="Gastos Mes en Curso" value={formatCOP(comprasMes)} icon={TrendingDown} colorClass={{ bg: 'bg-orange-100', text: 'text-orange-600' }} />
         <KPIBox title="Margen Operativo Bruto" value={formatCOP(mrg)} subtitle="Ingresos vs Gastos" icon={Target} colorClass={{ bg: isHealthyMargin ? 'bg-emerald-100' : 'bg-red-100', text: isHealthyMargin ? 'text-emerald-600' : 'text-red-600' }} />
-        <KPIBox title="Referencias de Inventario" value={data.totalProductos} icon={Box} colorClass={{ bg: 'bg-indigo-100', text: 'text-indigo-600' }} />
+        <KPIBox title="Referencias de Inventario" value={totalProductos} icon={Box} colorClass={{ bg: 'bg-indigo-100', text: 'text-indigo-600' }} />
       </div>
 
       {/* Generador de Informes Parametrizables */}
@@ -181,7 +175,7 @@ const Informes = () => {
              <h3 className="text-2xl font-black flex items-center gap-2"><FileText className="w-6 h-6 text-brand-400"/> Generador de Reportes</h3>
              <p className="text-slate-400 text-sm mt-1">Configura parámetros y obtén un desglose profundo imprimible.</p>
            </div>
-           
+
            <form onSubmit={handleGenerate} className="flex flex-wrap items-end gap-4 w-full md:w-auto bg-slate-900/50 p-4 rounded-2xl border border-slate-700 backdrop-blur-md">
               <div className="flex flex-col gap-1.5 flex-1 min-w-[140px]">
                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Desde</label>
@@ -207,11 +201,13 @@ const Informes = () => {
                   <option value="top_proveedores">Análisis: Concentración de Proveedores</option>
                 </select>
               </div>
-              <button disabled={isGenerating} type="submit" className="h-9 px-6 bg-brand-500 hover:bg-brand-400 text-white font-black text-sm rounded-lg shadow-[0_0_15px_rgba(99,102,241,0.3)] transition-all flex justify-center items-center">
-                {isGenerating ? 'Calculando...' : 'Analizar'}
+              <button disabled={generar.isPending} type="submit" className="h-9 px-6 bg-brand-500 hover:bg-brand-400 text-white font-black text-sm rounded-lg shadow-[0_0_15px_rgba(99,102,241,0.3)] transition-all flex justify-center items-center disabled:opacity-50">
+                {generar.isPending ? 'Calculando...' : 'Analizar'}
               </button>
            </form>
         </div>
+
+        <div className="px-6 md:px-8 pt-4 print:hidden"><FormError message={formError} onDismiss={() => setFormError(null)} /></div>
 
         {/* Zona del Reporte Renderizado y Hoja PDF */}
         <div className="p-6 md:p-10 bg-white min-h-[400px]">

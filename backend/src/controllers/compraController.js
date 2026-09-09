@@ -2,6 +2,7 @@ const { sequelize, Compra, CompraDetalle, Producto, Proveedor, Usuario } = requi
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { invalidateDashboard } = require('./reporteController');
+const { invalidateInforme } = require('./informeController');
 const { calcularTotalCompra } = require('../services/calculo');
 
 exports.getCompras = async (req, res) => {
@@ -32,15 +33,18 @@ exports.createCompra = async (req, res) => {
     });
     if (!proveedor) throw new ValidationError('Proveedor inválido');
 
-    // Todos los productos referenciados deben ser de esta empresa.
-    for (const item of detalles) {
-      if (item.productoId) {
-        const producto = await Producto.findOne({
-          where: { id: item.productoId, empresaId: req.empresaId },
+    // Un solo SELECT ... FOR UPDATE para todos los productos referenciados.
+    const productoIds = [...new Set(detalles.filter((d) => d.productoId).map((d) => d.productoId))];
+    const productos = productoIds.length
+      ? await Producto.findAll({
+          where: { id: productoIds, empresaId: req.empresaId },
           transaction: t,
-        });
-        if (!producto) throw new ValidationError('Producto inválido en un detalle de la compra.');
-      }
+          lock: t.LOCK.UPDATE,
+        })
+      : [];
+    const porId = new Map(productos.map((p) => [p.id, p]));
+    for (const id of productoIds) {
+      if (!porId.has(id)) throw new ValidationError('Producto inválido en un detalle de la compra.');
     }
 
     const total = calcularTotalCompra(
@@ -65,15 +69,20 @@ exports.createCompra = async (req, res) => {
       { transaction: t }
     );
 
-    // Sumar al stock de cada producto (con lock de fila).
-    for (const item of detalles) {
-      if (!item.productoId) continue;
-      const producto = await Producto.findByPk(item.productoId, { transaction: t, lock: t.LOCK.UPDATE });
-      await producto.update({ stock_actual: producto.stock_actual + Number(item.cantidad) }, { transaction: t });
+    // Sumar al stock (acumulando por producto si aparece en varias líneas).
+    const sumaPorProducto = new Map();
+    for (const d of detalles) {
+      if (!d.productoId) continue;
+      sumaPorProducto.set(d.productoId, (sumaPorProducto.get(d.productoId) || 0) + Number(d.cantidad));
+    }
+    for (const [id, delta] of sumaPorProducto) {
+      const p = porId.get(id);
+      await p.update({ stock_actual: Number(p.stock_actual) + delta }, { transaction: t });
     }
 
     await t.commit();
     invalidateDashboard(req.empresaId);
+    invalidateInforme(req.empresaId);
     res.status(201).json(compra);
   } catch (error) {
     await t.rollback();

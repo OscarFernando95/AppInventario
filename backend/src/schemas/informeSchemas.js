@@ -4,7 +4,12 @@ const { z } = require('zod');
 
 const TIPOS = ['ventas_resumen', 'compras_resumen', 'top_productos', 'top_clientes', 'top_proveedores'];
 
-const isoDate = z.string().refine((s) => !Number.isNaN(Date.parse(s)), 'fecha inválida');
+// Fecha en formato YYYY-MM-DD (lo que emite <input type="date">). Se interpreta
+// en la hora local del servidor, no en UTC (ver informeController).
+const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'usa el formato AAAA-MM-DD')
+  .refine((s) => !Number.isNaN(Date.parse(`${s}T00:00:00`)), 'fecha inválida');
 
 const MAX_WINDOW_DAYS = 366;
 

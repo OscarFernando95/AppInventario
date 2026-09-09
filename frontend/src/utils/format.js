@@ -8,6 +8,17 @@ export const formatCOP = (value) => {
 };
 
 /**
+ * Formatea una cantidad que puede venir como DECIMAL string ("100.000", "2.500").
+ * Quita los ceros decimales sobrantes: "100.000" → "100", "2.500" → "2,5".
+ */
+export const formatCantidad = (value) => {
+  if (value === undefined || value === null || value === '') return '0';
+  const n = Number(value);
+  if (Number.isNaN(n)) return String(value);
+  return n.toLocaleString('es-CO', { maximumFractionDigits: 3 });
+};
+
+/**
  * Format a document number with dot thousand separators.
  * e.g. "1234567890" → "1.234.567.890"
  */

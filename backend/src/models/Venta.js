@@ -25,7 +25,7 @@ const Venta = sequelize.define('Venta', {
     defaultValue: DataTypes.NOW,
   },
   total: {
-    type: DataTypes.DECIMAL(10, 2),
+    type: DataTypes.DECIMAL(14, 2),
     allowNull: false,
   },
   descuento_global: {
@@ -46,15 +46,15 @@ const Venta = sequelize.define('Venta', {
     allowNull: true,
   },
   subtotal_bruto: {
-    type: DataTypes.DECIMAL(10, 2),
+    type: DataTypes.DECIMAL(14, 2),
     defaultValue: 0,
   },
   total_impuestos: {
-    type: DataTypes.DECIMAL(10, 2),
+    type: DataTypes.DECIMAL(14, 2),
     defaultValue: 0,
   },
   total_descuentos: {
-    type: DataTypes.DECIMAL(10, 2),
+    type: DataTypes.DECIMAL(14, 2),
     defaultValue: 0,
   },
   estado_fe: {

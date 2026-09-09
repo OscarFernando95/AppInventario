@@ -43,6 +43,31 @@ describe('ventaCreate', () => {
     const r = ventaCreate.safeParse({ detalles: [{ servicioId: 1, cantidad: 1, precio_unitario: -5 }] });
     expect(r.success).toBe(false);
   });
+
+  it('descuento_global > 100 se rechaza (es un porcentaje)', () => {
+    const r = ventaCreate.safeParse({
+      descuento_global: 5000,
+      detalles: [{ servicioId: 1, cantidad: 1, precio_unitario: 10 }],
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('acepta descuento_global entre 0 y 100', () => {
+    const r = ventaCreate.safeParse({
+      descuento_global: 15,
+      detalles: [{ servicioId: 1, cantidad: 1, precio_unitario: 10 }],
+    });
+    expect(r.success).toBe(true);
+    expect(r.data.descuento_global).toBe(15);
+  });
+
+  it('acepta cantidad fraccionaria y la redondea a 3 decimales', () => {
+    const r = ventaCreate.safeParse({
+      detalles: [{ productoId: 1, cantidad: 2.5, precio_unitario: 10 }],
+    });
+    expect(r.success).toBe(true);
+    expect(r.data.detalles[0].cantidad).toBe(2.5);
+  });
 });
 
 describe('compraCreate', () => {

@@ -20,7 +20,7 @@ const Servicio = sequelize.define('Servicio', {
     allowNull: true,
   },
   precio: {
-    type: DataTypes.DECIMAL(10, 2),
+    type: DataTypes.DECIMAL(14, 2),
     allowNull: false,
   },
   porcentaje_iva: {

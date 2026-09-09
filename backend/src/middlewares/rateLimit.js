@@ -2,6 +2,9 @@
 
 const rateLimit = require('express-rate-limit');
 
+// En los tests de integración se hacen muchos logins seguidos desde la misma IP.
+const enTest = () => process.env.NODE_ENV === 'test';
+
 /**
  * Limita los intentos de inicio de sesión para frenar ataques de fuerza bruta.
  * Se aplica solo a POST /api/auth/login.
@@ -14,6 +17,7 @@ const loginLimiter = rateLimit({
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: enTest,
   message: { error: 'Demasiados intentos de inicio de sesión. Espera unos minutos.' },
 });
 
@@ -26,7 +30,7 @@ const apiLimiter = rateLimit({
   max: 1000,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.path === '/health',
+  skip: (req) => req.path === '/health' || enTest(),
   message: { error: 'Límite de solicitudes alcanzado. Intenta de nuevo en unos minutos.' },
 });
 

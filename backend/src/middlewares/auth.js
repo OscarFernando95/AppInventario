@@ -1,27 +1,42 @@
 const jwt = require('jsonwebtoken');
 
-const { Usuario, Empresa, Role } = require('../models');
+const { Usuario, Empresa, Role, Modulo } = require('../models');
 const TtlCache = require('../utils/ttlCache');
+const sessions = require('../services/sessions');
 
 /**
- * Caché del "perfil de sesión" por usuario (estado + rol + empresas), para no
- * pegarle a la BD en CADA request autenticado. TTL corto: un cambio de rol o
- * una desactivación tarda como mucho ~30 s en propagarse, y updateUsuario
- * invalida la entrada de inmediato (ver invalidateUser).
+ * Caché del "perfil de sesión" por usuario: estado, rol, empresas y los módulos
+ * contratados de cada empresa. Evita pegarle a la BD en CADA request. TTL corto;
+ * updateUsuario / updateEmpresa invalidan de inmediato.
  */
 const SESSION_TTL_MS = Number(process.env.AUTH_CACHE_TTL_MS || 30_000);
-const sessionCache = new TtlCache(SESSION_TTL_MS);
+const profileCache = new TtlCache(SESSION_TTL_MS);
 
-const invalidateUser = (userId) => sessionCache.delete(String(userId));
+const invalidateUser = (userId) => profileCache.delete(String(userId));
+// Un cambio de módulos de una empresa afecta a todos sus usuarios. Barato y raro.
+const invalidateAllProfiles = () => profileCache.clear();
 
 async function loadSessionProfile(userId) {
-  const cached = sessionCache.get(String(userId));
+  const cached = profileCache.get(String(userId));
   if (cached) return cached;
 
   const user = await Usuario.findByPk(userId, {
-    include: [{ model: Role }, { model: Empresa, through: { attributes: [] }, attributes: ['id'] }],
+    include: [
+      { model: Role },
+      {
+        model: Empresa,
+        through: { attributes: [] },
+        attributes: ['id'],
+        include: [{ model: Modulo, through: { attributes: [] }, attributes: ['nombre_codigo'] }],
+      },
+    ],
   });
   if (!user) return null;
+
+  const modulosPorEmpresa = {};
+  for (const e of user.Empresas || []) {
+    modulosPorEmpresa[e.id] = (e.Modulos || []).map((m) => m.nombre_codigo);
+  }
 
   const profile = {
     id: user.id,
@@ -29,18 +44,17 @@ async function loadSessionProfile(userId) {
     rolId: user.rolId,
     tipoRol: user.Role ? user.Role.tipo : null,
     empresaIds: (user.Empresas || []).map((e) => e.id),
+    modulosPorEmpresa,
   };
-  sessionCache.set(String(userId), profile);
+  profileCache.set(String(userId), profile);
   return profile;
 }
 
 /**
- * Verifica el JWT, carga el perfil ACTUAL del usuario (cacheado) y comprueba
- * que siga activo. No se confía en el rol del token: se usa el de la BD.
+ * Verifica el JWT, comprueba que la SESIÓN siga vigente (lista de revocación),
+ * carga el perfil ACTUAL del usuario (cacheado) y que siga activo.
  */
 const authenticate = async (req, res, next) => {
-  // El token viaja en la cookie httpOnly `token`. Se acepta también
-  // `Authorization: Bearer <token>` para clientes no navegador (scripts, tests).
   const header = req.headers['authorization'] || '';
   const parts = header.split(' ');
   const bearer = parts.length === 2 && /^Bearer$/i.test(parts[0]) ? parts[1] : null;
@@ -56,15 +70,22 @@ const authenticate = async (req, res, next) => {
   }
 
   try {
+    // Sesión revocada / inexistente (token viejo sin jti incluido).
+    if (!(await sessions.estaVigente(decoded.jti))) {
+      return res.status(401).json({ error: 'Sesión cerrada. Inicia sesión de nuevo.' });
+    }
+
     const profile = await loadSessionProfile(decoded.id);
     if (!profile || !profile.estado) {
       return res.status(401).json({ error: 'Usuario inactivo o inexistente' });
     }
 
+    req.jti = decoded.jti;
     req.userId = profile.id;
     req.rolId = profile.rolId;
     req.tipoRol = profile.tipoRol;
     req.userEmpresaIds = profile.empresaIds;
+    req._modulosPorEmpresa = profile.modulosPorEmpresa;
     next();
   } catch (dbErr) {
     return res.status(500).json({ error: 'Error verificando la sesión' });
@@ -73,7 +94,7 @@ const authenticate = async (req, res, next) => {
 
 /**
  * Exige que el usuario opere dentro de una empresa a la que pertenece (header
- * X-Empresa-Id). Los BACKOFFICE_ADMIN quedan exentos (no tienen empresa activa).
+ * X-Empresa-Id). Los BACKOFFICE_ADMIN quedan exentos.
  */
 const requireEmpresa = (req, res, next) => {
   if (req.tipoRol === 'BACKOFFICE_ADMIN') return next();
@@ -89,11 +110,25 @@ const requireEmpresa = (req, res, next) => {
   }
 
   req.empresaId = empresaId;
+  req.empresaModulos = new Set((req._modulosPorEmpresa && req._modulosPorEmpresa[empresaId]) || []);
   next();
 };
 
 /** Combinación habitual: autenticar + resolver empresa activa. */
 const verifyToken = [authenticate, requireEmpresa];
+
+/**
+ * Exige que la empresa activa tenga contratado el módulo `codigo`
+ * (p.ej. 'Ventas', 'Inventario'). BACKOFFICE_ADMIN exento.
+ * Se monta DESPUÉS de verifyToken.
+ */
+const requireModulo = (codigo) => (req, res, next) => {
+  if (req.tipoRol === 'BACKOFFICE_ADMIN') return next();
+  if (!req.empresaModulos || !req.empresaModulos.has(codigo)) {
+    return res.status(403).json({ error: `El módulo "${codigo}" no está activo para esta empresa` });
+  }
+  next();
+};
 
 const isBackofficeAdmin = (req, res, next) => {
   if (req.tipoRol !== 'BACKOFFICE_ADMIN') {
@@ -112,8 +147,10 @@ const isFrontAdmin = (req, res, next) => {
 module.exports = {
   authenticate,
   requireEmpresa,
+  requireModulo,
   verifyToken,
   isBackofficeAdmin,
   isFrontAdmin,
   invalidateUser,
+  invalidateAllProfiles,
 };

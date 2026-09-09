@@ -25,7 +25,19 @@ const base = z.object({
   modulosIds: z.array(z.coerce.number().int().positive()).optional(),
 });
 
-const empresaCreate = base;
+// Una empresa de FACTURACION_ELECTRONICA necesita los datos de la resolución DIAN.
+const DIAN_REQUERIDOS = ['resolucion_numero', 'prefijo_facturacion', 'rango_desde', 'rango_hasta', 'clave_tecnica'];
+const exigirDatosDian = (val, ctx) => {
+  if (val.tipo_empresa !== 'FACTURACION_ELECTRONICA') return;
+  for (const campo of DIAN_REQUERIDOS) {
+    if (val[campo] === undefined || val[campo] === null || val[campo] === '') {
+      ctx.addIssue({ code: 'custom', path: [campo], message: `Requerido para facturación electrónica.` });
+    }
+  }
+};
+
+const empresaCreate = base.superRefine(exigirDatosDian);
+// En update no se re-valida (la empresa puede completar los datos en otra edición).
 const empresaUpdate = base.partial().extend({ activa: z.boolean().optional() });
 
 module.exports = { empresaCreate, empresaUpdate };

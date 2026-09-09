@@ -19,13 +19,17 @@ const Compra = sequelize.define('Compra', {
     type: DataTypes.INTEGER,
     allowNull: false,
   },
+  pedidoId: {
+    type: DataTypes.INTEGER,
+    allowNull: true, // solo cuando la compra proviene de la recepción de un pedido
+  },
   fecha: {
     type: DataTypes.DATE,
     allowNull: false,
     defaultValue: DataTypes.NOW,
   },
   total: {
-    type: DataTypes.DECIMAL(10, 2),
+    type: DataTypes.DECIMAL(14, 2),
     allowNull: false,
   }
 }, {

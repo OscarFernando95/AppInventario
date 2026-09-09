@@ -20,15 +20,15 @@ const VentaDetalle = sequelize.define('VentaDetalle', {
     allowNull: true, // Optional if it's a Product
   },
   cantidad: {
-    type: DataTypes.INTEGER,
+    type: DataTypes.DECIMAL(12, 3), // admite fracciones (kg, litros, metros)
     allowNull: false,
   },
   precio_unitario: {
-    type: DataTypes.DECIMAL(10, 2),
+    type: DataTypes.DECIMAL(14, 2),
     allowNull: false,
   },
   precio_base: {
-    type: DataTypes.DECIMAL(10, 2),
+    type: DataTypes.DECIMAL(14, 2),
     allowNull: true,
   },
   porcentaje_iva: {
@@ -36,11 +36,11 @@ const VentaDetalle = sequelize.define('VentaDetalle', {
     defaultValue: 0,
   },
   valor_iva: {
-    type: DataTypes.DECIMAL(10, 2),
+    type: DataTypes.DECIMAL(14, 2),
     defaultValue: 0,
   },
   subtotal_bruto: {
-    type: DataTypes.DECIMAL(10, 2),
+    type: DataTypes.DECIMAL(14, 2),
     defaultValue: 0,
   }
 }, {

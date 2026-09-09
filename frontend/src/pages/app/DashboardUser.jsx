@@ -12,11 +12,16 @@ const DashboardUser = () => {
   // Endpoint agregado y cacheado en el backend (1 consulta en vez de 4).
   const { data: dash } = useEmpresaQuery(['dashboard'], '/reportes/dashboard');
 
-  // Total de pedidos: solo el contador (cabecera X-Total-Count), sin traer filas.
-  const { data: totalPedidos } = useEmpresaQuery(['pedidos', 'count'], async () => {
-    const res = await api.get('/pedidos', { params: { limit: 1 } });
-    return Number(res.headers['x-total-count'] || 0);
-  });
+  // Total de pedidos: solo si la empresa tiene el módulo (evita un 403).
+  const tienePedidos = (activeEmpresa?.modulos || []).includes('Pedidos');
+  const { data: totalPedidos } = useEmpresaQuery(
+    ['pedidos', 'count'],
+    async () => {
+      const res = await api.get('/pedidos', { params: { limit: 1 } });
+      return Number(res.headers['x-total-count'] || 0);
+    },
+    { enabled: tienePedidos }
+  );
 
   const stats = {
     prod: dash?.totalProductos ?? 0,

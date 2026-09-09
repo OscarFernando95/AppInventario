@@ -43,9 +43,18 @@ describe('datos DIVIPOLA', () => {
 });
 
 describe('empresaCreate — tipo_empresa', () => {
-  it('acepta SIMPLE y FACTURACION_ELECTRONICA', () => {
+  it('acepta SIMPLE sin datos DIAN', () => {
     expect(empresaCreate.safeParse({ nombre: 'X', tipo_empresa: 'SIMPLE' }).success).toBe(true);
-    expect(empresaCreate.safeParse({ nombre: 'X', tipo_empresa: 'FACTURACION_ELECTRONICA' }).success).toBe(true);
+  });
+
+  it('exige los datos de la resolución DIAN para FACTURACION_ELECTRONICA (N14)', () => {
+    expect(empresaCreate.safeParse({ nombre: 'X', tipo_empresa: 'FACTURACION_ELECTRONICA' }).success).toBe(false);
+    const completa = empresaCreate.safeParse({
+      nombre: 'X', tipo_empresa: 'FACTURACION_ELECTRONICA',
+      resolucion_numero: '18760000001', prefijo_facturacion: 'SETP',
+      rango_desde: 1, rango_hasta: 5000, clave_tecnica: 'fc8eac42',
+    });
+    expect(completa.success).toBe(true);
   });
 
   it('rechaza un tipo desconocido', () => {

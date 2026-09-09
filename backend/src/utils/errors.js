@@ -26,4 +26,13 @@ class ValidationError extends Error {
   }
 }
 
-module.exports = { ValidationError };
+/** El usuario está autenticado pero no tiene permiso para esta acción (403). */
+class ForbiddenError extends ValidationError {
+  constructor(message) {
+    super(message);
+    this.name = 'ForbiddenError';
+    this.status = 403;
+  }
+}
+
+module.exports = { ValidationError, ForbiddenError };

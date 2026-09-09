@@ -1,44 +1,38 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { PackageOpen, Users, Plus, ShoppingCart, Trash2, Search, CheckCircle, Truck, UserPlus, X, Box, Printer, FileText, Download } from 'lucide-react';
-import { formatCOP } from '../../utils/format';
+import { formatCOP, formatCantidad } from '../../utils/format';
+import { useAuthStore } from '../../store/authStore';
+import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import FormError from '../../components/FormError';
+import { apiError } from '../../utils/apiError';
 
 const Pedidos = () => {
-  const [proveedores, setProveedores] = useState([]);
-  const [productos, setProductos] = useState([]);
-  const [pedidos, setPedidos] = useState([]);
-  
+  const queryClient = useQueryClient();
+  const modulos = useAuthStore((s) => s.activeEmpresa?.modulos) || [];
+
+  const { data: pedidos = [] } = useEmpresaQuery(['pedidos'], '/pedidos');
+  const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
+  const { data: proveedores = [] } = useEmpresaQuery(['proveedores'], '/proveedores', { enabled: modulos.includes('Proveedores') });
+  const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
+
   const [showModal, setShowModal] = useState(false); // Modal para Crear Pedido
   const [viewDetalle, setViewDetalle] = useState(null); // Modal Ver PDF / Completado
   const [checkInPedido, setCheckInPedido] = useState(null); // Modal para Recibir (Check-in)
-  
+  const [formError, setFormError] = useState(null);
+
   const [provSearch, setProvSearch] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [showNewProv, setShowNewProv] = useState(false);
   const [showNewProd, setShowNewProd] = useState(false);
-  
+
   const [formData, setFormData] = useState({ proveedorId: '', detalles: [] });
   const [newProvData, setNewProvData] = useState({ nombre: '', nit: '', contacto: '', telefono: '', email: '', direccion: '' });
   const [newProdData, setNewProdData] = useState({ codigo: '', nombre_producto: '', precio_unitario: '' });
-  
+
   const [checkInDetalles, setCheckInDetalles] = useState([]);
-
-  const fetchData = async () => {
-    try {
-      const [provRes, prodRes, pedRes] = await Promise.all([
-        api.get('/proveedores'),
-        api.get('/productos'),
-        api.get('/pedidos')
-      ]);
-      setProveedores(provRes.data);
-      setProductos(prodRes.data);
-      setPedidos(pedRes.data);
-    } catch (err) { console.error(err); }
-  };
-
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- carga inicial; pendiente migrar a TanStack Query (ver INFORME_REFACTOR Fase 3)
-  useEffect(() => { fetchData(); }, []);
 
   // Compute Frequencies
   const freq = useMemo(() => {
@@ -68,29 +62,33 @@ const Pedidos = () => {
     return filtered.sort((a,b) => (freq.prodFreq[b.id] || 0) - (freq.prodFreq[a.id] || 0));
   }, [itemSearch, productos, freq]);
 
-  const handleCreateProv = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await api.post('/proveedores', newProvData);
-      setProveedores([...proveedores, res.data]);
+  const crearProveedor = useMutation({
+    mutationFn: (data) => api.post('/proveedores', data),
+    onSuccess: (res) => {
+      invalidar();
       setFormData(prev => ({ ...prev, proveedorId: res.data.id }));
       setShowNewProv(false);
       setProvSearch('');
       setNewProvData({ nombre: '', nit: '', contacto: '', telefono: '', email: '', direccion: '' });
-    } catch { alert('Sucedió un problema al crear.'); }
-  };
+      setFormError(null);
+    },
+    onError: (err) => setFormError(apiError(err, 'No se pudo crear el proveedor')),
+  });
+  const handleCreateProv = (e) => { e.preventDefault(); crearProveedor.mutate(newProvData); };
 
-  const handleCreateProd = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await api.post('/productos', newProdData);
-      setProductos([...productos, res.data]);
+  const crearProducto = useMutation({
+    mutationFn: (data) => api.post('/productos', data),
+    onSuccess: (res) => {
+      invalidar();
       addItemToCart(res.data);
       setShowNewProd(false);
       setItemSearch('');
       setNewProdData({ codigo: '', nombre_producto: '', precio_unitario: '' });
-    } catch { alert('Sucedió un problema al crear el producto.'); }
-  };
+      setFormError(null);
+    },
+    onError: (err) => setFormError(apiError(err, 'No se pudo crear el producto')),
+  });
+  const handleCreateProd = (e) => { e.preventDefault(); crearProducto.mutate(newProdData); };
 
   const addItemToCart = (item) => {
     const existingIdx = formData.detalles.findIndex(d => d.productoId === item.id);
@@ -126,31 +124,36 @@ const Pedidos = () => {
 
   const getTotal = () => formData.detalles.reduce((acc, curr) => acc + (curr.cantidad_pedida * curr.costo_estimado), 0);
 
-  const handleSubmitPedido = async (e) => {
-    e.preventDefault();
-    if (!formData.proveedorId) return alert('Debes seleccionar un proveedor.');
-    if (formData.detalles.length === 0) return alert('El pedido está vacío.');
-    try {
-      await api.post('/pedidos', { 
-        proveedorId: parseInt(formData.proveedorId),
-        detalles: formData.detalles.map(d => ({ 
-          productoId: d.productoId,
-          cantidad_pedida: d.cantidad_pedida, 
-          costo_estimado: d.costo_estimado 
-        }))
-      });
+  const crearPedido = useMutation({
+    mutationFn: (payload) => api.post('/pedidos', payload),
+    onSuccess: () => {
+      invalidar();
       setShowModal(false);
       setFormData({ proveedorId: '', detalles: [] });
       setProvSearch('');
       setItemSearch('');
-      fetchData();
-    } catch {
-      alert("Sucedió un problema al generar el pedido.");
-    }
+      setFormError(null);
+    },
+    onError: (err) => setFormError(apiError(err, 'No se pudo generar el pedido')),
+  });
+
+  const handleSubmitPedido = (e) => {
+    e.preventDefault();
+    if (!formData.proveedorId) return setFormError('Debes seleccionar un proveedor.');
+    if (formData.detalles.length === 0) return setFormError('El pedido está vacío.');
+    crearPedido.mutate({
+      proveedorId: parseInt(formData.proveedorId),
+      detalles: formData.detalles.map(d => ({
+        productoId: d.productoId,
+        cantidad_pedida: d.cantidad_pedida,
+        costo_estimado: d.costo_estimado,
+      })),
+    });
   };
 
   // CHECK IN LOGIC
   const openCheckIn = (pedido) => {
+    setFormError(null);
     setCheckInDetalles(pedido.PedidoDetalles.map(d => ({
       id: d.id,
       productoId: d.productoId,
@@ -168,21 +171,24 @@ const Pedidos = () => {
     setCheckInDetalles(newDet);
   };
 
-  const submitCheckIn = async () => {
-    try {
-      await api.post(`/pedidos/${checkInPedido.id}/checkin`, {
-        detalles_recibidos: checkInDetalles.map(d => ({
-          productoId: d.productoId,
-          cantidad: d.cantidad_llegada,
-          costo_unitario: d.costo_estimado
-        }))
-      });
+  const recepcionar = useMutation({
+    mutationFn: (payload) => api.post(`/pedidos/${checkInPedido.id}/checkin`, payload),
+    onSuccess: () => {
+      invalidar();
       setCheckInPedido(null);
-      fetchData();
-      alert('¡Recepción completada! El pedido se transformó en una compra y el stock fue sumado a la bodega.');
-    } catch {
-      alert("Error en la recepción del pedido.");
-    }
+      setFormError(null);
+    },
+    onError: (err) => setFormError(apiError(err, 'No se pudo procesar la recepción del pedido')),
+  });
+
+  const submitCheckIn = () => {
+    recepcionar.mutate({
+      detalles_recibidos: checkInDetalles.map(d => ({
+        productoId: d.productoId,
+        cantidad: d.cantidad_llegada,
+        costo_unitario: d.costo_estimado,
+      })),
+    });
   };
 
   const selectedProv = proveedores.find(p => p.id === parseInt(formData.proveedorId));
@@ -194,7 +200,7 @@ const Pedidos = () => {
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">Registro de Órdenes de Pedido</h2>
           <p className="text-slate-500 mt-1">Genera PDFs, solicita productos a proveedores y valídalos al recibirlos.</p>
         </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setFormData({ proveedorId: '', detalles: [] }); setShowNewProv(false); setProvSearch(''); setItemSearch(''); setShowModal(true); }}>
+        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setFormData({ proveedorId: '', detalles: [] }); setShowNewProv(false); setProvSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); }}>
           <FileText className="w-5 h-5" /> Nueva Orden
         </button>
       </div>
@@ -257,6 +263,7 @@ const Pedidos = () => {
               </h3>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-700 hover:bg-slate-100 p-2 rounded-full transition-colors"><X className="w-6 h-6"/></button>
             </div>
+            <div className="px-8 pt-4"><FormError message={formError} onDismiss={() => setFormError(null)} /></div>
 
             <div className="flex-1 flex overflow-hidden">
               <div className="w-1/2 p-6 overflow-y-auto custom-scrollbar border-r border-slate-200">
@@ -360,7 +367,7 @@ const Pedidos = () => {
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="font-black text-brand-600 mb-2">{formatCOP(d.cantidad_pedida * d.costo_estimado)}</p>
+                        <p className="font-black text-brand-600 mb-2">{formatCOP(Number(d.cantidad_pedida) * Number(d.costo_estimado))}</p>
                         <button onClick={() => removeFromCart(idx)} className="p-1.5 text-rose-400 hover:bg-rose-50 hover:text-rose-600 rounded-lg transition-colors"><Trash2 className="w-4 h-4"/></button>
                       </div>
                     </div>
@@ -371,8 +378,8 @@ const Pedidos = () => {
                     <span className="text-sm font-black text-slate-500 uppercase tracking-widest">Estimado Total</span>
                     <span className="text-4xl font-black text-emerald-600 tracking-tight">{formatCOP(getTotal())}</span>
                   </div>
-                  <button onClick={handleSubmitPedido} className="w-full btn-primary py-4 text-lg font-bold shadow-xl shadow-brand-500/30 flex items-center justify-center gap-2">
-                    <CheckCircle className="w-6 h-6" /> Procesar Orden de Compra
+                  <button onClick={handleSubmitPedido} disabled={crearPedido.isPending} className="w-full btn-primary py-4 text-lg font-bold shadow-xl shadow-brand-500/30 flex items-center justify-center gap-2 disabled:opacity-50">
+                    <CheckCircle className="w-6 h-6" /> {crearPedido.isPending ? 'Procesando…' : 'Procesar Orden de Compra'}
                   </button>
                 </div>
               </div>
@@ -390,6 +397,7 @@ const Pedidos = () => {
               <div>
                 <h3 className="text-2xl font-black text-emerald-800 flex items-center gap-2"><Download className="text-emerald-600" /> Recepción de Pedido</h3>
                 <p className="text-xs font-bold text-emerald-600/70 uppercase tracking-widest mt-1">Ingreso a Bodega</p>
+                <div className="mt-3"><FormError message={formError} onDismiss={() => setFormError(null)} /></div>
               </div>
               <button className="p-2 bg-white hover:bg-emerald-100 hover:text-emerald-800 rounded-full transition-colors text-emerald-600" onClick={() => setCheckInPedido(null)}><X className="w-5 h-5"/></button>
             </div>
@@ -413,7 +421,7 @@ const Pedidos = () => {
                       {checkInDetalles.map((d, idx) => (
                          <tr key={d.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
                             <td className="py-4 font-bold text-slate-800">{d.nombre}</td>
-                            <td className="py-4 text-center font-bold text-slate-500">{d.cantidad_pedida}</td>
+                            <td className="py-4 text-center font-bold text-slate-500">{formatCantidad(d.cantidad_pedida)}</td>
                             <td className="py-4 text-center">
                               <input type="number" min="0" value={d.cantidad_llegada} onChange={(e) => updateCheckInItem(idx, 'cantidad_llegada', e.target.value)} className="w-full max-w-[100px] text-center px-3 py-2 border-2 border-brand-200 focus:border-brand-500 rounded-xl font-black text-brand-700 bg-brand-50 outline-none transition-all"/>
                             </td>
@@ -426,8 +434,8 @@ const Pedidos = () => {
                </table>
                
                <div className="flex justify-end pt-4 border-t border-slate-200">
-                  <button onClick={submitCheckIn} className="px-8 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-[0_8px_20px_-8px_rgba(5,150,105,0.6)] flex items-center gap-2 transition-transform active:scale-95">
-                    <CheckCircle className="w-5 h-5"/> Confirmar Check-in y Abonar Stock
+                  <button onClick={submitCheckIn} disabled={recepcionar.isPending} className="px-8 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-[0_8px_20px_-8px_rgba(5,150,105,0.6)] flex items-center gap-2 transition-transform active:scale-95 disabled:opacity-50">
+                    <CheckCircle className="w-5 h-5"/> {recepcionar.isPending ? 'Procesando…' : 'Confirmar Check-in y Abonar Stock'}
                   </button>
                </div>
             </div>
@@ -491,9 +499,9 @@ const Pedidos = () => {
                            <tr key={index} className="border-b border-slate-200">
                              <td className="py-4 px-4 text-center font-mono text-sm text-slate-500">{index + 1}</td>
                              <td className="py-4 px-4 font-bold text-slate-700">{d.Producto?.nombre_producto || 'Producto Desconocido'}</td>
-                             <td className="py-4 px-4 text-center font-bold text-slate-600">{d.cantidad_pedida}</td>
+                             <td className="py-4 px-4 text-center font-bold text-slate-600">{formatCantidad(d.cantidad_pedida)}</td>
                              <td className="py-4 px-4 text-right font-mono text-sm text-slate-600">{formatCOP(d.costo_estimado)}</td>
-                             <td className="py-4 px-4 text-right font-mono text-sm font-bold text-slate-800">{formatCOP(d.cantidad_pedida * d.costo_estimado)}</td>
+                             <td className="py-4 px-4 text-right font-mono text-sm font-bold text-slate-800">{formatCOP(Number(d.cantidad_pedida) * Number(d.costo_estimado))}</td>
                            </tr>
                         ))}
                      </tbody>

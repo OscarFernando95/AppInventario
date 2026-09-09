@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { formatCOP, formatDocumento, formatNIT } from './format';
+import { formatCOP, formatDocumento, formatNIT, formatCantidad } from './format';
 
 /**
  * Generates a professional PDF invoice for a sale.
@@ -146,7 +146,7 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
   const tableBody = detalles.map((d, i) => {
     const nombre = d.Producto?.nombre_producto || d.Servicio?.nombre || d.nombre || 'Ítem';
     const tipo = d.Producto ? 'Producto' : 'Servicio';
-    const qty = d.cantidad;
+    const qty = Number(d.cantidad);
     const unitPrice = Number(d.precio_unitario);
     const basePrice = Number(d.precio_base || d.precio_unitario);
     const lineTotal = qty * unitPrice;
@@ -159,7 +159,7 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
         (i + 1).toString(),
         nombre,
         tipo,
-        qty.toString(),
+        formatCantidad(qty),
         formatCOP(basePrice),
         formatCOP(unitPrice),
         discountPct,
@@ -170,7 +170,7 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
         (i + 1).toString(),
         nombre,
         tipo,
-        qty.toString(),
+        formatCantidad(qty),
         formatCOP(unitPrice),
         formatCOP(lineTotal)
       ];
@@ -228,8 +228,8 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
   // ═══════════════════════════════════════════════
   // TOTALS SECTION
   // ═══════════════════════════════════════════════
-  const subtotalAtBase = detalles.reduce((acc, d) => acc + d.cantidad * Number(d.precio_base || d.precio_unitario), 0);
-  const subtotalAtSale = detalles.reduce((acc, d) => acc + d.cantidad * Number(d.precio_unitario), 0);
+  const subtotalAtBase = detalles.reduce((acc, d) => acc + Number(d.cantidad) * Number(d.precio_base || d.precio_unitario), 0);
+  const subtotalAtSale = detalles.reduce((acc, d) => acc + Number(d.cantidad) * Number(d.precio_unitario), 0);
   
   const subtotalBruto = Number(venta.subtotal_bruto) || subtotalAtSale;
   const totalImpuestos = Number(venta.total_impuestos) || 0;

@@ -1,5 +1,5 @@
 const { sequelize, Usuario, Role, Empresa } = require('../models');
-const { ValidationError } = require('../utils/errors');
+const { ValidationError, ForbiddenError } = require('../utils/errors');
 const { hashPassword } = require('../utils/password');
 const { invalidateUser } = require('../middlewares/auth');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
@@ -19,7 +19,7 @@ async function assertRolAsignable(tipoRolActor, rolId) {
   if (!rol) throw new ValidationError('El rol indicado no existe');
   const permitidos = ROLES_ASIGNABLES[tipoRolActor] || [];
   if (!permitidos.includes(rol.tipo)) {
-    throw new ValidationError('No estás autorizado para asignar ese rol');
+    throw new ForbiddenError('No estás autorizado para asignar ese rol');
   }
 }
 

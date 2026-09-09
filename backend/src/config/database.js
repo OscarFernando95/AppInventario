@@ -1,18 +1,15 @@
 /**
  * Instancia de Sequelize usada por toda la aplicación.
  *
- * Toda la configuración de conexión (dialecto, DATABASE_URL vs variables sueltas,
- * SSL para Supabase, límites de tiempo, pool) vive en ./connection.js, que es la
- * misma fuente que consume sequelize-cli para migraciones y seeders.
+ * Toda la configuración de conexión (DATABASE_URL vs variables sueltas, SSL,
+ * límites de tiempo, pool) vive en ./connection.js, que es la misma fuente que
+ * consume sequelize-cli para migraciones y seeders.
+ *
+ * La comprobación de conexión al arrancar la hace src/index.js (una sola vez);
+ * aquí NO se llama a `authenticate()` para no abrir conexiones al importar el
+ * módulo (importa a los tests y a cualquier script).
  */
 
 const { createSequelize } = require('./connection');
 
-const sequelize = createSequelize();
-
-// Test de conexión (no bloqueante).
-sequelize.authenticate()
-  .then(() => console.log('Base de datos conectada correctamente.'))
-  .catch(err => console.error('Error al conectar a la base de datos:', err));
-
-module.exports = sequelize;
+module.exports = createSequelize();

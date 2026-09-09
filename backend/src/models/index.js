@@ -17,6 +17,7 @@ const Cliente = require('./Cliente');
 const Servicio = require('./Servicio');
 const Pedido = require('./Pedido');
 const PedidoDetalle = require('./PedidoDetalle');
+const Sesion = require('./Sesion');
 
 // Relaciones Administrativas
 Empresa.belongsToMany(Usuario, { through: 'usuarios_empresas', foreignKey: 'empresaId' });
@@ -59,6 +60,13 @@ PedidoDetalle.belongsTo(Pedido, { foreignKey: 'pedidoId' });
 Producto.hasMany(PedidoDetalle, { foreignKey: 'productoId' });
 PedidoDetalle.belongsTo(Producto, { foreignKey: 'productoId' });
 
+// La recepción de un pedido genera una compra (trazabilidad).
+Pedido.hasMany(Compra, { foreignKey: 'pedidoId' });
+Compra.belongsTo(Pedido, { foreignKey: 'pedidoId' });
+
+Usuario.hasMany(Sesion, { foreignKey: 'usuarioId' });
+Sesion.belongsTo(Usuario, { foreignKey: 'usuarioId' });
+
 Empresa.hasMany(Cliente, { foreignKey: 'empresaId' });
 Cliente.belongsTo(Empresa, { foreignKey: 'empresaId' });
 
@@ -80,6 +88,6 @@ Servicio.hasMany(VentaDetalle, { foreignKey: 'servicioId' });
 VentaDetalle.belongsTo(Servicio, { foreignKey: 'servicioId' });
 
 module.exports = {
-  sequelize, Empresa, Role, Usuario, Modulo, Departamento, Municipio, ActividadCiiu,
+  sequelize, Empresa, Role, Usuario, Modulo, Departamento, Municipio, ActividadCiiu, Sesion,
   Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle
 };

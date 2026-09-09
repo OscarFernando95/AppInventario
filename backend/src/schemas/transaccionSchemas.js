@@ -2,7 +2,17 @@
 
 const { z, dinero } = require('./common');
 
-const cantidad = z.coerce.number().positive();
+// Cantidad: admite fracciones (kg, litros, metros) hasta 3 decimales; la columna
+// es DECIMAL(12,3). Se redondea a 3 decimales para no depender de la precisión
+// exacta de coma flotante del cliente.
+const cantidad = z.coerce
+  .number()
+  .positive()
+  .max(9_999_999)
+  .transform((n) => Math.round(n * 1000) / 1000);
+
+// Porcentaje 0–100 (descuento global de la venta).
+const porcentaje = z.coerce.number().min(0).max(100);
 
 // id opcional que tolera null / "" (los formularios POS mandan el id que NO
 // aplica como null explícito: p. ej. servicioId:null en una línea de producto).
@@ -32,7 +42,9 @@ const ventaDetalle = z
 const ventaCreate = z.object({
   clienteId: optionalId,
   detalles: z.array(ventaDetalle).min(1),
-  descuento_global: dinero.optional(),
+  // Porcentaje 0–100 (así lo maneja la UI y el PDF). El backend ignora `total` y
+  // `precio_base` que manda el cliente.
+  descuento_global: porcentaje.optional(),
   forma_pago: z.string().trim().max(5).optional(),
   medio_pago: z.string().trim().max(5).optional(),
 });

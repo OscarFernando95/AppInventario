@@ -1,5 +1,6 @@
 const { Empresa, Modulo } = require('../models');
 const { ValidationError } = require('../utils/errors');
+const { invalidateAllProfiles } = require('../middlewares/auth');
 
 /**
  * Comprueba que todos los ids de módulo existan. Antes, un id inexistente
@@ -45,6 +46,8 @@ exports.updateEmpresa = async (req, res) => {
   await empresa.update(datos);
   if (modulosIds) {
     await empresa.setModulos(modulosIds);
+    // El cambio de módulos afecta el gating de todos los usuarios de la empresa.
+    invalidateAllProfiles();
   }
 
   const actualizada = await Empresa.findByPk(id, { include: Modulo });

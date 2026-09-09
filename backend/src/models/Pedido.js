@@ -30,7 +30,7 @@ const Pedido = sequelize.define('Pedido', {
     defaultValue: 'PENDIENTE',
   },
   total_estimado: {
-    type: DataTypes.DECIMAL(10, 2),
+    type: DataTypes.DECIMAL(14, 2),
     allowNull: false,
   }
 }, {

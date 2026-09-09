@@ -29,6 +29,23 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
   return children;
 };
 
+// Bloquea la ruta si la empresa activa no tiene contratado el módulo
+// (el backend también lo valida — esto solo evita la pantalla rota).
+const ModuloRoute = ({ modulo, children }) => {
+  const activeEmpresa = useAuthStore((s) => s.activeEmpresa);
+  const rol = useAuthStore((s) => s.user?.rol);
+  if (rol === 'BACKOFFICE_ADMIN') return children;
+  const modulos = activeEmpresa?.modulos || [];
+  if (!modulos.includes(modulo)) return <Navigate to="/app" replace />;
+  return children;
+};
+
+// Solo FRONT_ADMIN (gestión de personal). Un FRONT_USER se manda al dashboard.
+const SoloFrontAdmin = ({ children }) => {
+  const rol = useAuthStore((s) => s.user?.rol);
+  return rol === 'FRONT_ADMIN' ? children : <Navigate to="/app" replace />;
+};
+
 // La pantalla de cambio de contraseña solo requiere sesión iniciada (se usa
 // también cuando el usuario está obligado a cambiarla y aún no puede entrar).
 const CambiarPasswordGuard = () => {
@@ -66,15 +83,15 @@ const App = () => {
           } 
         >
           <Route index element={<DashboardUser />} />
-          <Route path="inventario" element={<Inventario />} />
-          <Route path="proveedores" element={<Proveedores />} />
-          <Route path="clientes" element={<Clientes />} />
-          <Route path="servicios" element={<Servicios />} />
-          <Route path="compras" element={<Compras />} />
-          <Route path="ventas" element={<Ventas />} />
-          <Route path="pedidos" element={<Pedidos />} />
-          <Route path="informes" element={<Informes />} />
-          <Route path="admin" element={<AdminUsuarios />} />
+          <Route path="inventario" element={<ModuloRoute modulo="Inventario"><Inventario /></ModuloRoute>} />
+          <Route path="proveedores" element={<ModuloRoute modulo="Proveedores"><Proveedores /></ModuloRoute>} />
+          <Route path="clientes" element={<ModuloRoute modulo="Clientes"><Clientes /></ModuloRoute>} />
+          <Route path="servicios" element={<ModuloRoute modulo="Servicios"><Servicios /></ModuloRoute>} />
+          <Route path="compras" element={<ModuloRoute modulo="Compras"><Compras /></ModuloRoute>} />
+          <Route path="ventas" element={<ModuloRoute modulo="Ventas"><Ventas /></ModuloRoute>} />
+          <Route path="pedidos" element={<ModuloRoute modulo="Pedidos"><Pedidos /></ModuloRoute>} />
+          <Route path="informes" element={<ModuloRoute modulo="Informes"><Informes /></ModuloRoute>} />
+          <Route path="admin" element={<SoloFrontAdmin><AdminUsuarios /></SoloFrontAdmin>} />
         </Route>
 
         <Route path="/" element={<Navigate to="/login" replace />} />

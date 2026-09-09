@@ -8,8 +8,10 @@ const validate = require('../middlewares/validate');
 const { loginSchema, changePasswordSchema } = require('../schemas/authSchemas');
 
 router.post('/login', loginLimiter, validate({ body: loginSchema }), asyncHandler(authController.login));
+router.post('/logout', asyncHandler(authController.logout));
 
-router.post('/logout', authController.logout);
+router.post('/logout-all', authenticate, asyncHandler(authController.logoutAll));
+router.get('/sessions', authenticate, asyncHandler(authController.listSessions));
 
 router.post(
   '/change-password',

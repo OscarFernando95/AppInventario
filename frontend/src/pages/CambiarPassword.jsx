@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import api from '../api/axios';
-import { Lock, Loader2, ShieldCheck } from 'lucide-react';
+import { Lock, Loader2, ShieldCheck, LogOut } from 'lucide-react';
 
 const CambiarPassword = () => {
   const [actual, setActual] = useState('');
@@ -10,6 +10,8 @@ const CambiarPassword = () => {
   const [confirmar, setConfirmar] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [cerrandoSesiones, setCerrandoSesiones] = useState(false);
+  const [aviso, setAviso] = useState('');
 
   const navigate = useNavigate();
   const { user, clearMustChangePassword } = useAuthStore();
@@ -34,6 +36,20 @@ const CambiarPassword = () => {
       setError(err.response?.data?.error || 'No se pudo cambiar la contraseña');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const cerrarOtrasSesiones = async () => {
+    setError('');
+    setAviso('');
+    setCerrandoSesiones(true);
+    try {
+      const { data } = await api.post('/auth/logout-all?mantener_actual=true');
+      setAviso(`Se cerraron ${data?.revocadas ?? 0} sesión(es) en otros dispositivos.`);
+    } catch (err) {
+      setError(err.response?.data?.error || 'No se pudieron cerrar las otras sesiones');
+    } finally {
+      setCerrandoSesiones(false);
     }
   };
 
@@ -63,6 +79,12 @@ const CambiarPassword = () => {
           </div>
         )}
 
+        {aviso && (
+          <div className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-300 text-sm text-center">
+            {aviso}
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">Contraseña actual</label>
@@ -86,6 +108,21 @@ const CambiarPassword = () => {
             {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Lock className="w-4 h-4" /> Guardar contraseña</>}
           </button>
         </form>
+
+        <div className="mt-8 pt-6 border-t border-dark-700/60">
+          <p className="text-sm font-medium text-slate-300 mb-1">Sesiones activas</p>
+          <p className="text-xs text-slate-500 mb-4">
+            Cierra la sesión en cualquier otro dispositivo o navegador donde tu cuenta siga abierta. Esta sesión se mantiene.
+          </p>
+          <button
+            type="button"
+            onClick={cerrarOtrasSesiones}
+            disabled={cerrandoSesiones}
+            className="w-full flex justify-center items-center gap-2 py-3 px-4 rounded-xl text-sm font-bold text-slate-200 bg-dark-900/50 border border-dark-700 hover:bg-dark-700/50 active:scale-[0.98] outline-none disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+          >
+            {cerrandoSesiones ? <Loader2 className="w-5 h-5 animate-spin" /> : <><LogOut className="w-4 h-4" /> Cerrar mis otras sesiones</>}
+          </button>
+        </div>
       </div>
     </div>
   );

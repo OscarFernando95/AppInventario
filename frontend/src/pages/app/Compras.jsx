@@ -1,16 +1,27 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { PackageOpen, Users, Plus, ShoppingCart, Trash2, Tag, Search, CheckCircle, Truck, UserPlus, X, Box, Wallet, Eye, Receipt } from 'lucide-react';
-import { formatCOP } from '../../utils/format';
+import { formatCOP, formatCantidad } from '../../utils/format';
+import { useAuthStore } from '../../store/authStore';
+import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import FormError from '../../components/FormError';
+import { apiError } from '../../utils/apiError';
 
 const Compras = () => {
-  const [proveedores, setProveedores] = useState([]);
-  const [productos, setProductos] = useState([]);
-  const [compras, setCompras] = useState([]);
+  const queryClient = useQueryClient();
+  const modulos = useAuthStore((s) => s.activeEmpresa?.modulos) || [];
+
+  const { data: compras = [] } = useEmpresaQuery(['compras'], '/compras');
+  const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
+  const { data: proveedores = [] } = useEmpresaQuery(['proveedores'], '/proveedores', { enabled: modulos.includes('Proveedores') });
+  const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
+
   const [showModal, setShowModal] = useState(false);
   const [viewDetalle, setViewDetalle] = useState(null);
-  
+  const [formError, setFormError] = useState(null);
+
   const [activeTab, setActiveTab] = useState('P'); // 'P': Productos, 'G': Gastos
   const [provSearch, setProvSearch] = useState('');
   const [itemSearch, setItemSearch] = useState('');
@@ -18,25 +29,9 @@ const Compras = () => {
   const [newProvData, setNewProvData] = useState({ nombre: '', nit: '', contacto: '', telefono: '', email: '', direccion: '' });
   const [showNewProd, setShowNewProd] = useState(false);
   const [newProdData, setNewProdData] = useState({ codigo: '', nombre_producto: '', precio_unitario: '' });
-  
+
   const [formData, setFormData] = useState({ proveedorId: '', detalles: [] });
   const [gastoForm, setGastoForm] = useState({ descripcion: '', cantidad: 1, costo_unitario: '' });
-
-  const fetchData = async () => {
-    try {
-      const [provRes, prodRes, compRes] = await Promise.all([
-        api.get('/proveedores'),
-        api.get('/productos'),
-        api.get('/compras')
-      ]);
-      setProveedores(provRes.data);
-      setProductos(prodRes.data);
-      setCompras(compRes.data);
-    } catch (err) { console.error(err); }
-  };
-
-  // eslint-disable-next-line react-hooks/set-state-in-effect -- carga inicial; pendiente migrar a TanStack Query (ver INFORME_REFACTOR Fase 3)
-  useEffect(() => { fetchData(); }, []);
 
   const freq = useMemo(() => {
     const pFreq = {}; const prodFreq = {};
@@ -68,29 +63,33 @@ const Compras = () => {
     return [];
   }, [activeTab, itemSearch, productos, freq]);
 
-  const handleCreateProv = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await api.post('/proveedores', newProvData);
-      setProveedores([...proveedores, res.data]);
+  const crearProveedor = useMutation({
+    mutationFn: (data) => api.post('/proveedores', data),
+    onSuccess: (res) => {
+      invalidar();
       setFormData(prev => ({ ...prev, proveedorId: res.data.id }));
       setShowNewProv(false);
       setProvSearch('');
       setNewProvData({ nombre: '', nit: '', contacto: '', telefono: '', email: '', direccion: '' });
-    } catch { alert('Sucedió un problema al crear.'); }
-  };
+      setFormError(null);
+    },
+    onError: (err) => setFormError(apiError(err, 'No se pudo crear el proveedor')),
+  });
+  const handleCreateProv = (e) => { e.preventDefault(); crearProveedor.mutate(newProvData); };
 
-  const handleCreateProd = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await api.post('/productos', newProdData);
-      setProductos([...productos, res.data]);
+  const crearProducto = useMutation({
+    mutationFn: (data) => api.post('/productos', data),
+    onSuccess: (res) => {
+      invalidar();
       addItemToCart(res.data, 'P');
       setShowNewProd(false);
       setItemSearch('');
       setNewProdData({ codigo: '', nombre_producto: '', precio_unitario: '' });
-    } catch { alert('Sucedió un problema al crear el producto.'); }
-  };
+      setFormError(null);
+    },
+    onError: (err) => setFormError(apiError(err, 'No se pudo crear el producto')),
+  });
+  const handleCreateProd = (e) => { e.preventDefault(); crearProducto.mutate(newProdData); };
 
   const addItemToCart = (item, type) => {
     const isP = type === 'P';
@@ -107,14 +106,14 @@ const Compras = () => {
             descripcion_gasto: null,
             nombre: item.nombre_producto,
             cantidad: 1,
-            costo_unitario: item.precio_unitario || 0,
+            costo_unitario: Number(item.precio_unitario) || 0,
             tipo: 'P'
           }]
         }));
       }
     } else {
       if (!gastoForm.descripcion.trim() || gastoForm.cantidad < 1 || Number(gastoForm.costo_unitario) <= 0) {
-        return alert("Datos inválidos para el registro del gasto.");
+        return setFormError('Datos inválidos para el registro del gasto (descripción, cantidad ≥ 1, costo > 0).');
       }
       setFormData(prev => ({
         ...prev, detalles: [...prev.detalles, {
@@ -146,29 +145,31 @@ const Compras = () => {
 
   const getTotal = () => formData.detalles.reduce((acc, curr) => acc + (curr.cantidad * curr.costo_unitario), 0);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (formData.detalles.length === 0) return alert('La cesta está vacía.');
-    try {
-      await api.post('/compras', { 
-        proveedorId: formData.proveedorId ? parseInt(formData.proveedorId) : null,
-        total: getTotal(),
-        detalles: formData.detalles.map(d => ({ 
-          productoId: d.productoId || null, 
-          descripcion_gasto: d.descripcion_gasto || null, 
-          cantidad: Number(d.cantidad), 
-          costo_unitario: Number(d.costo_unitario) 
-        }))
-      });
+  const registrarCompra = useMutation({
+    mutationFn: (payload) => api.post('/compras', payload),
+    onSuccess: () => {
+      invalidar();
       setShowModal(false);
       setFormData({ proveedorId: '', detalles: [] });
       setProvSearch('');
       setItemSearch('');
-      fetchData();
-    } catch (err) { 
-      const errMsg = err.response?.data?.error || err.message || 'Desconocido';
-      alert(`Sucedió un problema al registrar ingreso: ${errMsg}`); 
-    }
+      setFormError(null);
+    },
+    onError: (err) => setFormError(apiError(err, 'No se pudo registrar la compra')),
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (formData.detalles.length === 0) return setFormError('La cesta está vacía.');
+    registrarCompra.mutate({
+      proveedorId: formData.proveedorId ? parseInt(formData.proveedorId) : null,
+      detalles: formData.detalles.map(d => ({
+        productoId: d.productoId || null,
+        descripcion_gasto: d.descripcion_gasto || null,
+        cantidad: Number(d.cantidad),
+        costo_unitario: Number(d.costo_unitario),
+      })),
+    });
   };
 
   const selectedProv = proveedores.find(p => p.id === parseInt(formData.proveedorId));
@@ -180,7 +181,7 @@ const Compras = () => {
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">Registro de Ingresos (Compras)</h2>
           <p className="text-slate-500 mt-1">Abastece tu inventario o registra gastos operacionales y salidas.</p>
         </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setFormData({ proveedorId: '', detalles: [] }); setShowNewProv(false); setProvSearch(''); setItemSearch(''); setShowModal(true); setShowNewProd(false); }}>
+        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setFormData({ proveedorId: '', detalles: [] }); setShowNewProv(false); setProvSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); setShowNewProd(false); }}>
           <ShoppingCart className="w-5 h-5" /> Iniciar Compra
         </button>
       </div>
@@ -232,6 +233,8 @@ const Compras = () => {
                  <h3 className="text-2xl font-black text-slate-800 flex items-center gap-2"><ShoppingCart className="text-brand-600" /> Terminal Ingresos</h3>
                  <button className="xl:hidden p-2 bg-slate-100 rounded-full" onClick={()=>setShowModal(false)}><X className="w-5 h-5"/></button>
                </div>
+
+               <div className="mb-4"><FormError message={formError} onDismiss={() => setFormError(null)} /></div>
 
                {/* ZONA PROVEEDOR */}
                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-6">
@@ -323,7 +326,7 @@ const Compras = () => {
                                <h5 className="font-bold text-slate-800 text-sm leading-tight z-10 relative pr-4">{item.nombre_producto}</h5>
                                <div className="flex justify-between items-end mt-2 z-10 relative">
                                  <div className="text-xs font-bold text-brand-600 bg-brand-50 px-2 py-0.5 rounded-md self-start">{formatCOP(item.precio_unitario)}</div>
-                                 <div className="text-[10px] font-bold text-slate-400 text-right">Stock: {item.stock_actual} ud</div>
+                                 <div className="text-[10px] font-bold text-slate-400 text-right">Stock: {formatCantidad(item.stock_actual)} ud</div>
                                </div>
                              </div>
                            ))}
@@ -412,8 +415,8 @@ const Compras = () => {
                      <span className="text-4xl font-black text-emerald-600 tracking-tight leading-none drop-shadow-sm text-right">{formatCOP(getTotal())}</span>
                 </div>
                 <div className="flex flex-col gap-3 font-sans">
-                  <button type="button" onClick={handleSubmit} className="btn-primary bg-emerald-600 hover:bg-emerald-700 ring-emerald-500 flex items-center justify-center gap-2 rounded-xl h-12 text-lg shadow-lg shadow-emerald-500/30">
-                    <CheckCircle className="w-5 h-5"/> Procesar e Ingresar
+                  <button type="button" onClick={handleSubmit} disabled={registrarCompra.isPending} className="btn-primary bg-emerald-600 hover:bg-emerald-700 ring-emerald-500 flex items-center justify-center gap-2 rounded-xl h-12 text-lg shadow-lg shadow-emerald-500/30 disabled:opacity-50">
+                    <CheckCircle className="w-5 h-5"/> {registrarCompra.isPending ? "Procesando…" : "Procesar e Ingresar"}
                   </button>
                   <button type="button" className="btn-secondary rounded-xl font-bold h-12" onClick={() => setShowModal(false)}>Cancelar Operación</button>
                 </div>

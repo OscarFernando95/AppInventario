@@ -1,549 +1,602 @@
 # Informe de refactorización — AppInventario
 
-**Fecha:** 2026-09-06
-**Alcance:** backend (Express + Sequelize + PostgreSQL), frontend (React + Vite),
-infraestructura Docker.
-**Objetivo:** identificar puntos de mejora, vulnerabilidades, manejo de caché y
-seguridad, con un plan de corrección priorizado.
+**Última actualización:** 2026-09-09 (análisis #2 + Fases 5, 6, 7 y 8 completadas — refactor cerrado)
+**Alcance:** backend (Express + Sequelize + PostgreSQL 16), frontend (React 19 + Vite + TanStack Query), infraestructura Docker.
+**Historial:** primer informe 2026-09-06 → Fases 0–4 implementadas y verificadas E2E → este documento re-audita el estado real y define las Fases 5–8.
 
 ---
 
 ## 1. Resumen ejecutivo
 
-El sistema es funcional y la migración a Docker/Postgres está bien encaminada,
-pero hay **deuda de seguridad y de robustez** que conviene cerrar antes de
-ponerlo en producción en la oficina, más varias oportunidades claras de
-rendimiento y de caché.
+Las Fases 0–4 cerraron casi toda la deuda de seguridad, rendimiento y calidad del
+primer informe: hoy el sistema tiene autenticación por cookie `httpOnly`, CSP
+estricta, rate-limiting, validación `zod` en todos los endpoints, índices de BD,
+caché de sesión y dashboard, 53 tests unitarios y contenedores endurecidos.
 
-| Severidad | Cantidad | Ejemplos |
+Este segundo análisis, centrado en las zonas que la revisión original **no cubrió
+a fondo** (flujos POS, dinero extremo a extremo, autorización por módulos,
+generación de PDF, zonas horarias), encontró:
+
+| Severidad | Nuevos | Estado |
 |---|---|---|
-| 🔴 Crítico | 3 | Sin rate-limit en login · volcado de `req.body` a disco · `total` de venta/compra confiado al cliente |
-| 🟠 Alto | 12 | CORS abierto · sin `helmet` · escalada de privilegios de rol · fuga cross-tenant en `servicios` · sin índices en FKs · sin cache headers en assets |
-| 🟡 Medio | 18 | Enumeración de usuarios · errores que filtran `error.message` · sin paginación · condición de carrera en stock · sin caché de dashboard |
-| 🔵 Bajo | 15 | Sin logs de auditoría · scripts de debug en el repo · ramas MySQL muertas · sin límites de recursos en contenedores |
+| 🔴 Crítico | 1 | **N1** descuento global (%/pesos) → ✅ **corregido (Fase 5)** |
+| 🟠 Alto | 3 | **N2**, **N4** → ✅ **Fase 5** · **N3** gating por módulos → ✅ **Fase 6** |
+| 🟡 Medio | 8 | **N6** → ✅ Fase 5 · **N9, N10, N14** → ✅ Fase 6 · **N5, N7, N8, N11, N12** → ✅ Fase 7 |
+| 🔵 Bajo | 6 | **N15, N16 (base), N20** → ✅ Fases 6–7 · **N13, N17, N19** → ✅ Fase 8 |
 
-Hay un **plan por fases** en la sección 9. La Fase 0 (correcciones urgentes, ~1–2
-días) no cambia arquitectura.
-
----
-
-## 2. Seguridad
-
-### 🔴 S1 — Sin límite de intentos en el login (fuerza bruta)
-[`authRoutes.js:5`](../backend/src/routes/authRoutes.js#L5) — `POST /api/auth/login`
-no tiene rate limiting. Un atacante en la LAN puede probar miles de contraseñas.
-**Fix:** `express-rate-limit` en el login (p.ej. 5 intentos / 15 min / IP + usuario)
-y un limitador global más laxo para toda la API.
-
-### 🔴 S2 — Volcado de la petición a disco en cada error de venta
-[`ventaController.js`](../backend/src/controllers/ventaController.js) —
-`require('fs').writeFileSync('/tmp/venta_error.json', JSON.stringify({ body: req.body, error: error.stack }))`.
-Escribe **todo el cuerpo de la petición** (datos de clientes, montos) a un archivo
-en cada error, sin rotación. Fuga de datos + llenado de disco del contenedor.
-**Fix:** eliminar esa línea; usar el logger estructurado (S13).
-
-### 🔴 D1 — El `total` de venta/compra viene del cliente
-Ver sección 4 (Integridad). Es también un problema de seguridad: permite
-registrar ventas con `total: 0`.
-
-### 🟠 S3 — Token de sesión accesible por JavaScript (riesgo XSS)
-[`authStore.js`](../frontend/src/store/authStore.js) guarda el JWT en
-`localStorage` (vía `persist`) **y** en una cookie `token` creada con `js-cookie`
-(no `httpOnly`, sin `Secure`, sin `SameSite`). Cualquier XSS roba la sesión de 8 h.
-Además la cookie **no se usa** (axios lee del store).
-**Fix:** ideal — que el backend emita una cookie `httpOnly; Secure; SameSite=Strict`
-y el front deje de tocar el token. Mínimo — eliminar la cookie redundante y añadir
-una CSP estricta (S4) para reducir la superficie de XSS.
-
-### 🟠 S4 — Sin cabeceras de seguridad (`helmet`)
-[`index.js:10`](../backend/src/index.js#L10) — no hay `helmet`, ni CSP, ni
-`X-Frame-Options`, ni `X-Content-Type-Options`, ni HSTS.
-**Fix:** `app.use(helmet())` + CSP (en Express o en el `nginx/nginx.conf` de
-entrada). Clickjacking hoy es trivial.
-
-### 🟠 S5 — CORS completamente abierto
-[`index.js:10`](../backend/src/index.js#L10) — `app.use(cors())` acepta cualquier
-origen. La variable `FRONTEND_URL` ya está en `docker-compose.yml` pero no se usa.
-**Fix:** `cors({ origin: process.env.FRONTEND_URL, credentials: true })`, o
-eliminar CORS por completo (todo es mismo origen detrás de Nginx).
-
-### 🟠 S6 — Enumeración de usuarios en el login
-[`authController.js:17-24`](../backend/src/controllers/authController.js#L17-L24) —
-devuelve `404 "Usuario no encontrado o inactivo"` vs `401 "Contraseña incorrecta"`,
-y solo ejecuta `bcrypt.compare` si el usuario existe (diferencia de _timing_
-medible). Permite descubrir usuarios válidos.
-**Fix:** respuesta y código uniformes (`401 "Credenciales inválidas"`); ejecutar
-un `bcrypt.compare` contra un hash dummy cuando el usuario no exista.
-
-### 🟠 S7 — `JWT_SECRET` sin validar al arrancar
-[`authController.js:32`](../backend/src/controllers/authController.js#L32),
-[`auth.js:9`](../backend/src/middlewares/auth.js#L9) — si la variable falta, la
-app arranca igual y falla en runtime (o firma con `undefined`).
-**Fix:** _fail-fast_ en el arranque: abortar si `!process.env.JWT_SECRET` o si
-mide menos de 32 caracteres.
-
-### 🟠 A3 — Escalada de privilegios al crear/editar usuarios
-Ver sección 3 (Autorización). Un `FRONT_ADMIN` puede asignar `rolId = 1`
-(BACKOFFICE_ADMIN).
-
-### 🟠 A1 — Fuga cross-tenant en `/api/servicios`
-Ver sección 3.
-
-### 🟡 S8 — `verifyToken` laxo con el esquema del header
-[`auth.js:7-9`](../backend/src/middlewares/auth.js#L7-L9) — acepta el token con o
-sin prefijo `Bearer` (`token.split(' ')[1] || token`), y devuelve `403` cuando
-falta el token (debería ser `401`).
-**Fix:** exigir `Authorization: Bearer <token>`; `401` para token ausente/inválido,
-`403` solo para permisos insuficientes.
-
-### 🟡 S9 — Los errores filtran `error.message` al cliente
-`pedidoController` (`det: error.message`), `compraController`, `ventaController`
-(`'... ' + error.message`), `reporteController`. Expone detalles internos / SQL.
-**Fix:** loguear en el servidor, responder mensaje genérico + un `requestId`.
-
-### 🟡 S10 — `express.json()` sin `limit`
-[`index.js:11`](../backend/src/index.js#L11) — Nginx corta en 20 MB, pero el
-backend debería tener su propio límite (`express.json({ limit: '100kb' })`).
-
-### 🟡 S11 — Contraseña de admin por defecto, sin forzar cambio
-El seeder crea `admin / Admin*123` (documentado públicamente). Nada obliga a
-cambiarla.
-**Fix:** columna `must_change_password` y pantalla de cambio obligatorio en el
-primer login.
-
-### 🟡 S12 — Sin política de contraseñas en el servidor
-`createUsuario` / `updateUsuario` aceptan cualquier `contrasena`. `bcrypt` usa 10
-rondas.
-**Fix:** validar longitud/complejidad mínima en el backend; subir a 12 rondas.
-
-### 🔵 S13 — Sin logs de acceso ni auditoría
-No hay `morgan`/`winston`. Imposible investigar un incidente.
-**Fix:** `morgan` para acceso + un logger JSON para eventos de negocio (login,
-creación de usuarios, ventas).
-
-### 🔵 S14 — Sin `/health` ni healthcheck del backend
-Ver sección 7 (Infra).
+**Plan:** Fases **5–8** en la sección 5.
+**Fases 5, 6, 7 y 8 — ✅ completadas el 2026-09-09. Refactor cerrado; sin hallazgos abiertos.**
+- Fase 5: el POS cobra bien el descuento global (%), precio de línea validado, cantidades fraccionarias.
+- Fase 6: autorización por módulo en el backend, rutas del frontend gated, sesiones revocables.
+- Fase 7: zona horaria (`TZ=America/Bogota`), informes limpios y cacheados, catálogos validados,
+  N+1 de compra eliminado, importes a `DECIMAL(14,2)`.
+- Fase 8: `Ventas`, `Compras`, `Pedidos` e `Informes` migrados a `useEmpresaQuery` + `useMutation`
+  (sin `eslint-disable react-hooks/set-state-in-effect`); los `alert()` de los POS sustituidos por
+  `FormError` + `apiError`; `getVentas` ya no incluye `Empresa` (N13); UI "cerrar mis otras sesiones"
+  en `CambiarPassword`; `eslint frontend/src` a 0 errores.
+- Suite de integración: **23 tests** (`npm run test:integration`); **62 unitarios**; E2E Docker verificado.
 
 ---
 
-## 3. Multi-tenant y autorización
+## 2. Estado de los hallazgos del primer informe
 
-### 🟠 A1 — `servicioRoutes` no valida `req.empresaId`
-[`servicioRoutes.js`](../backend/src/routes/servicioRoutes.js) es el único módulo
-transaccional **sin** el guard `if (!req.empresaId) return 403`. En
-[`servicioController.js`](../backend/src/controllers/servicioController.js), si un
-`BACKOFFICE_ADMIN` (que no tiene `empresaId`) llama `GET /api/servicios`, el
-`where: { empresaId: undefined }` según la versión de Sequelize lanza un 500 o
-**omite el filtro y devuelve los servicios de todas las empresas**. `createServicio`
-insertaría con `empresaId` nulo.
-**Fix:** añadir el mismo middleware de `productoRoutes`.
-
-### 🟠 A3 — Escalada de privilegios de rol
-[`usuarioController.js:26-52`](../backend/src/controllers/usuarioController.js#L26-L52)
-y `updateUsuario` — el `rolId` se toma de `req.body` sin restringir. Un
-`FRONT_ADMIN` puede crear/editar un usuario con `rolId = 1` (BACKOFFICE_ADMIN) o
-`FRONT_ADMIN` de su empresa y escalar.
-**Fix:** _whitelist_ de roles asignables según quién llama:
-`FRONT_ADMIN` solo puede asignar `FRONT_ADMIN`/`FRONT_USER`; nunca BackOffice.
-
-### 🟠 A2 — El rol y los permisos viven congelados en el JWT 8 h
-[`authController.js:26-34`](../backend/src/controllers/authController.js#L26-L34) —
-`tipoRol` y `rolId` se meten en el token. Si se revoca acceso a una empresa, se
-cambia el rol o se **desactiva** al usuario, el token sigue siendo válido hasta 8 h.
-`verifyToken` revalida la pertenencia a la empresa contra la BD (bien) pero **no**
-revalida `usuario.estado` ni el rol actual.
-**Fix corto:** revalidar `estado` (y opcionalmente el rol) en `verifyToken`.
-**Fix medio:** access token corto (15–30 min) + refresh token, o tabla de sesiones
-con lista de revocación.
-
-### 🟡 A4 — Reglas de edición de usuarios incompletas
-`updateUsuario` deja a un `FRONT_ADMIN` cambiar `username`/`rolId`/`estado` de
-cualquier usuario de su empresa, incluido otro `FRONT_ADMIN` o él mismo (puede
-autodesactivarse).
-**Fix:** no permitir editar usuarios de rol igual o superior; no permitir
-autodesactivación.
-
-### 🟡 A5 — Colisión de `username` cae en error 500 genérico
-La `unique constraint` de `username` no se comprueba antes; el `catch` responde
-`500 "Error al crear usuario"`.
-**Fix:** validar existencia y responder `409` con mensaje claro.
-
-### 🔵 A6 — `empresaController` no valida `modulosIds`
-`setModulos(modulosIds)` sin comprobar que existan.
-
----
-
-## 4. Integridad de datos y lógica de negocio
-
-### 🔴 D1 — `total` de venta/compra se guarda tal cual del cliente
-[`ventaController.js`](../backend/src/controllers/ventaController.js) `createVenta`
-y [`compraController.js`](../backend/src/controllers/compraController.js)
-`createCompra` — el backend recalcula `subtotal_bruto` y `total_impuestos`, pero
-guarda `total` **directamente de `req.body`** sin compararlo. Un cliente puede
-enviar `total: 1`.
-**Fix:** calcular `total` en el servidor a partir de los detalles y descartar el
-del cliente (o rechazar si difiere más de 1 centavo).
-
-### 🟠 D2 — No se valida el tenant de `proveedorId` / `productoId` en compras y pedidos
-`createCompra`, `createPedido` y `checkInPedido` no verifican que `proveedorId`
-pertenezca a `req.empresaId`. `createPedido` tampoco valida `productoId` de los
-detalles. `checkInPedido` sí valida el producto, pero si no pertenece
-**omite el stock en silencio y aun así crea el `CompraDetalle`** (queda
-inconsistente).
-**Fix:** validar pertenencia al tenant de todo id recibido; lanzar error (no
-omitir) si algo no cuadra.
-
-### 🟡 D3 — Estado de `Pedido` inconsistente
-`checkInPedido` compara `pedido.estado !== 'PENDIENTE'` y cierra a `'COMPLETADO'`,
-pero `createPedido` no fija `estado` explícito (depende del default del modelo).
-Revisar el enum y unificar (`PENDIENTE` / `COMPLETADO` / `CANCELADO`).
-
-### 🟡 D4 — Condición de carrera en el stock
-[`ventaController.js`](../backend/src/controllers/ventaController.js) hace
-`Producto.findByPk(id, { transaction: t })` (sin `lock: t.LOCK.UPDATE`), valida
-stock y luego resta. Dos ventas concurrentes del mismo producto pueden
-**sobrevender**. Igual al sumar en compra/checkin.
-**Fix:** `SELECT ... FOR UPDATE` (`lock: t.LOCK.UPDATE`) al leer el producto
-dentro de la transacción, o `UPDATE ... SET stock = stock - :n WHERE stock >= :n`
-atómico.
-
-### 🟡 D5 — Fechas de informe sin validar
-[`informeController.js`](../backend/src/controllers/informeController.js) y
-[`reporteController.js`](../backend/src/controllers/reporteController.js) —
-`new Date(start)` con entrada basura produce `Invalid Date` → error 500.
-**Fix:** validar formato y rango (`start <= end`, ventana máxima).
-
-### 🔵 D6 — Cantidades sin validar
-`Number(item.cantidad)` sin comprobar `> 0` ni numérico en varios controladores;
-cantidades negativas inflarían stock o total.
-
-### 🔵 D7 — Lógica dual MySQL/Postgres en los controladores
-`datePart()` en `reporteController` y `qcol()` en `informeController` ramifican por
-dialecto. Deuda de migración: ya se usa solo Postgres.
+| Id | Área | Estado | Nota |
+|---|---|---|---|
+| S1 rate-limit login | Seguridad | ✅ | `express-rate-limit` 5/15 min + límite global |
+| S2 volcado a disco | Seguridad | ✅ | eliminado |
+| S3 token en JS | Seguridad | ✅ | cookie `httpOnly; SameSite=Strict`; sin refresh tokens (ver N-B) |
+| S4 helmet / CSP | Seguridad | ✅ | `helmet` + CSP estricta en Nginx |
+| S5 CORS abierto | Seguridad | ✅ | restringido a `FRONTEND_URL` |
+| S6 enumeración login | Seguridad | ✅ | `401` uniforme + `bcrypt.compare` señuelo |
+| S7 JWT_SECRET sin validar | Seguridad | ✅ | fail-fast al arrancar |
+| S8 header laxo | Seguridad | ✅ | exige `Bearer` o cookie; `401` correcto |
+| S9 fuga de `error.message` | Seguridad | ✅ | `ValidationError` vs. 500 genérico + log |
+| S10 `express.json` sin límite | Seguridad | ✅ | `limit: '1mb'` |
+| S11 contraseña admin por defecto | Seguridad | ✅ | `must_change_password` + pantalla forzada |
+| S12 política de contraseñas | Seguridad | ✅ | mín. 8 + letra + número; bcrypt 12 |
+| S13 logs / auditoría | Seguridad | ✅ | `morgan` + `utils/logger.js` (eventos JSON) |
+| S14 healthcheck | Infra | ✅ | `/api/health` + `depends_on: service_healthy` |
+| A1 fuga cross-tenant servicios | Multi-tenant | ✅ | guard `req.empresaId` en todas las rutas de tenant |
+| A2 rol/permiso congelado en JWT | Multi-tenant | ✅ | `authenticate` revalida `estado`/rol cada request + **tabla `sesiones` con revocación** (Fase 6): logout, "cerrar todas mis sesiones", el cambio de contraseña cierra las demás. Sin refresh tokens (no aportan lo suficiente para oficina). |
+| A3 escalada de rol | Multi-tenant | ✅ | whitelist `ROLES_ASIGNABLES` |
+| A4 reglas de edición de usuarios | Multi-tenant | ✅ | no editar rol ≥, no autodesactivación |
+| A5 colisión de `username` | Multi-tenant | ✅ | `errorHandler` mapea unique → 409 |
+| A6 `modulosIds` sin validar | Multi-tenant | ✅ | `validarModulos()` en `empresaController` |
+| D1 `total` del cliente | Integridad | ✅ | recalculado server-side (`services/calculo.js`) |
+| D2 tenant de ids en compra/pedido | Integridad | ✅ | validado; `checkInPedido` ya no omite en silencio |
+| D3 estado de `Pedido` | Integridad | ✅ | `PENDIENTE`/`COMPLETADO` coherentes |
+| D4 carrera de stock | Integridad | ✅ | `lock: t.LOCK.UPDATE` en venta/compra/recepción |
+| D5 fechas de informe | Integridad | ✅ | `zod`: fechas válidas, `start ≤ end`, ventana ≤ 366 d |
+| D6 cantidades sin validar | Integridad | ✅ | `zod` exige `> 0`; columnas `cantidad`/`stock_actual` a `DECIMAL(12,3)` (Fase 5/N4) — soportan fracciones (kg/L) |
+| D7 ramas MySQL | Calidad | ✅ | solo Postgres; `mysql2` desinstalado |
+| P1 índices de FK | Rendimiento | ✅ | migración `20260908120000` (23 índices) |
+| P2 query por request | Rendimiento | ✅ | `TtlCache` de perfil de sesión (30 s) + `invalidateUser` |
+| P3 sin paginación | Rendimiento | ✅ | `?limit&offset` + `X-Total-Count` (default 200) |
+| P4 `getUsuarios` filtra en memoria | Rendimiento | ✅ | `findAndCountAll` + `where` en la query |
+| P5 bucles `await` | Rendimiento | ✅ | `bulkCreate` de detalles |
+| P6 `getVentas` incluye `Empresa` | Rendimiento | ✅ | quitado en Fase 8 (N13); el PDF de una venta usa `GET /api/ventas/:id` |
+| P7 sin compresión | Rendimiento | ✅ | `gzip` en Nginx |
+| C1 caché de assets | Caché | ✅ | `immutable` + `index.html` `no-cache` |
+| C2 caché del Nginx de entrada | Caché | ✅ | `no-store` en `/api/` |
+| C3 `express.static` sin `maxAge` | Caché | ✅ | `maxAge: '1y', immutable` |
+| C4 caché de dashboard/informes | Caché | ✅ | dashboard y **informes** cacheados 60 s + invalidación por venta/compra (Fase 7/N8) |
+| C5 TanStack Query | Caché | ✅ | todas las páginas de datos migradas; `Ventas`/`Compras`/`Pedidos`/`Informes` a `useEmpresaQuery` + `useMutation` en Fase 8 |
+| C6 refetch al cambiar de empresa | Caché | ✅ | `useEmpresaQuery` mete `empresaId` en la `queryKey` |
+| I1 healthcheck backend | Infra | ✅ | hecho |
+| I2 contenedor como root | Infra | ✅ | `USER node` |
+| I5 límites de recursos | Infra | ✅ | `mem_limit` por servicio |
+| I6 `authenticate()` duplicado | Infra | ✅ | `config/database.js` ya no conecta al importar (Fase 6/N20) |
+| I7 rotación de logs Docker | Infra | ✅ | `max-size 10m`, `max-file 3` |
+| Q1 `try/catch` repetido | Calidad | ✅ | `asyncHandler` + `errorHandler`; los `try/catch` que quedan en venta/compra/pedido son por la transacción (rollback) |
+| Q2 validación de entrada | Calidad | ✅ | `zod` + `validate()` en todos los endpoints |
+| Q3 404 JSON para `/api` | Calidad | ✅ | hecho |
+| Q4 lógica de negocio en controladores | Calidad | ✅ | `services/calculo.js`, `services/catalogos.js` |
+| Q5 tests | Calidad | ✅ | 62 unitarios + 23 de integración HTTP (`npm run test:integration`, requiere docker db) |
+| Q6 scripts de debug | Calidad | ✅ | eliminados |
+| Q7 ramas MySQL | Calidad | ✅ | eliminadas |
+| Q10 interceptor axios en 403 | Calidad | ✅ | solo desloguea en `401` |
 
 ---
 
-## 5. Rendimiento y base de datos
+## 3. Hallazgos nuevos (2026-09-09)
 
-### 🟠 P1 — Sin índices en las claves foráneas
-[`20260903090000-initial-schema.js`](../backend/src/migrations/20260903090000-initial-schema.js)
-crea las tablas sin índices salvo los `unique`. PostgreSQL **no** indexa las FKs
-automáticamente. Cada `where: { empresaId }` y cada JOIN
-(`ventas_detalles.ventaId`, `compras.proveedorId`, `productos.empresaId`,
-`usuarios_empresas`, …) hace _sequential scan_. Con crecimiento de datos degrada
-rápido.
-**Fix:** migración nueva que añade índices a todas las columnas `*Id` y compuestos
-frecuentes: `ventas(empresaId, fecha)`, `compras(empresaId, fecha)`,
-`productos(empresaId)`, `ventas_detalles(ventaId)`, etc.
+### 🔴 N1 — El descuento global de la venta se cobra por un importe distinto al de la pantalla — ✅ CORREGIDO (Fase 5)
 
-### 🟠 P2 — Consulta extra por cada request autenticado
-[`auth.js:21`](../backend/src/middlewares/auth.js#L21) —
-`Usuario.findByPk(userId, { include: Empresa })` en **cada** petición de un usuario
-no-backoffice. Consulta + JOIN por request.
-**Fix:** caché en memoria con TTL corto (30–60 s) de
-`userId → { estado, empresaIds }`, invalidada al cambiar accesos. (Meter
-`empresaIds` en el JWT es alternativa, pero empeora A2.)
+**Archivos:** [`Ventas.jsx`](../frontend/src/pages/app/Ventas.jsx#L162-L166) ·
+[`services/calculo.js`](../backend/src/services/calculo.js#L44-L47) ·
+[`generateInvoicePDF.js`](../frontend/src/utils/generateInvoicePDF.js#L237-L239)
 
-### 🟡 P3 — Sin paginación
-`getVentas`, `getCompras`, `getPedidos`, `getUsuarios` e informes usan `findAll`
-sin límite, con includes anidados (`VentaDetalle → Producto, Servicio, Empresa`).
-Respuestas que crecen sin techo.
-**Fix:** `limit`/`offset` + `?page=`, con orden estable y `count` total.
+El frontend maneja `descuento_global` como **porcentaje**:
 
-### 🟡 P4 — `getUsuarios` filtra en memoria
-[`usuarioController.js:11-19`](../backend/src/controllers/usuarioController.js#L11-L19)
-— para `FRONT_ADMIN` trae **todos** los usuarios del sistema y luego
-`usuariosRaw.filter(...)`. Ineficiente y trae datos de otros tenants al proceso.
-**Fix:** filtrar en la query con `include: [{ model: Empresa, where: { id: req.empresaId } }]`.
+```js
+// Ventas.jsx
+const getTotal = () => { const sub = getSubtotal(); return sub - (sub * (globalDiscount / 100)); };
+// <input min="0" max="100" ... /> con etiqueta "%" y botones 5% / 10% / 15%
+// submit:  descuento_global: globalDiscount || 0     // manda "10", el porcentaje
+```
 
-### 🟡 P5 — Bucles `await` secuenciales en creación de documentos
-Ventas/compras/pedidos crean los detalles uno a uno. Para volúmenes normales es
-aceptable; usar `bulkCreate`.
+El backend lo resta como **monto absoluto en pesos**:
 
-### 🔵 P6 — `getVentas` incluye la `Empresa` completa en cada venta
-Redundante: la empresa activa ya se conoce en el cliente.
+```js
+// services/calculo.js  (calcularVenta)
+const descuento = round2(Math.max(0, Number(descuentoGlobal) || 0));
+const total = round2(subtotalBruto + totalImpuestos - descuento);   // resta 10, no 10%
+```
 
-### 🔵 P7 — Sin compresión en Nginx
-`nginx/nginx.conf` no activa `gzip`/`brotli`; los JSON grandes viajan sin comprimir.
+El PDF vuelve a tratarlo como porcentaje y **calcula un tercer número**:
+
+```js
+// generateInvoicePDF.js
+const globalDiscountPct = Number(venta.descuento_global || 0);
+const globalDiscountAmount = subtotalAtSale * (globalDiscountPct / 100);
+// imprime  "Dcto. Global (10%): -$X"  y aparte  "Total: formatCOP(venta.total)"
+```
+
+**Consecuencia concreta** — venta de $100.000 con "10 % de descuento global":
+
+| | Importe |
+|---|---|
+| Pantalla de caja (`getTotal`) | **$90.000** |
+| Guardado en BD y cobrado (`venta.total`) | **$99.990** (100.000 − 10) |
+| PDF de la factura | muestra "Dcto. Global (10 %): −$10.000" pero el total impreso es **$99.990** |
+
+El cliente paga un importe que no coincide con ninguna de las tres vistas, y la
+factura es internamente contradictoria. El campo `Venta.descuento_global` guarda
+`10` sin unidad definida, y `Venta.total_descuentos` (que debería llevar el monto)
+**nunca se escribe**.
+
+**✅ Corregido:** `calcularVenta` (servicio) trata `descuento_global` como
+**porcentaje 0–100** (`clampPct`), aplica `total = (subtotal + iva) * (1 - pct/100)`,
+guarda el `pct` en `descuento_global` y el monto (descuento por línea + global) en
+`total_descuentos`. `ventaCreate` (zod) valida `0 ≤ pct ≤ 100`. El PDF ya asumía
+porcentaje → ahora los tres números coinciden. Verificado E2E: venta de $100.000
+con 10 % → pantalla, BD y PDF muestran **$90.000**. Tests: `calculo.test.js` (5 casos
+nuevos) + `tests/integration/venta.test.js`.
+> Nota: las ventas creadas ANTES del fix tienen `descuento_global` con un valor
+> en pesos (histórico); no se migran retroactivamente.
 
 ---
 
-## 6. Manejo de caché
+### 🟠 N2 — El precio unitario de cada línea de venta lo fija el cliente sin control — ✅ CORREGIDO (Fase 5)
 
-### 🟠 C1 — Los assets del frontend no tienen caché de larga duración
-[`frontend/nginx.conf`](../frontend/nginx.conf) no envía `Cache-Control`. Vite
-genera nombres con hash (`/assets/app.[hash].js`), que deberían servirse como
-`Cache-Control: public, max-age=31536000, immutable`, mientras que `index.html`
-debe ser `no-cache` para que tras cada _deploy_ el navegador tome el HTML nuevo
-(que referencia los chunks nuevos). Sin esto: revalidación innecesaria en cada
-carga y, si algún proxy cachea `index.html`, errores tipo _"Failed to fetch
-dynamically imported module"_ tras actualizar.
-**Fix:**
-```nginx
-location /assets/ {
-    expires 1y;
-    add_header Cache-Control "public, immutable";
+**Archivo:** [`transaccionSchemas.js`](../backend/src/schemas/transaccionSchemas.js#L20-L30) · [`ventaController.js`](../backend/src/controllers/ventaController.js#L83)
+
+`ventaDetalle.precio_unitario` es `dinero` (`z.coerce.number().nonnegative()`): sin
+tope y **sin relación con el precio real del producto**. `createVenta` usa
+`Number(item.precio_unitario)` tal cual. Un `FRONT_USER` (o un cliente HTTP
+manipulado) puede facturar cualquier producto a **$0** o a un valor arbitrario.
+
+El POS legítimamente permite override manual de precio (campo editable + botón de
+descuento por línea), así que no se puede prohibir del todo; pero hoy no hay:
+- piso configurable (p.ej. no por debajo del X % del `precio_base`),
+- registro de quién autorizó el precio especial,
+- ni siquiera la garantía de que `precio_unitario ≤ precio_base` (se guarda
+  `precio_base` pero no se valida contra él).
+
+**✅ Corregido:** `createVenta` toma `precioBase` de `Producto.precio_unitario` /
+`Servicio.precio` **en la BD** (ignora el `precio_base` del request), y valida
+`0 ≤ precio_unitario ≤ precioBase`. Piso configurable con
+`VENTA_DESCUENTO_LINEA_MAX_PCT` (default 100 = se puede llegar a $0; poner p.ej.
+50 para no bajar del 50 % del precio de lista). Verificado E2E: precio de línea
+por encima de la lista → `400` con mensaje claro.
+
+---
+
+### 🟠 N3 — La autorización por módulos vive solo en el frontend — ✅ CORREGIDO (Fase 6)
+
+**Archivos:** [`FrontLayout.jsx`](../frontend/src/layouts/FrontLayout.jsx) · todas las rutas de `/api/*`
+
+`FrontLayout` filtra el menú lateral por `activeEmpresa.modulos`, pero
+`GET/POST /api/ventas`, `/api/compras`, `/api/pedidos`, `/api/informes`, etc.
+**solo comprueban `req.empresaId`**, nunca si la empresa tiene contratado ese
+módulo. Un `FRONT_USER` con sesión válida puede llamar por HTTP a cualquier
+endpoint de su empresa aunque el módulo esté desactivado (menú oculto ≠ acceso
+denegado).
+
+**Fix (Fase 6):** middleware `requireModulo('VENTAS')` que consulta
+`empresas_modulos` (cacheado junto al perfil de sesión) y devuelve `403` si falta.
+Aplicarlo en las rutas correspondientes.
+
+---
+
+### 🟠 N4 — Cantidades fraccionarias: `zod` las acepta, la columna es INTEGER — ✅ CORREGIDO (Fase 5)
+
+**Archivos:** [`transaccionSchemas.js`](../backend/src/schemas/transaccionSchemas.js#L5) ·
+[`VentaDetalle.js`](../backend/src/models/VentaDetalle.js#L23) · [`CompraDetalle` migración]
+
+`cantidad = z.coerce.number().positive()` (sin `.int()`). Pero `ventas_detalles.cantidad`,
+`compras_detalles.cantidad`, `pedidos_detalles.cantidad_pedida` y `productos.stock_actual`
+son **`INTEGER`**. Los inputs de cantidad de Compras y Pedidos son
+`<input type="number">` de texto libre (`min="1"` no se valida en JS).
+
+Enviar `cantidad: 2.5`:
+- `calcularVenta` calcula bien el subtotal con 2.5,
+- `VentaDetalle.bulkCreate({ cantidad: 2.5 })` → Postgres rechaza (`invalid input
+  syntax for type integer`) → **500**, o Sequelize lo trunca según versión,
+- el stock queda en un valor truncado.
+
+Además `unidad_medida` ya ofrece **KGM / LTR / MTK** en los formularios → el
+negocio probablemente **quiere** vender en fracciones.
+
+**✅ Corregido — Opción A (fracciones), decisión del usuario ("mixto"):**
+migración `20260910120000-cantidades-decimales` — `cantidad` (ventas_detalles,
+compras_detalles), `cantidad_pedida` (pedidos_detalles) y `stock_actual`
+(productos) pasan de `INTEGER` a **`DECIMAL(12,3)`** (cast sin pérdida). Modelos
+actualizados. `zod` `cantidad` redondea a 3 decimales. Frontend: helper
+`formatCantidad()` (quita ceros decimales: "97.750" → "97,75") aplicado a
+Inventario, Ventas, Compras, Pedidos y el PDF; `Number()` explícito donde había
+concatenación de strings al mover stock. Verificado E2E: venta de 2.5 kg,
+compra de 1.25 kg, stock `100 → 96.5 → 97.75`.
+
+---
+
+### 🟡 N5 — Zona horaria: informes y dashboard usan la hora del contenedor (UTC) — ✅ CORREGIDO (Fase 7)
+
+**Archivos:** [`informeController.js`](../backend/src/controllers/informeController.js#L21-L26) ·
+[`reporteController.js`](../backend/src/controllers/reporteController.js#L20-L24)
+
+- `informeController`: `endDate.setHours(23,59,59,999)` se ejecuta en la TZ del
+  proceso (**UTC** en el contenedor).
+- `reporteController`: `monthStart/monthEnd` con `new Date(y, m, 1)` — también UTC.
+
+Para un usuario en Colombia (**UTC−5**), las ventas de la franja 19:00–24:00 hora
+local caen en el **día siguiente** (o el mes siguiente en el borde) a efectos del
+informe. Los totales del dashboard "mes en curso" y los rangos de los informes
+quedan desfasados hasta 5 h en los límites.
+
+**Fix (Fase 7):** `TZ=America/Bogota` en el contenedor `backend` (compose) +
+repasar todos los `new Date(...)` que construyen límites de fecha. Confirmar que
+las columnas `DATE` se leen/escriben con la TZ esperada.
+
+---
+
+### 🟡 N6 — `descuento_global` DECIMAL(5,2) y `total_descuentos` sin usar — ✅ CORREGIDO (Fase 5)
+
+`empresas`… perdón, `ventas.descuento_global` es `DECIMAL(5,2)` → tope **999.99**.
+Si N1 se corrige como porcentaje, el tipo aguanta (`10.00`); si se corrige como
+monto, es inservible para pesos. `ventas.total_descuentos` `DECIMAL(10,2)` existe
+en modelo y migración pero **nunca se escribe** — debería llevar el monto de
+descuento (ítems + global) para la factura y los informes.
+
+**✅ Corregido:** `descuento_global` queda como porcentaje → `DECIMAL(5,2)` aguanta
+(`100.00`), sin migración. `createVenta` ya escribe `total_descuentos` con el monto
+total (línea + global). _Ampliar los `DECIMAL(10,2)` de importes a `DECIMAL(12,2)`
+sigue en Fase 7 (N15)._
+
+---
+
+### 🟡 N7 — `getVentaById` con `try/catch` propio en vez de `errorHandler` — ✅ CORREGIDO (Fase 7)
+
+[`ventaController.js`](../backend/src/controllers/ventaController.js#L29-L46) — a
+diferencia del resto, hace `console.error` + `res.status(500)` en el `catch`, sin
+pasar el error al middleware central (no se registra como `unhandled_error` JSON,
+no aplica el mapeo de errores de Sequelize). Es una lectura simple sin
+transacción: no necesita `try/catch`.
+
+**Fix (Fase 7):** quitar el `try/catch`; dejar que `asyncHandler` + `errorHandler`
+lo gestionen.
+
+---
+
+### 🟡 N8 — `informeController` con validación redundante y sin `errorHandler` — ✅ CORREGIDO (Fase 7)
+
+[`informeController.js`](../backend/src/controllers/informeController.js#L14-L107) —
+el `if (!tipo || !start || !end)` es **código muerto** (la ruta ya valida con
+`informeQuery`), y el `try/catch` propio evita el `errorHandler`. Además el
+endpoint **no está cacheado** (C4 quedó a medias): recalcula agregados SQL en cada
+visita.
+
+**Fix (Fase 7):** limpiar; añadir caché TTL por `(empresaId, tipo, start, end)`
+como el dashboard.
+
+---
+
+### 🟡 N9 — La ruta `/app/admin` es accesible para `FRONT_USER` — ✅ CORREGIDO (Fase 6)
+
+[`App.jsx`](../frontend/src/App.jsx#L64-L79) — `ProtectedRoute` de `/app/*` admite
+`FRONT_ADMIN` **y** `FRONT_USER`, incluida la ruta hija `admin` (gestión de
+usuarios). El backend la protege (`allowAdmins` → `403`), así que un `FRONT_USER`
+que navega a `/app/admin` ve la página cargar y fallar. Defensa en profundidad y
+UX: falta un guard por rol en la ruta y ocultar la entrada del menú (hoy el menú
+sí la oculta, pero la ruta directa no).
+
+**Fix (Fase 6):** `ProtectedRoute allowedRoles={['FRONT_ADMIN']}` en `admin`;
+además gate del menú/rutas de `/app/*` por módulo contratado.
+
+---
+
+### 🟡 N10 — La recepción de pedido no deja rastro ni valida contra el pedido — ✅ CORREGIDO (Fase 6)
+
+[`pedidoController.checkInPedido`](../backend/src/controllers/pedidoController.js#L82-L145) —
+crea una `Compra` a partir del pedido pero:
+- `compras` no tiene columna `pedidoId` → no hay trazabilidad "esta compra vino
+  del pedido X";
+- `detalles_recibidos` no se compara con las líneas del pedido → se pueden
+  "recibir" productos que no estaban pedidos, o cantidades arbitrarias.
+
+**Fix (Fase 6):** columna `compras.pedidoId` (FK opcional) + validar que cada
+`productoId` recibido esté en el pedido.
+
+---
+
+### 🟡 N11 — Endpoints de catálogos sin validación de query — ✅ CORREGIDO (Fase 7)
+
+[`catalogoController.js`](../backend/src/controllers/catalogoController.js) —
+`GET /api/catalogos/ciiu?q=&limit=` y `?departamento=` no pasan por `zod`;
+`limit` se hace `Number(limit)` sin tope. Los datos están acotados (500 CIIU,
+1123 municipios) así que el impacto es bajo, pero rompe la consistencia
+"todo validado" y `getMunicipios` sin `departamento` devuelve las 1123 filas.
+
+**Fix (Fase 7):** esquema `zod` para la query; `limit` acotado (p.ej. ≤ 100);
+`getMunicipios` exigir `departamento` o paginar.
+
+---
+
+### 🟡 N12 — N+1 en `createCompra` — ✅ CORREGIDO (Fase 7)
+
+[`compraController.js`](../backend/src/controllers/compraController.js#L36-L73) —
+dos bucles seguidos sobre `detalles`, cada uno con un `Producto.findOne`/`findByPk`
+por línea (validación de tenant + lock). Una compra de 20 líneas = 40 queries.
+
+**Fix (Fase 7):** un `Producto.findAll({ where: { id: [...ids], empresaId }, lock })`
+y trabajar con un `Map`.
+
+---
+
+### 🔵 N13 — `getVentas` sigue incluyendo `Empresa` — ✅ CORREGIDO (Fase 8)
+
+(P6 del primer informe, no cerrado.) Cada venta del listado traía
+`Empresa: { nombre, nit, contacto }` — redundante, la empresa activa ya se conoce.
+`getVentaById` sí lo necesita (para el PDF). **Fix (Fase 8):** se quitó el `include` de
+`getVentas`; el frontend descarga el PDF de una venta concreta con `GET /api/ventas/:id`
+(`descargarPDF(ventaId)` en `Ventas.jsx`), que sí trae la empresa.
+
+### 🔵 N14 — Empresa `FACTURACION_ELECTRONICA` sin campos DIAN obligatorios — ✅ CORREGIDO (Fase 6)
+
+[`empresaSchemas.js`](../backend/src/schemas/empresaSchemas.js) — se puede crear una
+empresa con `tipo_empresa: 'FACTURACION_ELECTRONICA'` sin `resolucion_numero`,
+`prefijo_facturacion`, `rango_*` ni `clave_tecnica`. Baja prioridad (la FE no está
+integrada). **Fix (Fase 6):** validación condicional (`superRefine`) según `tipo_empresa`.
+
+### 🔵 N15 — `Venta.total` DECIMAL(10,2) → tope ~$100 M COP — ✅ CORREGIDO (Fase 7)
+
+Una factura B2B grande podría superar `99 999 999.99`. `DECIMAL(12,2)` da margen.
+**Fix (Fase 7):** ampliar el tipo de las columnas de importe en ventas/compras/pedidos.
+
+### 🔵 N16 — Tests de integración HTTP — 🟡 arrancado (Fase 5)
+
+Antes: 53 tests de lógica pura. **Fase 5** añadió la infraestructura
+(`src/app.js`, `npm run test:integration`, base `appinventario_test`) y 8 tests
+del flujo de venta/compra. **Pendiente (Fase 7):** ampliar a auth completo
+(rate-limit, cambio de contraseña), escalada de rol, gating por módulo (Fase 6),
+recepción de pedido, informes; y correr integración en CI.
+
+### 🔵 N-B — Deuda arrastrada del backlog
+
+- **N17** Migrar `Ventas`/`Compras`/`Pedidos`/`Informes` a TanStack Query (hoy
+  `useEffect` + `eslint-disable react-hooks/set-state-in-effect`). → ✅ Fase 8.
+- **N18** Refresh tokens / lista de revocación (A2 quedó a medias). → ✅ Fase 6.
+- **N19** POS con 19 `alert()` en vez de `FormError`/`apiError` (ya adoptados en las
+  otras 7 páginas). → ✅ Fase 8.
+- **N20** `I6` — `sequelize.authenticate()` duplicado (`config/database.js` +
+  `index.js`); cosmético. → ✅ Fase 6.
+
+---
+
+## 4. Historial de fases completadas (0–4)
+
+Registro resumido; el detalle está en el git log (`99754fb`, `e24acc4`, `78d908b`).
+
+### Fase 0 — Urgente (2026-09-06) ✅
+Rate-limit login · quitar volcado a disco · guard `empresaId` en servicios · `total`
+server-side · validar tenant de ids en compra/pedido · CORS restringido · `helmet` ·
+fail-fast `JWT_SECRET` · `ValidationError` · 404 JSON · cache headers frontend ·
+healthcheck backend + `depends_on: service_healthy`.
+
+### Fase 1 — Seguridad y robustez (2026-09-06) ✅
+Cookie de token redundante eliminada + **CSP estricta** · login anti-enumeración ·
+`authenticate` revalida `estado`/rol en cada request · `must_change_password` (migr.
+`20260906120000`) + pantalla forzada · política de contraseñas + bcrypt 12 · locks
+`FOR UPDATE` de stock · validación `zod` de fechas de informe · `asyncHandler` +
+`errorHandler` central · `validate()` con `zod` (auth/usuarios/informes) · interceptor
+axios solo desloguea en `401` · `morgan` + `utils/logger.js`.
+
+### Fase 2 — Rendimiento y caché (2026-09-08) ✅
+Migración de **23 índices** (`20260908120000`) · `TtlCache` de perfil de sesión (30 s)
++ `invalidateUser` · paginación `?limit&offset` + `X-Total-Count` · `getUsuarios`
+filtra en la query · `no-store` en `/api/` + `express.static` con `maxAge` · dashboard
+cacheado 60 s + invalidación por escritura · `gzip` en Nginx · **TanStack Query**
+(`QueryClientProvider`, `useEmpresaQuery`) — `DashboardUser` e `Inventario` migradas ·
+`createUsuario` transaccional.
+
+### Fase 3 — Calidad y deuda técnica (2026-09-08) ✅
+`zod` + `validate()` en **todos** los endpoints (con helpers `emailOpc`/`enteroOpc`/
+`optionalId`/`optionalText` para los `""`/`null` de los formularios; descarte de
+campos desconocidos = anti mass-assignment) · **token en cookie `httpOnly; SameSite=Strict`**
++ `POST /api/auth/logout` · `services/calculo.js` (`calcularVenta`, `calcularTotalCompra`) ·
+**Vitest** (42 tests) · scripts de debug eliminados · solo Postgres (`mysql2` fuera) ·
+**ESLint frontend en 0 errores** · contenedor backend como `node` + `mem_limit` +
+rotación de logs · `bulkCreate` de detalles · 9 páginas migradas a TanStack Query.
+> Regresión encontrada y corregida en el cierre: los esquemas `zod` rechazaban el
+> `null` explícito del POS (`servicioId:null`, `productoId:null`) → habría roto todas
+> las ventas y compras. Corregido con `optionalId`/`optionalText` + 2 tests.
+
+### Fase 4 — Alta de inquilinos y catálogos DANE/CIIU (2026-09-09) ✅
+- Bug de alta (500 opaco por módulos hardcodeados 6–8 inexistentes) → seeder
+  `20260909120200` + `GET /api/modulos` + `validarModulos()` + `errorHandler` mapea
+  `SequelizeForeignKeyConstraintError` → 400.
+- `components/FormError.jsx` + `utils/apiError.js` → banners de error reales en
+  `Empresas`, `Clientes`, `Proveedores`, `Servicios`, `Inventario`, backoffice
+  `Usuarios`, `AdminUsuarios` (los 3 POS siguen con `alert` → N19).
+- Columna `empresas.tipo_empresa` (`SIMPLE` | `FACTURACION_ELECTRONICA`) + selector
+  de tipo en el alta con formulario reducido para SIMPLE.
+- Catálogos DANE/CIIU: migración `20260909120000` (`departamentos` 33, `municipios`
+  1123, `actividades_ciiu` ~500) + datos vendorizados (`seeders/data/`, ver
+  `FUENTES.md`) + `services/catalogos.js` (memoria) + `GET /api/catalogos/{departamentos,municipios,ciiu}`.
+- `components/SearchableSelect.jsx` + `DaneLocationFields.jsx` (sin dependencias) en
+  Empresas / Clientes / Proveedores (a `proveedores` se le añadieron `departamento_dane`/`municipio_dane`).
+- DV automático del NIT (módulo 11 DIAN) en `utils/nit.js` (front y back).
+- Favicon reemplazado (icono *Boxes*).
+- +11 tests (`nit.test.js`, `catalogos.test.js`) → **53 en verde**.
+
+---
+
+## 5. Plan de corrección — Fases 5 a 8
+
+### Fase 5 — Dinero e integridad de la venta — ✅ COMPLETADA (2026-09-09)
+
+- [x] **N1** `descuento_global` = **porcentaje 0–100** en `services/calculo.js`
+      (`clampPct`) + `total_descuentos` poblado + `zod` valida `[0,100]`. PDF
+      coherente. Verificado E2E (UI, BD y PDF muestran $90.000 para 10 % sobre $100.000).
+- [x] **N2** `precioBase` de la BD, no del request; `0 ≤ precio_unitario ≤ precioBase`;
+      piso configurable `VENTA_DESCUENTO_LINEA_MAX_PCT`.
+- [x] **N4** Migración `20260910120000` → `cantidad`/`stock_actual` a `DECIMAL(12,3)`;
+      modelos + `zod` + `formatCantidad()` en el frontend + PDF.
+- [x] **N6** `descuento_global` sigue `DECIMAL(5,2)` (aguanta 0–100); `total_descuentos` poblado.
+- [x] **N16 (arranque)** Suite de integración `supertest` + Postgres de test:
+      `src/index.js` dividido en `src/app.js` (app) + `src/index.js` (listen);
+      `npm run test:integration` (necesita `docker compose up -d db`, usa la base
+      `appinventario_test`). **8 tests**: descuento %, precio de línea fuera de rango,
+      `precio_base` de la BD, cantidades fraccionarias (venta y compra), stock
+      insuficiente, aislamiento cross-tenant, auth/empresa. Total: **61 unitarios + 8 integración**.
+
+**Extra:** corregida la concatenación de strings al mover stock (`Number(stock) + Number(cantidad)`)
+que la migración a DECIMAL habría roto en `compra`/`checkInPedido`.
+
+### Fase 6 — Autorización y multi-tenant completo — ✅ COMPLETADA (2026-09-09)
+
+- [x] **N3** Middleware `requireModulo('<Codigo>')` en `middlewares/auth.js`. El
+      perfil de sesión cacheado ahora incluye `modulosPorEmpresa`; `requireEmpresa`
+      expone `req.empresaModulos` (Set). Montado en las 8 rutas de tenant
+      (`productos`→Inventario, `ventas`→Ventas, …). `updateEmpresa` con `modulosIds`
+      llama `invalidateAllProfiles()`. Verificado E2E: empresa sin "Compras" →
+      `GET /api/compras` = 403 `El módulo "Compras" no está activo`.
+- [x] **N9** Frontend: `SoloFrontAdmin` en `/app/admin` (un `FRONT_USER` va a `/app`);
+      `ModuloRoute` en las 8 rutas de módulo (redirige a `/app` si la empresa no lo
+      tiene). Verificado: `f6user` (FRONT_USER) en `/app/admin` y `/app/compras` →
+      redirige; menú lateral solo con los módulos contratados.
+      Extra: `DashboardUser` no consulta `/pedidos` si falta el módulo; los POS usan
+      `Promise.allSettled` y toleran 403 individuales (0 errores de consola).
+- [x] **N18 / A2** Tabla `sesiones` (migración `20260911120000`) + `services/sessions.js`:
+      cada login crea una fila con `jti` (incluido en el JWT); `authenticate` valida
+      que la sesión siga vigente (existe / no revocada / no expirada), cacheado 30 s.
+      Endpoints nuevos: `POST /api/auth/logout` (revoca la actual),
+      `POST /api/auth/logout-all?mantener_actual=` (todas), `GET /api/auth/sessions`
+      (lista). Cambiar la contraseña revoca las demás sesiones. Los tokens viejos
+      (sin `jti`) se rechazan → re-login. _Se mantiene la expiración de 8 h; no se
+      añadieron refresh tokens (no aportan lo suficiente para el despliegue de oficina)._
+- [x] **N10** Columna `compras.pedidoId` (FK opcional, `SET NULL`) + asociación.
+      `checkInPedido` la rellena y **rechaza productos que no estaban en el pedido**.
+      Verificado E2E.
+- [x] **N14** `empresaCreate` con `superRefine`: exige `resolucion_numero`,
+      `prefijo_facturacion`, `rango_desde`, `rango_hasta`, `clave_tecnica` cuando
+      `tipo_empresa === 'FACTURACION_ELECTRONICA'`. (El update no re-valida.)
+- [x] **N20 / I6** `config/database.js` ya no llama a `authenticate()` al importar
+      (evitaba abrir conexiones en tests/scripts). El chequeo lo hace solo `index.js`.
+
+**Tests:** +8 de integración (gating por módulo, FRONT_USER en `/usuarios`, logout /
+logout-all / sessions / cambio de contraseña, recepción de pedido con `pedidoId`).
+`loginLimiter`/`apiLimiter` se saltan en `NODE_ENV=test`. Total: **62 unitarios + 16 integración**.
+
+### Fase 7 — Correctness de informes, robustez y tests — ✅ COMPLETADA (2026-09-09)
+
+- [x] **N5** `ENV TZ=America/Bogota` + `apk add tzdata` en el `Dockerfile` del
+      backend; `TZ` sobreescribible en `docker-compose.yml`. `informeController`
+      interpreta `start`/`end` (formato `YYYY-MM-DD`, exigido por zod) como hora
+      **local** (`${start}T00:00:00` .. `${end}T23:59:59.999`). El dashboard ya
+      calculaba el mes con `new Date(y, m, 1)` → ahora en hora local. Verificado
+      E2E: contenedor en `GMT-0500`, venta de hoy aparece en el informe de hoy.
+- [x] **N8** `informeController` reescrito: sin validación muerta, sin `try/catch`
+      propio (→ `errorHandler`), y **cacheado 60 s** por `(empresaId, tipo, start, end)`
+      con `Map<empresaId, TtlCache>`; `invalidateInforme(empresaId)` se llama al
+      crear venta/compra/recepción (junto a `invalidateDashboard`). Cierra **C4**.
+      Verificado: 2ª llamada = 1.7 ms; nueva venta → el informe la incluye.
+- [x] **N7** `getVentaById` sin `try/catch` (lo gestiona `asyncHandler` + `errorHandler`).
+- [x] **N11** `catalogoQuerySchemas.js` + `validate({ query })` en
+      `/api/catalogos/municipios` (`departamento` de 1–2 dígitos) y `/ciiu`
+      (`q` ≤ 100, `limit` 1–100). Verificado: `?limit=99999` → 400.
+- [x] **N12** `createCompra`: un solo `Producto.findAll({ where: { id: [...] }, lock })`
+      + `Map`, acumulando cantidades por producto. Elimina el doble bucle N+1.
+- [x] **N15** Migración `20260912120000` — 14 columnas de importe de `DECIMAL(10,2)`
+      → **`DECIMAL(14,2)`** (~$1 billón). Modelos actualizados. `porcentaje_iva` y
+      `descuento_global` quedan en `DECIMAL(5,2)` (son %). Verificado: compra de $800 M.
+- [x] **N16** +7 tests de integración (aislamiento multi-tenant, escalada de rol → 403,
+      `descuento_global` fuera de rango, informe con TZ, fecha mal formada, `limit` de
+      catálogo). `ForbiddenError` (subclase de `ValidationError`, status 403) para las
+      denegaciones de autorización. **Total: 62 unitarios + 23 integración.**
+
+**Extra:** `config/database.js` ya no llama `authenticate()` al importar (era **N20/I6**,
+lo adelantó la Fase 6).
+
+### Fase 8 — Frontend: cerrar TanStack Query y pulido — ✅ COMPLETADA (2026-09-09)
+
+- [x] **N17 / C5** `Ventas`, `Compras`, `Pedidos` e `Informes` migrados a
+      `useEmpresaQuery` + `useMutation`; eliminados los `eslint-disable
+      react-hooks/set-state-in-effect` (y los `useEffect` de carga). `eslint frontend/src` a 0.
+- [x] **N19** Los `alert()` de los POS sustituidos por `<FormError>` + `apiError()`;
+      botones de envío deshabilitados con estado "Procesando…" mientras la mutación corre.
+- [x] **N1 (frontend)** `Ventas.jsx` ya no envía `total` en el payload; el PDF se genera
+      desde `GET /api/ventas/:id` (`descargarPDF`), usando los importes del backend.
+- [x] **N13** `getVentas` sin `include: Empresa` (comentario que apunta a `GET /api/ventas/:id`).
+- [x] **Extra** UI "Cerrar mis otras sesiones" en `CambiarPassword.jsx`
+      (`POST /api/auth/logout-all?mantener_actual=true`; el backend devuelve `revocadas`).
+- [x] Verificación E2E contra la pila Docker: compra con cantidad fraccionaria (10,5 → 14,5),
+      venta con `descuento_global` 10 % (subtotal/impuestos/total coherentes), informes,
+      `logout-all` con y sin `mantener_actual`. **62 unitarios + 23 integración** en verde.
+
+**N20/I6** ya se había cerrado en la Fase 6 (`config/database.js` sin `authenticate()`).
+_Pendiente no bloqueante:_ revisión visual fina del layout del PDF (la aritmética ya está verificada).
+
+---
+
+## 6. Riesgo residual / no auditado
+
+- **Facturación electrónica DIAN** (`cufe`, `qr_data`, `pdf_url`, `xml_url`,
+  `estado_fe`, resolución, clave técnica): son campos de un stub sin integración
+  real. Cuando se integre habrá que auditar firmado, numeración por resolución,
+  concurrencia de consecutivos y almacenamiento del XML/PDF.
+- **`generateInvoicePDF.js`** (355 líneas): solo se revisó la aritmética de totales
+  (→ N1). El layout, el manejo de páginas múltiples y los casos límite (0 ítems,
+  nombres muy largos) no se probaron.
+- **Concurrencia** más allá del stock: dos recepciones del mismo pedido en paralelo,
+  dos altas de empresa con el mismo NIT (no hay `unique` en `empresas.nit`).
+- **Backups**: el servicio opcional `docker-compose.backup.yml` no se ejecutó ni se
+  probó la restauración en este ciclo.
+
+---
+
+## 7. Anexo — Cómo reproducir N1 (descuento global)
+
+```bash
+# con la pila levantada y un token de sesión de un FRONT_USER con empresa activa
+curl -s -b cookies.txt -H "X-Empresa-Id: <ID>" -H 'Content-Type: application/json' \
+  -X POST http://localhost/api/ventas -d '{
+    "clienteId": <CID>,
+    "total": 90000,
+    "descuento_global": 10,
+    "detalles": [{ "productoId": <PID>, "servicioId": null,
+                   "cantidad": 1, "precio_unitario": 100000, "precio_base": 100000 }]
+  }'
+# Respuesta actual:  "total": "99990.00"   (100000 - 10)   ← debería ser 90000.00 (10%)
+```
+
+**Fix de referencia (`services/calculo.js`):**
+
+```js
+function calcularVenta(lineas, descuentoGlobalPct = 0) {
+  // ... subtotalBruto, totalImpuestos como ahora ...
+  const pct = Math.min(100, Math.max(0, Number(descuentoGlobalPct) || 0));
+  const totalConIva = subtotalBruto + totalImpuestos;
+  const descuentoItems = lineas.reduce(
+    (a, l) => a + Math.max(0, (Number(l.precioBase) || Number(l.precioConIva)) - Number(l.precioConIva)) * Number(l.cantidad), 0);
+  const descuentoGlobalMonto = round2(totalConIva * (pct / 100));
+  return {
+    subtotal_bruto: round2(subtotalBruto),
+    total_impuestos: round2(totalImpuestos),
+    descuento_global: pct,                                   // porcentaje
+    total_descuentos: round2(descuentoItems + descuentoGlobalMonto),
+    total: round2(totalConIva - descuentoGlobalMonto),
+    detalles,
+  };
 }
-location = /index.html {
-    add_header Cache-Control "no-cache";
-}
-```
-
-### 🟡 C2 — El Nginx de entrada no fija política de caché
-[`nginx/nginx.conf`](../nginx/nginx.conf) — añadir `Cache-Control: no-store` en
-`location /api/` (evita cacheo por proxies intermedios) y caché larga para
-estáticos.
-
-### 🟡 C3 — `express.static` sin `maxAge`
-[`index.js:41`](../backend/src/index.js#L41) — ruta muerta en Docker (Nginx sirve
-el front), pero activa en el modo "el backend sirve el build". Añadir
-`express.static(path, { maxAge: '1y', immutable: true, index: false })` y servir
-`index.html` con `no-cache`.
-
-### 🟡 C4 — Sin caché de datos costosos y poco cambiantes
-`/api/reportes/dashboard` y `/api/informes` recalculan agregados SQL
-(`SUM`, `COUNT`, `EXTRACT`) en cada visita.
-**Fix:** caché en memoria con TTL (~60 s) por `empresaId`, o
-`Cache-Control: private, max-age=30` + `ETag` en la respuesta.
-
-### 🔵 C5 — El frontend no tiene capa de caché de datos de servidor
-`Inventario.jsx` y las demás páginas hacen `useEffect(() => fetchX(), [])`: cada
-navegación entre vistas = request nuevo, sin deduplicación ni _stale-while-
-revalidate_.
-**Fix:** adoptar **TanStack Query** (o SWR) con `staleTime` razonable.
-
-### 🔵 C6 — Refetch no reacciona al cambio de empresa activa
-`useEffect(..., [])` con dependencias vacías: si el usuario cambia
-`activeEmpresa` sin remontar el componente, la lista queda obsoleta. Añadir
-`activeEmpresa.id` a las dependencias (o usarlo como `key`/`queryKey`).
-
----
-
-## 7. Infraestructura / Docker
-
-| Id | Severidad | Hallazgo |
-|---|---|---|
-| I1 | 🟠 | `backend` sin `healthcheck` en `docker-compose.yml`; `nginx` depende de él sin `condition: service_healthy` → 502 en el arranque. Añadir `/api/health` + healthcheck. |
-| I2 | 🟡 | El contenedor `backend` corre como **root**. Añadir `USER node` en el `Dockerfile`. |
-| I5 | 🟡 | Sin límites de recursos (`mem_limit` / `deploy.resources`). Un _runaway_ del backend puede tumbar el PC servidor. |
-| I7 | 🟡 | Sin rotación de logs de Docker (`logging.options.max-size`). El disco del servidor se puede llenar. |
-| I4 | 🔵 | El `.env` no se valida contra los valores de ejemplo (documentado en la guía, aceptable). |
-| I6 | 🔵 | `sequelize.authenticate()` se ejecuta en `config/database.js` **e** `index.js`; el `.catch` de `database.js` solo loguea. Unificar. |
-
----
-
-## 8. Calidad de código y mantenibilidad
-
-| Id | Hallazgo | Fix |
-|---|---|---|
-| Q1 | `try/catch` + `res.status(500)` repetido en cada controlador | `asyncHandler` + middleware de errores central |
-| Q2 | Sin validación de entrada; los controladores desestructuran `req.body` a ciegas | `zod` / `express-validator` con esquema por endpoint |
-| Q3 | El catch-all `app.get('/*splat')` ([`index.js:44`](../backend/src/index.js#L44)) devuelve `index.html` (200 HTML) para rutas `/api/*` inexistentes | `app.use('/api', (req,res) => res.status(404).json(...))` antes del catch-all |
-| Q4 | Lógica de negocio (IVA, stock) embebida en controladores | Extraer a `services/` para testear |
-| Q5 | Cero tests (`npm test` = `exit 1`) | Jest/Vitest + supertest: auth, multi-tenant, cálculo de venta |
-| Q6 | Scripts sueltos de depuración en `backend/`: `check-db.js`, `fix-compra.js`, `fix-db.js`, `test-db.js`, `seed-pedido.js` | Sacar del repo o mover a `scripts/` documentados |
-| Q7 | Ramas MySQL muertas (`reporteController`, `informeController`, `connection.js`, `.env.example`) y dependencia `mysql2` | Eliminar; dejar solo Postgres |
-| Q10 | El interceptor de axios ([`axios.js:25`](../frontend/src/api/axios.js#L25)) hace `logout()` global también con `403` | Separar: `401` → logout; `403` → mostrar error sin cerrar sesión |
-
----
-
-## 9. Plan de corrección por fases
-
-### Fase 0 — Urgente (~1–2 días, sin cambio de arquitectura) — ✅ COMPLETADA (2026-09-06)
-
-- [x] **S2** Eliminar el `writeFileSync` de `ventaController`.
-- [x] **A1** Añadir guard `req.empresaId` a `servicioRoutes`.
-- [x] **A3** Whitelist de roles asignables en `createUsuario`/`updateUsuario` (`validarRolAsignable`, vía `Role.tipo`).
-- [x] **D1** Recalcular `total` en el servidor (venta y compra); se ignora el del cliente.
-- [x] **D2** Validar tenant de `proveedorId`/`productoId` en compra y pedido; `checkInPedido` ya no omite productos ajenos en silencio.
-- [x] **S1** `express-rate-limit` en `/api/auth/login` (5 / 15 min) + límite global laxo + `trust proxy`.
-- [x] **S5** CORS restringido a `FRONTEND_URL` (lista); sin la variable, CORS desactivado (mismo origen).
-- [x] **S4** `helmet()` (CSP delegada al Nginx de entrada — Fase 1).
-- [x] **S7** _Fail-fast_ si falta `JWT_SECRET` o mide < 32 caracteres.
-- [x] **S9** `ValidationError` para reglas de negocio (400 con mensaje) vs. genérico 500 + `console.error` para lo inesperado.
-- [x] **Q3** `404` JSON para rutas `/api/*` desconocidas.
-- [x] **C1** Cache headers en `frontend/nginx.conf` (`immutable` para `/assets/`, `no-cache` para `index.html`).
-- [x] **I1** `/api/health` + `healthcheck` del backend y `depends_on: condition: service_healthy` en Nginx.
-
-Extra incluido: `express.json({ limit: '1mb' })` (S10), validación de cantidades/precios negativos o no numéricos en venta/compra/pedido (D6), validación de cliente por tenant en venta.
-
-### Fase 1 — Seguridad y robustez — ✅ COMPLETADA (2026-09-06)
-
-- [x] **S3** Eliminada la cookie de token redundante (`js-cookie` desinstalado); **CSP estricta** en `nginx/nginx.conf` (`script-src 'self'`, gracias a desactivar el polyfill de modulepreload en `vite.config.js`) + `X-Frame-Options: DENY`, `Referrer-Policy`. _Pendiente (Fase 2/3): mover el token a cookie `httpOnly` con refresh tokens._
-- [x] **S6** Login uniforme: siempre `401 "Credenciales inválidas"`, siempre un `bcrypt.compare` (contra un hash señuelo si el usuario no existe) para timing constante.
-- [x] **A2** `authenticate` recarga el usuario de la BD en cada request, verifica `estado` y refresca `rolId`/`tipoRol` (ya no se confía en el rol del token). Expiración configurable con `JWT_EXPIRES_IN` (default 8h). _Pendiente: refresh tokens / lista de revocación._
-- [x] **S10** `express.json({ limit: '1mb' })` (hecho en Fase 0).
-- [x] **S11** `must_change_password` (migración `20260906120000`): el `admin` sembrado arranca obligado a cambiar la contraseña; endpoint `POST /api/auth/change-password`; pantalla `/cambiar-password` en el frontend con redirección forzada.
-- [x] **S12** `src/utils/password.js`: política (mín. 8, letra + número) aplicada en alta/edición de usuarios y cambio de contraseña; `bcrypt` a **12 rondas**.
-- [x] **D4** `lock: t.LOCK.UPDATE` al leer el producto antes de mover stock (venta, compra, recepción de pedido).
-- [x] **D5** Validación de `tipo`/`start`/`end` del informe con zod (fechas válidas y `start <= end`).
-- [x] **Q1** `asyncHandler` + `errorHandler` central (mapea `ValidationError`→400, unique→409, payload grande→413, resto→500 genérico + log).
-- [x] **Q2** `validate(schema)` con zod; esquemas para auth, usuarios e informes. _Pendiente: extender a productos/ventas/compras/etc._
-- [x] **Q10** El interceptor de axios solo desloguea en `401` (antes también en `403`).
-- [x] **S13** `morgan` (log de acceso HTTP) + `src/utils/logger.js` (eventos JSON: `login_ok`, `login_fail`, `password_changed`, `unhandled_error`).
-
-Verificado con la pila Docker completa: flujo de cambio de contraseña forzado E2E (navegador), revocación de sesión al desactivar usuario, CSP sin romper la SPA (0 errores de consola), cabeceras y caché correctas, rate-limit y 404 JSON.
-
-Migración pendiente de aplicar en producción: `docker compose up -d --build` corre `20260906120000-add-must-change-password` automáticamente.
-
-### Fase 2 — Rendimiento y caché — ✅ COMPLETADA (2026-09-08)
-
-- [x] **P1** Migración `20260908120000-add-indexes`: 23 índices sobre FKs + compuestos `(empresaId, fecha)` en ventas/compras/pedidos. Verificado en Postgres.
-- [x] **P2** `src/utils/ttlCache.js` + caché de sesión en `authenticate` (`userId → {estado, rolId, tipoRol, empresaIds}`, TTL 30 s, `AUTH_CACHE_TTL_MS`). `usuarioController` llama `invalidateUser()` al editar → un cambio de estado/rol/empresas se refleja al instante.
-- [x] **P3** Paginación en `getVentas`/`getCompras`/`getPedidos`/`getUsuarios`: `?limit=&offset=` + cabecera `X-Total-Count` (expuesta vía CORS). Compatible: sin params devuelve las 200 más recientes (antes: todo). Informes acotados a una ventana máx. de 366 días.
-- [x] **P4** `getUsuarios` filtra por empresa en la query (con `findAndCountAll` + `distinct`), ya no en memoria.
-- [x] **C2/C3** `nginx/nginx.conf`: `Cache-Control: no-store` en `/api/`. `express.static` con `maxAge: '1y', immutable` e `index.html` con `no-cache`.
-- [x] **C4** `/api/reportes/dashboard` cacheado 60 s por empresa (`DASHBOARD_CACHE_TTL_MS`); se invalida al crear venta/compra, recepción de pedido y alta/edición de producto. El dashboard también dejó de usar `EXTRACT()` sobre la columna (ahora rango `[inicioMes, inicioMesSiguiente)` → usa el índice).
-- [x] **P7** `gzip` en `nginx/nginx.conf` (`gzip_proxied any`, JSON/JS/CSS/SVG). Verificado (`Content-Encoding: gzip` en los assets).
-- [x] **C5/C6** TanStack Query en el frontend: `QueryClientProvider` en `main.jsx` (`staleTime` 30 s), hook `useEmpresaQuery` que mete el id de la empresa activa en la `queryKey`. Migradas `DashboardUser` (ahora usa el endpoint agregado y cacheado, 1 petición en vez de 4) e `Inventario` (query + mutation con invalidación). _Pendiente: migrar el resto de páginas al mismo patrón (mecánico)._
-
-Extra: `createUsuario` ahora es transaccional (evita usuarios huérfanos si `setEmpresas` falla).
-
-Verificado E2E con la pila Docker: migración de índices aplicada, dashboard renderiza datos reales cacheados (0 errores de consola), navegación entre vistas sin re-fetch, `X-Total-Count`, gzip, cabeceras de caché, ventana de informe.
-
-### Fase 3 — Calidad y deuda técnica — ✅ COMPLETADA (2026-09-08)
-
-- [x] **Q2 (resto)** Esquemas zod + `validate()` en productos, proveedores, clientes, servicios, ventas, compras, pedidos, empresas. Helpers `emailOpc`/`enteroOpc`/`textoOpc` para tolerar los `""` de los formularios. Los esquemas descartan campos desconocidos → protección anti mass-assignment. Controladores de catálogo adelgazados (spread validado, sin `try/catch` propio → `errorHandler`).
-- [x] **S3 (completo)** Token movido a **cookie `httpOnly; SameSite=Strict`** (`cookie-parser`): inaccesible desde JavaScript, inmune a robo por XSS. `POST /api/auth/logout` la limpia. `authenticate` lee cookie o `Bearer` (scripts/tests). Frontend: `withCredentials`, sin token en el store, `logout` async. `SameSite=Strict` cubre CSRF. _Refresh tokens: no incluidos (expiración de 8h + revalidación de `estado` en cada request son suficientes para el despliegue de oficina); documentado como mejora futura si se requiere sesión persistente._
-- [x] **Q4** Capa `src/services/calculo.js`: `calcularVenta` (desglose de IVA POS) y `calcularTotalCompra`, funciones puras. Los controladores de venta/compra/pedido las usan y quedaron más finos.
-- [x] **Q5** Suite **Vitest**: 40 tests (`npm test`) — cálculo de venta/IVA, política de contraseñas + bcrypt 12, paginación, `TtlCache`, y todos los esquemas zod (venta/compra/pedido/informe/producto).
-- [x] **Q6** Eliminados `check-db.js`, `fix-compra.js`, `fix-db.js`, `test-db.js`, `seed-pedido.js`.
-- [x] **Q7** Solo Postgres: `connection.js` sin `DB_DIALECT`, `qcol` sin rama MySQL, `mysql2` desinstalado, `.env.example` limpio.
-- [x] **Lint** ESLint del frontend en **0 errores** (venía de 34): catch sin binding, imports/estado sin usar, `useEffect` reordenados. Los 3 `set-state-in-effect` de las páginas POS quedan con `eslint-disable` puntual + nota (pendiente su migración a TanStack Query).
-- [x] **I2/I5/I7** Backend corre como usuario `node` (no root); `mem_limit` por contenedor (db 512m, backend 384m, nginx/frontend 128m); rotación de logs de Docker (`max-size 10m`, `max-file 3`) vía ancla YAML.
-- [x] **P5** `bulkCreate` de detalles en venta/compra/pedido/recepción.
-- [x] **C5 (parcial)** Migradas a TanStack Query: `DashboardUser`, `Inventario`, `Clientes`, `Proveedores`, `Servicios`, `AdminUsuarios`, `DashboardAdmin`, backoffice `Empresas` y `Usuarios`. _Pendientes: `Ventas`, `Compras`, `Pedidos`, `Informes` (formularios POS complejos; su lectura de listas sigue con `useEffect`)._
-
-Verificado E2E con la pila Docker: cookie httpOnly (login/navegación/reload/logout, invisible a JS), creación de cliente vía formulario migrado con invalidación de caché, validación zod (`""` de formularios, campos desconocidos), recálculo de `total` de venta tras el refactor a servicio, todas las páginas cargan sin errores de consola, 42 tests en verde, contenedor backend como `node`.
-
-**Regresión encontrada y corregida (2026-09-08):** los esquemas zod de venta/compra
-rechazaban el `null` explícito que el POS manda en el id que no aplica
-(`servicioId:null` en una línea de producto, `productoId:null`/`descripcion_gasto:null`
-en compra). Habría roto **todas las ventas y compras**. Corregido con `optionalId`/
-`optionalText` (preprocesan `null`/`""` → `undefined`) + 2 tests nuevos. Verificado E2E
-con los payloads exactos del POS (venta producto+servicio, compra producto+gasto,
-pedido, recepción → stock correcto).
-
-### Fase 4 — Alta de inquilinos y catálogos DANE/CIIU — ✅ COMPLETADA (2026-09-09)
-
-Ajustes pedidos por el usuario sobre el alta de empresas (tenants) en el BackOffice.
-
-- [x] **Bug de alta (500 opaco).** El frontend ofrecía 8 módulos hardcodeados pero el
-  seeder solo sembró 1–5; marcar Clientes/Servicios/Pedidos → `SequelizeForeignKeyConstraintError`
-  → 500 genérico. **Fix:** seeder `20260909120200-modulos-faltantes` (idempotente, por
-  `nombre_codigo`), `GET /api/modulos` y el formulario carga la lista de la BD (no más drift),
-  validación de `modulosIds` en `empresaController` (→ `ValidationError` 400 con los ids),
-  y `errorHandler` mapea `SequelizeForeignKeyConstraintError` → 400 legible.
-- [x] **Errores transparentes en formularios (todos).** Nuevo `components/FormError.jsx` +
-  `utils/apiError.js`. Sustituido `onError: () => alert('Error…')` por un banner rojo con el
-  mensaje real del backend en: `Empresas`, `Clientes`, `Proveedores`, `Servicios`, `Inventario`,
-  backoffice `Usuarios`, `AdminUsuarios`. `empresaCreate` con mensajes zod en español para
-  `nombre` y `tipo_empresa`.
-- [x] **Tipo de empresa.** Columna `empresas.tipo_empresa` (`STRING(30)`, default `SIMPLE`).
-  Al crear, un paso selector: **Empresa simple** (formulario reducido: razón social, NIT+DV,
-  contacto, departamento, ciudad, dirección, CIIU, módulos) o **Facturación electrónica**
-  (formulario completo actual). `regimen_fiscal`/`tipo_persona` en SIMPLE usan el default del modelo.
-- [x] **Catálogos DANE/CIIU.** Migración `20260909120000` crea `departamentos` (33),
-  `municipios` (1123) y `actividades_ciiu` (500 clases CIIU Rev. 4 A.C.). Datos vendorizados en
-  `backend/src/seeders/data/` (ver `FUENTES.md`), sembrados por `20260909120100`.
-  Servicio en memoria `services/catalogos.js` + endpoints `GET /api/catalogos/{departamentos,municipios,ciiu}`
-  (solo `authenticate`; los consume BackOffice y Front). `utils/ciiu.js#flattenCiiu` aplana el JSON
-  jerárquico y descarta entradas basura de la fuente.
-- [x] **Selects buscables (código por detrás, nombre visible).** `components/SearchableSelect.jsx`
-  (sin dependencias: input + lista filtrada, teclado, click-fuera) y `components/DaneLocationFields.jsx`
-  (par departamento/municipio: la ciudad se filtra por el departamento; elegir ciudad sin
-  departamento lo autoselecciona). Aplicado a **Empresas, Clientes y Proveedores**
-  (a `proveedores` se le añadieron las columnas `departamento_dane`/`municipio_dane`).
-- [x] **Inventario preseleccionado** por defecto en el alta (con etiqueta "base"; desmarcable).
-- [x] **DV automático** del NIT (algoritmo módulo 11 oficial DIAN) en `utils/nit.js` (front) y
-  `backend/src/utils/nit.js`; en el formulario SIMPLE es de solo lectura.
-- [x] **Favicon.** `frontend/public/favicon.svg` reemplazado por el icono *Boxes* (mismo del
-  logo in-app) sobre fondo `brand-600`, en vez del cubo tipo Docker anterior.
-- [x] **Tests.** +11 (`nit.test.js`, `catalogos.test.js`): DV conocidos, aplanado CIIU,
-  integridad de DIVIPOLA, `tipo_empresa` en el esquema. Total **53** en verde.
-
-Verificado E2E con la pila Docker: migración + seeders aplicados (33/1123/500 filas, módulos 6–8),
-`POST /api/empresas` SIMPLE con códigos DANE/CIIU guardados, errores 400 legibles (módulo
-inexistente, nombre vacío, tipo inválido), y por navegador: login → alta de empresa simple
-completa con los combobox de departamento/ciudad, Inventario premarcado, DV `890903938→8`,
-0 errores de consola.
-
-### Backlog (revisión — no realizado)
-
-El usuario decidió cerrar la refactorización tras la Fase 3. Queda pendiente,
-como backlog, y **sin auditar en profundidad**:
-
-**Mejoras (Fase 4):**
-- Migrar `Ventas`/`Compras`/`Pedidos`/`Informes` a TanStack Query (su lectura de listas sigue con `useEffect` + `set-state-in-effect` silenciado).
-- Refresh tokens si se necesita sesión más larga sin re-login.
-- Tests de integración HTTP (supertest contra un Postgres de test) — hoy solo hay 53 tests unitarios de lógica pura.
-- `getVentas` incluye `Empresa` (atributos limitados) — quitar si el frontend no lo usa.
-
-**Zonas que la revisión original NO cubrió a fondo (riesgo residual):**
-- Flujos POS completos: descuento por línea, cliente inline, edición de carrito (`Ventas`/`Compras`/`Pedidos`, ~1500 líneas).
-- Generación de PDF de factura ([`generateInvoicePDF.js`](../frontend/src/utils/generateInvoicePDF.js), 355 líneas) y su aritmética de fallback.
-- Manejo de dinero extremo a extremo: Postgres devuelve `DECIMAL` como string; el frontend hace `parseFloat`/`Number` en varios sitios — no se auditó precisión ni redondeo acumulado.
-- Campos de facturación electrónica DIAN (`cufe`, `qr_data`, `pdf_url`, `xml_url`, `estado_fe`) — parecen un stub sin integración; sin revisar.
-- Autorización por módulos: el gating vive solo en el frontend (`FrontLayout` filtra el menú por `activeEmpresa.modulos`); el backend **no** comprueba que la empresa tenga el módulo contratado antes de servir el endpoint.
-- Zona horaria en informes/dashboard (`new Date(...)` en el contenedor UTC vs. fechas locales).
-
-> ⚠️ Durante el cierre se encontró y corrigió una regresión que habría roto
-> todas las ventas y compras (esquemas zod rechazaban `null` del POS). Es
-> plausible que queden regresiones similares en los flujos no probados de arriba.
-
----
-
-## 10. Anexo — Snippets de referencia para la Fase 0
-
-**S1 — rate limit del login**
-```js
-// backend/src/middlewares/rateLimit.js
-const rateLimit = require('express-rate-limit');
-exports.loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Demasiados intentos, espera unos minutos.' },
-});
-// authRoutes.js
-router.post('/login', loginLimiter, authController.login);
-```
-
-**S5 + S4 + S10 — arranque endurecido**
-```js
-// index.js
-const helmet = require('helmet');
-if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
-  console.error('JWT_SECRET ausente o demasiado corto. Abortando.');
-  process.exit(1);
-}
-app.use(helmet());
-app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
-app.use(express.json({ limit: '100kb' }));
-```
-
-**D1 — total server-side (venta)**
-```js
-const totalCalculado = detallesProcesados.reduce(
-  (acc, d) => acc + d.subtotal_bruto + d.valor_iva, 0
-) - (Number(descuento_global) || 0);
-// usar totalCalculado en Venta.create, ignorar req.body.total
-```
-
-**A3 — roles asignables**
-```js
-const ROLES_ASIGNABLES = {
-  BACKOFFICE_ADMIN: [1, 2, 3],
-  FRONT_ADMIN: [2, 3], // nunca BACKOFFICE_ADMIN
-};
-if (!ROLES_ASIGNABLES[req.tipoRol]?.includes(Number(rolId))) {
-  return res.status(403).json({ error: 'Rol no permitido' });
-}
-```
-
-**Q3 — 404 JSON para API**
-```js
-// después de montar todas las rutas /api, antes de express.static
-app.use('/api', (req, res) => res.status(404).json({ error: 'Recurso no encontrado' }));
 ```

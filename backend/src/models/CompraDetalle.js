@@ -20,11 +20,11 @@ const CompraDetalle = sequelize.define('CompraDetalle', {
     allowNull: true,
   },
   cantidad: {
-    type: DataTypes.INTEGER,
+    type: DataTypes.DECIMAL(12, 3), // admite fracciones (kg, litros, metros)
     allowNull: false,
   },
   costo_unitario: {
-    type: DataTypes.DECIMAL(10, 2),
+    type: DataTypes.DECIMAL(14, 2),
     allowNull: false,
   }
 }, {

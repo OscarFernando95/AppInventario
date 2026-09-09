@@ -24,12 +24,12 @@ const Producto = sequelize.define('Producto', {
     allowNull: true,
   },
   stock_actual: {
-    type: DataTypes.INTEGER,
+    type: DataTypes.DECIMAL(12, 3), // admite fracciones (kg, litros, metros)
     allowNull: false,
     defaultValue: 0,
   },
   precio_unitario: {
-    type: DataTypes.DECIMAL(10, 2),
+    type: DataTypes.DECIMAL(14, 2),
     allowNull: false,
   },
   porcentaje_iva: {

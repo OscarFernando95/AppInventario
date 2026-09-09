@@ -38,6 +38,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      # Zona horaria (informes y "mes en curso"). Ajusta si la oficina no está en Colombia.
+      TZ: ${TZ:-America/Bogota}
       # Mismas credenciales que "db"; el host es el nombre del servicio, no localhost.
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       # Variables sueltas (fallback): las usa entrypoint.sh para esperar a Postgres
