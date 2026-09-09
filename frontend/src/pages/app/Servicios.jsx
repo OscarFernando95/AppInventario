@@ -1,43 +1,38 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { Briefcase, Plus, Edit } from 'lucide-react';
 import { formatCOP } from '../../utils/format';
+import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+
+const EMPTY = {
+  nombre: '', descripcion: '', precio: '',
+  porcentaje_iva: '19', unidad_medida: 'ZZ', codigo_estandar: '',
+};
 
 const Servicios = () => {
-  const [servicios, setServicios] = useState([]);
+  const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
-  const [formData, setFormData] = useState({ 
-    nombre: '', descripcion: '', precio: '',
-    porcentaje_iva: '19', unidad_medida: 'ZZ', codigo_estandar: ''
-  });
+  const [formData, setFormData] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
 
-  const fetchServicios = async () => {
-    try {
-      const res = await api.get('/servicios');
-      setServicios(res.data);
-    } catch (err) { console.error(err); }
-  };
+  const { data: servicios = [] } = useEmpresaQuery(['servicios'], '/servicios');
 
-  useEffect(() => { fetchServicios(); }, []);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      if (editId) {
-        await api.put(`/servicios/${editId}`, formData);
-      } else {
-        await api.post('/servicios', formData);
-      }
+  const guardar = useMutation({
+    mutationFn: (data) => (editId ? api.put(`/servicios/${editId}`, data) : api.post('/servicios', data)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['empresa'] });
       setShowModal(false);
       setEditId(null);
-      setFormData({ 
-        nombre: '', descripcion: '', precio: '',
-        porcentaje_iva: '19', unidad_medida: 'ZZ', codigo_estandar: ''
-      });
-      fetchServicios();
-    } catch (err) { alert('Error al guardar servicio'); }
+      setFormData(EMPTY);
+    },
+    onError: () => alert('Error al guardar servicio'),
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    guardar.mutate(formData);
   };
 
   const startEdit = (s) => {
@@ -56,13 +51,10 @@ const Servicios = () => {
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">Catálogo de Servicios</h2>
           <p className="text-slate-500 mt-1">Servicios intangibles que monetizan pero no descuentan inventario</p>
         </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { 
-          setEditId(null); 
-          setFormData({ 
-            nombre: '', descripcion: '', precio: '',
-            porcentaje_iva: '19', unidad_medida: 'ZZ', codigo_estandar: ''
-          }); 
-          setShowModal(true); 
+        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => {
+          setEditId(null);
+          setFormData(EMPTY);
+          setShowModal(true);
         }}>
           <Plus className="w-5 h-5" /> Nuevo Servicio
         </button>

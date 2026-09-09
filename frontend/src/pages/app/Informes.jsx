@@ -3,6 +3,7 @@ import api from '../../api/axios';
 import { TrendingUp, TrendingDown, PackageOpen, Target, Box, CreditCard, PieChart, Printer, Calendar, FileText, Download } from 'lucide-react';
 import { formatCOP } from '../../utils/format';
 
+// eslint-disable-next-line no-unused-vars -- `Icon` sí se usa como componente en el JSX de abajo
 const KPIBox = ({ title, value, subtitle, icon: Icon, colorClass }) => (
   <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-md transition-shadow">
     <div className={`absolute -right-4 -top-4 w-24 h-24 rounded-full opacity-[0.03] group-hover:scale-110 transition-transform ${colorClass.bg}`}></div>
@@ -52,7 +53,7 @@ const Informes = () => {
     try {
       const res = await api.get('/informes', { params: informeParams });
       setInformeData(res.data);
-    } catch(err) { alert('Sucedió un error o no hay datos.'); }
+    } catch { alert("Sucedió un error o no hay datos."); }
     setIsGenerating(false);
   };
 

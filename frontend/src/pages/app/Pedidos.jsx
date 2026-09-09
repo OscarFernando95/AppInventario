@@ -37,6 +37,7 @@ const Pedidos = () => {
     } catch (err) { console.error(err); }
   };
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- carga inicial; pendiente migrar a TanStack Query (ver INFORME_REFACTOR Fase 3)
   useEffect(() => { fetchData(); }, []);
 
   // Compute Frequencies
@@ -76,7 +77,7 @@ const Pedidos = () => {
       setShowNewProv(false);
       setProvSearch('');
       setNewProvData({ nombre: '', nit: '', contacto: '', telefono: '', email: '', direccion: '' });
-    } catch (err) { alert('Sucedió un problema al crear.'); }
+    } catch { alert('Sucedió un problema al crear.'); }
   };
 
   const handleCreateProd = async (e) => {
@@ -88,7 +89,7 @@ const Pedidos = () => {
       setShowNewProd(false);
       setItemSearch('');
       setNewProdData({ codigo: '', nombre_producto: '', precio_unitario: '' });
-    } catch (err) { alert('Sucedió un problema al crear el producto.'); }
+    } catch { alert('Sucedió un problema al crear el producto.'); }
   };
 
   const addItemToCart = (item) => {
@@ -143,8 +144,8 @@ const Pedidos = () => {
       setProvSearch('');
       setItemSearch('');
       fetchData();
-    } catch (err) { 
-      alert('Sucedió un problema al generar el pedido.'); 
+    } catch {
+      alert("Sucedió un problema al generar el pedido.");
     }
   };
 
@@ -179,8 +180,8 @@ const Pedidos = () => {
       setCheckInPedido(null);
       fetchData();
       alert('¡Recepción completada! El pedido se transformó en una compra y el stock fue sumado a la bodega.');
-    } catch (err) {
-      alert('Error en la recepción del pedido.');
+    } catch {
+      alert("Error en la recepción del pedido.");
     }
   };
 

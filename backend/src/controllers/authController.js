@@ -1,11 +1,23 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const ms = require('ms');
 const { Usuario, Role, Empresa, Modulo } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { hashPassword, BCRYPT_ROUNDS } = require('../utils/password');
 const logger = require('../utils/logger');
 
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
+
+// El token viaja en una cookie httpOnly (no accesible por JavaScript → inmune a
+// robo por XSS). `secure` solo si se sirve por HTTPS (COOKIE_SECURE=true).
+const COOKIE_NAME = 'token';
+const cookieOptions = {
+  httpOnly: true,
+  sameSite: 'strict', // también neutraliza CSRF en las peticiones de escritura
+  secure: process.env.COOKIE_SECURE === 'true',
+  path: '/',
+  maxAge: ms(JWT_EXPIRES_IN),
+};
 
 // Hash "señuelo": se compara contra él cuando el usuario no existe, para que el
 // tiempo de respuesta no revele si el usuario es válido (anti-enumeración).
@@ -39,11 +51,11 @@ exports.login = async (req, res) => {
     { expiresIn: JWT_EXPIRES_IN }
   );
 
+  res.cookie(COOKIE_NAME, token, cookieOptions);
   logger.info('login_ok', { userId: usuario.id, rol: usuario.Role.tipo });
 
   res.json({
     mensaje: 'Login exitoso',
-    token,
     usuario: {
       id: usuario.id,
       nombre: usuario.nombre,
@@ -57,6 +69,11 @@ exports.login = async (req, res) => {
       })) : []
     }
   });
+};
+
+exports.logout = (req, res) => {
+  res.clearCookie(COOKIE_NAME, { path: '/' });
+  res.json({ mensaje: 'Sesión cerrada' });
 };
 
 /**

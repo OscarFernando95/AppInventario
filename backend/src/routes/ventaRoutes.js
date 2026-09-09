@@ -2,6 +2,10 @@ const express = require('express');
 const router = express.Router();
 const ventaController = require('../controllers/ventaController');
 const { verifyToken } = require('../middlewares/auth');
+const asyncHandler = require('../middlewares/asyncHandler');
+const validate = require('../middlewares/validate');
+const { idParam } = require('../schemas/common');
+const { ventaCreate } = require('../schemas/transaccionSchemas');
 
 router.use(verifyToken);
 router.use((req, res, next) => {
@@ -9,8 +13,8 @@ router.use((req, res, next) => {
   next();
 });
 
-router.get('/', ventaController.getVentas);
-router.get('/:id', ventaController.getVentaById);
-router.post('/', ventaController.createVenta);
+router.get('/', asyncHandler(ventaController.getVentas));
+router.get('/:id', validate({ params: idParam }), asyncHandler(ventaController.getVentaById));
+router.post('/', validate({ body: ventaCreate }), asyncHandler(ventaController.createVenta));
 
 module.exports = router;

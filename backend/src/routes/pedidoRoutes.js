@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const { verifyToken } = require('../middlewares/auth');
+const asyncHandler = require('../middlewares/asyncHandler');
+const validate = require('../middlewares/validate');
+const { idParam } = require('../schemas/common');
+const { pedidoCreate, pedidoCheckin } = require('../schemas/transaccionSchemas');
 const pedidoController = require('../controllers/pedidoController');
 
 router.use(verifyToken);
@@ -10,8 +14,8 @@ router.use((req, res, next) => {
   next();
 });
 
-router.get('/', pedidoController.getPedidos);
-router.post('/', pedidoController.createPedido);
-router.post('/:id/checkin', pedidoController.checkInPedido);
+router.get('/', asyncHandler(pedidoController.getPedidos));
+router.post('/', validate({ body: pedidoCreate }), asyncHandler(pedidoController.createPedido));
+router.post('/:id/checkin', validate({ params: idParam, body: pedidoCheckin }), asyncHandler(pedidoController.checkInPedido));
 
 module.exports = router;

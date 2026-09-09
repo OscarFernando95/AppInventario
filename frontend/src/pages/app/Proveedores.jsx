@@ -1,36 +1,34 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { Truck, Plus, Edit, Phone, Mail, UserCircle, MapPin } from 'lucide-react';
+import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+
+const EMPTY = { nombre: '', nit: '', contacto: '', telefono: '', email: '', direccion: '' };
 
 const Proveedores = () => {
-  const [proveedores, setProveedores] = useState([]);
+  const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
-  const [formData, setFormData] = useState({ nombre: '', nit: '', contacto: '', telefono: '', email: '', direccion: '' });
+  const [formData, setFormData] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
 
-  const fetchProveedores = async () => {
-    try {
-      const res = await api.get('/proveedores');
-      setProveedores(res.data);
-    } catch (err) { console.error(err); }
-  };
+  const { data: proveedores = [] } = useEmpresaQuery(['proveedores'], '/proveedores');
 
-  useEffect(() => { fetchProveedores(); }, []);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      if (editId) {
-        await api.put(`/proveedores/${editId}`, formData);
-      } else {
-        await api.post('/proveedores', formData);
-      }
+  const guardar = useMutation({
+    mutationFn: (data) => (editId ? api.put(`/proveedores/${editId}`, data) : api.post('/proveedores', data)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['empresa'] });
       setShowModal(false);
       setEditId(null);
-      setFormData({ nombre: '', nit: '', contacto: '', telefono: '', email: '', direccion: '' });
-      fetchProveedores();
-    } catch (err) { alert('Error al guardar proveedor'); }
+      setFormData(EMPTY);
+    },
+    onError: () => alert('Error al guardar proveedor'),
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    guardar.mutate(formData);
   };
 
   const startEdit = (p) => {
@@ -46,7 +44,7 @@ const Proveedores = () => {
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">Directorio Proveedores</h2>
           <p className="text-slate-500 mt-1">Registra a quienes te suministran inventario físico.</p>
         </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setEditId(null); setFormData({ nombre: '', nit: '', contacto: '', telefono: '', email: '', direccion: '' }); setShowModal(true); }}>
+        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setEditId(null); setFormData(EMPTY); setShowModal(true); }}>
           <Plus className="w-5 h-5" /> Nuevo Proveedor
         </button>
       </div>

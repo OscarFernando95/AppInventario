@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { Building2, Plus, Power, ShieldCheck } from 'lucide-react';
 
 const Empresas = () => {
-  const [empresas, setEmpresas] = useState([]);
+  const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState(null);
   const [formData, setFormData] = useState({ 
@@ -35,30 +36,25 @@ const Empresas = () => {
     }));
   };
 
-  useEffect(() => {
-    fetchEmpresas();
-  }, []);
+  const { data: empresas = [] } = useQuery({
+    queryKey: ['bo-empresas'],
+    queryFn: async () => (await api.get('/empresas')).data,
+  });
 
-  const fetchEmpresas = async () => {
-    try {
-      const res = await api.get('/empresas');
-      setEmpresas(res.data);
-    } catch (err) {}
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      if (editId) {
-        await api.put(`/empresas/${editId}`, formData);
-      } else {
-        await api.post('/empresas', formData);
-      }
+  const guardar = useMutation({
+    mutationFn: (data) => (editId ? api.put(`/empresas/${editId}`, data) : api.post('/empresas', data)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bo-empresas'] });
       setShowModal(false);
       setEditId(null);
       setFormData({ nombre: '', nit: '', contacto: '', activa: true, modulosIds: [] });
-      fetchEmpresas();
-    } catch (err) { alert('Error al registrar empresa'); }
+    },
+    onError: () => alert('Error al registrar empresa'),
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    guardar.mutate(formData);
   };
 
   return (

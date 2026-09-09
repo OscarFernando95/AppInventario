@@ -36,6 +36,12 @@ COPY .sequelizerc ./
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
+# El proceso corre como el usuario sin privilegios "node" (ya existe en la
+# imagen base), no como root. /app pertenece a node para que npx/sequelize-cli
+# puedan escribir cachés temporales.
+RUN chown -R node:node /app
+USER node
+
 EXPOSE 3000
 
 ENTRYPOINT ["./entrypoint.sh"]

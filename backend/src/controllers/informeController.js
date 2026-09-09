@@ -2,17 +2,14 @@ const { Op } = require('sequelize');
 const { sequelize, Venta, VentaDetalle, Compra, CompraDetalle, Producto, Cliente, Proveedor } = require('../models');
 
 /**
- * Referencia cualificada y entrecomillada a "tabla"."columna", con las comillas
- * propias del dialecto activo. Necesario dentro de sequelize.literal(), donde
- * Sequelize no entrecomilla por nosotros: sin comillas, Postgres pliega los
- * identificadores a minúsculas y pierde el alias de tabla que él mismo genera
- * (p. ej. "VentaDetalle"). Además, 'precio_unitario' existe tanto en
- * ventas_detalles como en productos, así que hay que cualificar sí o sí.
+ * Referencia cualificada y entrecomillada a "tabla"."columna" (comillas de
+ * Postgres). Necesaria dentro de sequelize.literal(), donde Sequelize no
+ * entrecomilla por nosotros: sin comillas, Postgres pliega los identificadores a
+ * minúsculas y pierde el alias de tabla que él mismo genera (p. ej.
+ * "VentaDetalle"). Además 'precio_unitario' existe en ventas_detalles y en
+ * productos, así que hay que cualificar sí o sí.
  */
-const qcol = (table, column) =>
-  sequelize.getDialect() === 'postgres'
-    ? `"${table}"."${column}"`
-    : `\`${table}\`.\`${column}\``;
+const qcol = (table, column) => `"${table}"."${column}"`;
 
 exports.getInforme = async (req, res) => {
   try {

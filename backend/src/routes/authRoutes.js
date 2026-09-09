@@ -9,6 +9,8 @@ const { loginSchema, changePasswordSchema } = require('../schemas/authSchemas');
 
 router.post('/login', loginLimiter, validate({ body: loginSchema }), asyncHandler(authController.login));
 
+router.post('/logout', authController.logout);
+
 router.post(
   '/change-password',
   authenticate,

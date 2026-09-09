@@ -1,46 +1,22 @@
 const { Cliente } = require('../models');
 
 exports.getClientes = async (req, res) => {
-  try {
-    const clientes = await Cliente.findAll({ where: { empresaId: req.empresaId } });
-    res.json(clientes);
-  } catch (error) {
-    res.status(500).json({ error: 'Error al obtener clientes' });
-  }
+  const clientes = await Cliente.findAll({
+    where: { empresaId: req.empresaId },
+    order: [['nombre', 'ASC']],
+  });
+  res.json(clientes);
 };
 
 exports.createCliente = async (req, res) => {
-  try {
-    const { 
-      nombre, documento, email, telefono, direccion,
-      tipo_documento, dv, tipo_persona, regimen_fiscal, municipio_dane, departamento_dane
-    } = req.body;
-    const cliente = await Cliente.create({
-      empresaId: req.empresaId,
-      nombre, documento, email, telefono, direccion,
-      tipo_documento, dv, tipo_persona, regimen_fiscal, municipio_dane, departamento_dane
-    });
-    res.status(201).json(cliente);
-  } catch (error) {
-    res.status(500).json({ error: 'Error al crear cliente' });
-  }
+  const cliente = await Cliente.create({ ...req.body, empresaId: req.empresaId });
+  res.status(201).json(cliente);
 };
 
 exports.updateCliente = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { 
-      nombre, documento, email, telefono, direccion,
-      tipo_documento, dv, tipo_persona, regimen_fiscal, municipio_dane, departamento_dane
-    } = req.body;
-    const cliente = await Cliente.findOne({ where: { id, empresaId: req.empresaId } });
-    if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
-    await cliente.update({ 
-      nombre, documento, email, telefono, direccion,
-      tipo_documento, dv, tipo_persona, regimen_fiscal, municipio_dane, departamento_dane
-    });
-    res.json(cliente);
-  } catch (error) {
-    res.status(500).json({ error: 'Error al actualizar cliente' });
-  }
+  const { id } = req.params;
+  const cliente = await Cliente.findOne({ where: { id, empresaId: req.empresaId } });
+  if (!cliente) return res.status(404).json({ error: 'Cliente no encontrado' });
+  await cliente.update(req.body);
+  res.json(cliente);
 };

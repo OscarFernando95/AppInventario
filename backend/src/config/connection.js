@@ -2,52 +2,47 @@
  * Fuente única de verdad para la configuración de conexión a la base de datos.
  *
  * La consumen:
- *   - src/config/database.js        -> instancia de Sequelize usada por la app
- *   - src/config/sequelize-cli.config.js -> configuración usada por sequelize-cli (migraciones/seeders)
+ *   - src/config/database.js             -> instancia de Sequelize de la app
+ *   - src/config/sequelize-cli.config.js -> config de sequelize-cli (migraciones/seeders)
  *
- * Prioridad de conexión:
- *   1. DATABASE_URL   (formato único, el que entrega Supabase)
- *   2. Variables sueltas DB_HOST / DB_PORT / DB_NAME / DB_USER / DB_PASSWORD  (fallback local)
+ * Motor: PostgreSQL (único soportado).
  *
- * Dialecto:
- *   - DB_DIALECT (default: "postgres"). Poner "mysql" para seguir usando una BD MySQL local.
+ * Conexión:
+ *   1. DATABASE_URL                                   (formato único; Docker, Supabase…)
+ *   2. Variables sueltas DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD  (fallback local)
  *
- * SSL:
- *   - Desactivado por defecto (Docker/Postgres local no lo necesita). Activar con DB_SSL=true
- *     cuando el destino lo exija (p.ej. Supabase).
+ * SSL: desactivado salvo DB_SSL=true (p.ej. Supabase).
  *
- * Límites de tiempo (decisión A - "con un límite de tiempo"):
- *   - DB_ACQUIRE_TIMEOUT_MS   (default 15000) tiempo máx. para obtener una conexión del pool
- *   - DB_STATEMENT_TIMEOUT_MS (default 15000) tiempo máx. de ejecución de una sentencia (solo postgres)
+ * Límites de tiempo:
+ *   - DB_ACQUIRE_TIMEOUT_MS   (default 15000) máx. para obtener conexión del pool
+ *   - DB_STATEMENT_TIMEOUT_MS (default 15000) máx. de ejecución de una sentencia
  */
 
 const { Sequelize } = require('sequelize');
 require('dotenv').config();
 
-const dialect = process.env.DB_DIALECT || 'postgres';
+const DIALECT = 'postgres';
 
 const ACQUIRE_TIMEOUT_MS = Number(process.env.DB_ACQUIRE_TIMEOUT_MS || 15000);
 const STATEMENT_TIMEOUT_MS = Number(process.env.DB_STATEMENT_TIMEOUT_MS || 15000);
 
-// SSL: opcional. Solo se activa si DB_SSL=true (p.ej. Supabase); en Docker/local no aplica.
-const sslEnabled = dialect === 'postgres' && process.env.DB_SSL === 'true';
+const sslEnabled = process.env.DB_SSL === 'true';
 
 function buildDialectOptions() {
-  const opts = {};
+  const opts = {
+    // Corta consultas colgadas y transacciones abiertas indefinidamente.
+    statement_timeout: STATEMENT_TIMEOUT_MS,
+    idle_in_transaction_session_timeout: STATEMENT_TIMEOUT_MS,
+  };
   if (sslEnabled) {
     opts.ssl = { require: true, rejectUnauthorized: false };
-  }
-  if (dialect === 'postgres') {
-    // Corta consultas colgadas y transacciones abiertas indefinidamente.
-    opts.statement_timeout = STATEMENT_TIMEOUT_MS;
-    opts.idle_in_transaction_session_timeout = STATEMENT_TIMEOUT_MS;
   }
   return opts;
 }
 
 function buildCommonOptions() {
   return {
-    dialect,
+    dialect: DIALECT,
     logging: process.env.DB_LOGGING === 'true' ? console.log : false,
     dialectOptions: buildDialectOptions(),
     pool: {
@@ -67,7 +62,7 @@ function looseCredentials() {
     username: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     host: process.env.DB_HOST,
-    port: Number(process.env.DB_PORT) || (dialect === 'postgres' ? 5432 : 3306),
+    port: Number(process.env.DB_PORT) || 5432,
   };
 }
 
@@ -88,7 +83,6 @@ function buildCliConfig() {
     dialectOptions: common.dialectOptions,
     logging: false,
     pool: common.pool,
-    // sequelize-cli necesita saber qué migraciones/seeders ya se aplicaron:
     migrationStorageTableName: 'sequelize_meta',
     seederStorage: 'sequelize',
     seederStorageTableName: 'sequelize_seeders',
@@ -101,4 +95,4 @@ function buildCliConfig() {
   return cfg;
 }
 
-module.exports = { createSequelize, buildCliConfig, dialect, usingUrl };
+module.exports = { createSequelize, buildCliConfig, dialect: DIALECT, usingUrl };

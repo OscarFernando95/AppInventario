@@ -1,24 +1,29 @@
 const { sequelize, Venta, VentaDetalle, Producto, Servicio, Cliente, Usuario, Empresa } = require('../models');
 const { ValidationError } = require('../utils/errors');
-
-const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+const { parseListQuery, setTotalCount } = require('../utils/pagination');
+const { invalidateDashboard } = require('./reporteController');
+const { calcularVenta } = require('../services/calculo');
 
 exports.getVentas = async (req, res) => {
-  try {
-    const ventas = await Venta.findAll({ 
-      where: { empresaId: req.empresaId },
-      include: [
-        { model: Usuario, attributes: ['nombre'] }, 
-        Cliente, 
-        { model: VentaDetalle, include: [Producto, Servicio] },
-        { model: Empresa, attributes: ['nombre', 'nit', 'contacto'] }
-      ],
-      order: [['fecha', 'DESC']]
-    });
-    res.json(ventas);
-  } catch (error) {
-    res.status(500).json({ error: 'Error al obtener ventas' });
-  }
+  const { limit, offset } = parseListQuery(req.query);
+  const where = { empresaId: req.empresaId };
+
+  const total = await Venta.count({ where });
+  const ventas = await Venta.findAll({
+    where,
+    include: [
+      { model: Usuario, attributes: ['nombre'] },
+      Cliente,
+      { model: VentaDetalle, include: [Producto, Servicio] },
+      { model: Empresa, attributes: ['nombre', 'nit', 'contacto'] },
+    ],
+    order: [['fecha', 'DESC']],
+    limit,
+    offset,
+  });
+
+  setTotalCount(res, total);
+  res.json(ventas);
 };
 
 exports.getVentaById = async (req, res) => {
@@ -45,101 +50,66 @@ exports.createVenta = async (req, res) => {
   try {
     const { clienteId, detalles, descuento_global, forma_pago, medio_pago } = req.body;
 
-    if (!Array.isArray(detalles) || detalles.length === 0) {
-      throw new ValidationError('La venta debe incluir al menos un detalle.');
-    }
-
     if (clienteId) {
       const cliente = await Cliente.findOne({ where: { id: clienteId, empresaId: req.empresaId }, transaction: t });
       if (!cliente) throw new ValidationError('Cliente inválido');
     }
 
-    let subtotal_bruto_acumulado = 0;
-    let total_impuestos_acumulado = 0;
-    const detallesProcesados = [];
-
-    for (let item of detalles) {
+    // Valida cada línea contra la BD (tenant + stock), aplica el efecto en stock
+    // y arma la entrada para el cálculo de importes.
+    const lineas = [];
+    for (const item of detalles) {
       const cantidad = Number(item.cantidad);
-      if (!Number.isFinite(cantidad) || cantidad <= 0) {
-        throw new ValidationError('Cantidad inválida en un detalle de la venta.');
-      }
-      let porcentaje_iva = 19;
-      let modelInst = null;
+      let porcentajeIva = 0;
 
       if (item.productoId) {
-        // Lock de fila: evita que dos ventas concurrentes del mismo producto
-        // lean el mismo stock y lo sobrevendan.
-        modelInst = await Producto.findByPk(item.productoId, { transaction: t, lock: t.LOCK.UPDATE });
-        if (!modelInst || modelInst.empresaId != req.empresaId) throw new ValidationError('Producto inválido');
-        if (modelInst.stock_actual < cantidad) throw new ValidationError(`Stock insuficiente: ${modelInst.nombre_producto}`);
-        porcentaje_iva = Number(modelInst.porcentaje_iva || 0);
-
-        await modelInst.update({
-          stock_actual: modelInst.stock_actual - cantidad
-        }, { transaction: t });
-      } else if (item.servicioId) {
-        modelInst = await Servicio.findByPk(item.servicioId, { transaction: t });
-        if (!modelInst || modelInst.empresaId != req.empresaId) throw new ValidationError('Servicio inválido');
-        porcentaje_iva = Number(modelInst.porcentaje_iva || 0);
+        // Lock de fila: dos ventas concurrentes del mismo producto no pueden
+        // leer el mismo stock y sobrevenderlo.
+        const prod = await Producto.findByPk(item.productoId, { transaction: t, lock: t.LOCK.UPDATE });
+        if (!prod || prod.empresaId !== req.empresaId) throw new ValidationError('Producto inválido');
+        if (prod.stock_actual < cantidad) throw new ValidationError(`Stock insuficiente: ${prod.nombre_producto}`);
+        porcentajeIva = Number(prod.porcentaje_iva || 0);
+        await prod.update({ stock_actual: prod.stock_actual - cantidad }, { transaction: t });
       } else {
-        throw new ValidationError('El detalle de venta debe incluir un producto o servicio válido.');
+        const serv = await Servicio.findByPk(item.servicioId, { transaction: t });
+        if (!serv || serv.empresaId !== req.empresaId) throw new ValidationError('Servicio inválido');
+        porcentajeIva = Number(serv.porcentaje_iva || 0);
       }
 
-      // POS: precio_unitario ya incluye IVA.
-      // Base gravable = precio_unitario / (1 + (porcentaje_iva / 100))
-      const divisorIva = 1 + (porcentaje_iva / 100);
-      const precio_unitario_con_iva = Number(item.precio_unitario);
-      if (!Number.isFinite(precio_unitario_con_iva) || precio_unitario_con_iva < 0) {
-        throw new ValidationError('Precio unitario inválido en un detalle de la venta.');
-      }
-      const precio_unitario_sin_iva = precio_unitario_con_iva / divisorIva;
-
-      const subtotal_bruto_linea = precio_unitario_sin_iva * cantidad;
-      const total_linea_con_iva = precio_unitario_con_iva * cantidad;
-      const valor_iva_linea = total_linea_con_iva - subtotal_bruto_linea;
-
-      subtotal_bruto_acumulado += subtotal_bruto_linea;
-      total_impuestos_acumulado += valor_iva_linea;
-
-      detallesProcesados.push({
+      lineas.push({
         productoId: item.productoId || null,
         servicioId: item.servicioId || null,
         cantidad,
-        precio_unitario: precio_unitario_con_iva, // Con IVA
-        precio_base: item.precio_base || precio_unitario_con_iva,
-        porcentaje_iva,
-        valor_iva: valor_iva_linea,
-        subtotal_bruto: subtotal_bruto_linea
+        precioConIva: Number(item.precio_unitario),
+        porcentajeIva,
+        precioBase: item.precio_base,
       });
     }
 
-    // El total lo calcula el servidor a partir de los detalles; NO se confía en
-    // el valor que envía el cliente.
-    const descuento = round2(Math.max(0, Number(descuento_global) || 0));
-    const totalCalculado = round2(subtotal_bruto_acumulado + total_impuestos_acumulado - descuento);
-    if (totalCalculado < 0) throw new ValidationError('El descuento supera el total de la venta.');
+    // Los importes los calcula el servidor; NO se confía en el total del cliente.
+    const calc = calcularVenta(lineas, descuento_global);
+    if (calc.total < 0) throw new ValidationError('El descuento supera el total de la venta.');
 
     const venta = await Venta.create({
       empresaId: req.empresaId,
       usuarioId: req.userId,
       clienteId: clienteId || null,
-      total: totalCalculado,
-      descuento_global: descuento,
+      total: calc.total,
+      descuento_global: calc.descuento_global,
       forma_pago: forma_pago || '1',
       medio_pago: medio_pago || '10',
-      subtotal_bruto: round2(subtotal_bruto_acumulado),
-      total_impuestos: round2(total_impuestos_acumulado),
-      estado_fe: 'NO_EMITIDA'
+      subtotal_bruto: calc.subtotal_bruto,
+      total_impuestos: calc.total_impuestos,
+      estado_fe: 'NO_EMITIDA',
     }, { transaction: t });
 
-    for (let det of detallesProcesados) {
-      await VentaDetalle.create({
-        ventaId: venta.id,
-        ...det
-      }, { transaction: t });
-    }
+    await VentaDetalle.bulkCreate(
+      calc.detalles.map((d) => ({ ...d, ventaId: venta.id })),
+      { transaction: t }
+    );
 
     await t.commit();
+    invalidateDashboard(req.empresaId);
     res.status(201).json(venta);
   } catch (error) {
     await t.rollback();

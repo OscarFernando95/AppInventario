@@ -1,43 +1,29 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { UserPlus, Shield, Mail, Search, Trash2, User } from 'lucide-react';
+import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+
+const EMPTY = { nombre: '', username: '', contrasena: '', rolId: 3 }; // 3 = FRONT_USER
 
 const AdminUsuarios = () => {
-  const [usuarios, setUsuarios] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
-  
-  const [formData, setFormData] = useState({
-    nombre: '',
-    username: '',
-    contrasena: '',
-    rolId: 3 // Asumiendo 3 es FRONT_USER
+  const queryClient = useQueryClient();
+  const [formData, setFormData] = useState(EMPTY);
+
+  const { data: usuarios = [] } = useEmpresaQuery(['usuarios-empresa'], '/usuarios');
+
+  const crear = useMutation({
+    mutationFn: (data) => api.post('/usuarios', data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['empresa'] });
+      setFormData(EMPTY);
+    },
+    onError: () => alert('Error en API al crear usuario. Verifica el backend.'),
   });
 
-  const fetchUsuarios = async () => {
-    try {
-      setIsLoading(true);
-      const res = await api.get('/usuarios');
-      setUsuarios(res.data);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchUsuarios();
-  }, []);
-
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    try {
-      await api.post('/usuarios', formData);
-      setFormData({ nombre: '', username: '', contrasena: '', rolId: 3 });
-      fetchUsuarios();
-    } catch (error) {
-      alert('Error en API al crear usuario. Verifica el backend.');
-    }
+    crear.mutate(formData);
   };
 
   return (

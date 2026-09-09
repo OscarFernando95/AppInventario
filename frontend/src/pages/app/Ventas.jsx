@@ -20,7 +20,6 @@ const Ventas = () => {
   const [viewDetalle, setViewDetalle] = useState(null);
   
   const [formData, setFormData] = useState({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' });
-  const [cartItem, setCartItem] = useState({ tipo: 'P', itemId: '', cantidad: 1, precio_unitario: 0 });
   const [activeDiscountIdx, setActiveDiscountIdx] = useState(null);
   const [globalDiscount, setGlobalDiscount] = useState(0);
   const [newClientData, setNewClientData] = useState({ nombre: '', documento: '', telefono: '', email: '', direccion: '' });
@@ -42,6 +41,7 @@ const Ventas = () => {
     } catch (err) { console.error(err); }
   };
 
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- carga inicial; pendiente migrar a TanStack Query (ver INFORME_REFACTOR Fase 3)
   useEffect(() => { fetchData(); }, []);
 
   // Compute Frequencies to sort components
@@ -87,7 +87,7 @@ const Ventas = () => {
       setShowNewClient(false);
       setNewClientData({ nombre: '', documento: '', telefono: '', email: '', direccion: '' });
       setClientSearch('');
-    } catch (err) { alert('Sucedió un error creando el cliente'); }
+    } catch { alert('Sucedió un error creando el cliente'); }
   };
 
   const addItemToCart = (item, type) => {

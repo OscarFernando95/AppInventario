@@ -386,24 +386,42 @@ Verificado con la pila Docker completa: flujo de cambio de contraseña forzado E
 
 Migración pendiente de aplicar en producción: `docker compose up -d --build` corre `20260906120000-add-must-change-password` automáticamente.
 
-### Fase 2 — Rendimiento y caché (~1 semana)
+### Fase 2 — Rendimiento y caché — ✅ COMPLETADA (2026-09-08)
 
-- [ ] **P1** Migración de índices (FKs + compuestos).
-- [ ] **P2** Caché en memoria del lookup de `verifyToken`.
-- [ ] **P3** Paginación en listados e informes.
-- [ ] **P4** `getUsuarios` filtra en la query.
-- [ ] **C2/C3** Cache headers en el Nginx de entrada y en `express.static`.
-- [ ] **C4** Caché de `dashboard` / `informes` (TTL 60 s por empresa).
-- [ ] **P7** `gzip` en Nginx.
-- [ ] **C5/C6** TanStack Query en el frontend, con `queryKey` incluyendo la empresa activa.
+- [x] **P1** Migración `20260908120000-add-indexes`: 23 índices sobre FKs + compuestos `(empresaId, fecha)` en ventas/compras/pedidos. Verificado en Postgres.
+- [x] **P2** `src/utils/ttlCache.js` + caché de sesión en `authenticate` (`userId → {estado, rolId, tipoRol, empresaIds}`, TTL 30 s, `AUTH_CACHE_TTL_MS`). `usuarioController` llama `invalidateUser()` al editar → un cambio de estado/rol/empresas se refleja al instante.
+- [x] **P3** Paginación en `getVentas`/`getCompras`/`getPedidos`/`getUsuarios`: `?limit=&offset=` + cabecera `X-Total-Count` (expuesta vía CORS). Compatible: sin params devuelve las 200 más recientes (antes: todo). Informes acotados a una ventana máx. de 366 días.
+- [x] **P4** `getUsuarios` filtra por empresa en la query (con `findAndCountAll` + `distinct`), ya no en memoria.
+- [x] **C2/C3** `nginx/nginx.conf`: `Cache-Control: no-store` en `/api/`. `express.static` con `maxAge: '1y', immutable` e `index.html` con `no-cache`.
+- [x] **C4** `/api/reportes/dashboard` cacheado 60 s por empresa (`DASHBOARD_CACHE_TTL_MS`); se invalida al crear venta/compra, recepción de pedido y alta/edición de producto. El dashboard también dejó de usar `EXTRACT()` sobre la columna (ahora rango `[inicioMes, inicioMesSiguiente)` → usa el índice).
+- [x] **P7** `gzip` en `nginx/nginx.conf` (`gzip_proxied any`, JSON/JS/CSS/SVG). Verificado (`Content-Encoding: gzip` en los assets).
+- [x] **C5/C6** TanStack Query en el frontend: `QueryClientProvider` en `main.jsx` (`staleTime` 30 s), hook `useEmpresaQuery` que mete el id de la empresa activa en la `queryKey`. Migradas `DashboardUser` (ahora usa el endpoint agregado y cacheado, 1 petición en vez de 4) e `Inventario` (query + mutation con invalidación). _Pendiente: migrar el resto de páginas al mismo patrón (mecánico)._
 
-### Fase 3 — Calidad y deuda técnica (continuo)
+Extra: `createUsuario` ahora es transaccional (evita usuarios huérfanos si `setEmpresas` falla).
 
-- [ ] **Q4** Capa `services/` para la lógica de negocio.
-- [ ] **Q5** Suite de tests (auth, multi-tenant, cálculo de venta).
-- [ ] **Q6** Limpiar scripts de depuración del repo.
-- [ ] **Q7** Eliminar ramas MySQL y `mysql2`.
-- [ ] **I2/I5/I7** _Hardening_ de contenedores (usuario no-root, límites de recursos, rotación de logs).
+Verificado E2E con la pila Docker: migración de índices aplicada, dashboard renderiza datos reales cacheados (0 errores de consola), navegación entre vistas sin re-fetch, `X-Total-Count`, gzip, cabeceras de caché, ventana de informe.
+
+### Fase 3 — Calidad y deuda técnica — ✅ COMPLETADA (2026-09-08)
+
+- [x] **Q2 (resto)** Esquemas zod + `validate()` en productos, proveedores, clientes, servicios, ventas, compras, pedidos, empresas. Helpers `emailOpc`/`enteroOpc`/`textoOpc` para tolerar los `""` de los formularios. Los esquemas descartan campos desconocidos → protección anti mass-assignment. Controladores de catálogo adelgazados (spread validado, sin `try/catch` propio → `errorHandler`).
+- [x] **S3 (completo)** Token movido a **cookie `httpOnly; SameSite=Strict`** (`cookie-parser`): inaccesible desde JavaScript, inmune a robo por XSS. `POST /api/auth/logout` la limpia. `authenticate` lee cookie o `Bearer` (scripts/tests). Frontend: `withCredentials`, sin token en el store, `logout` async. `SameSite=Strict` cubre CSRF. _Refresh tokens: no incluidos (expiración de 8h + revalidación de `estado` en cada request son suficientes para el despliegue de oficina); documentado como mejora futura si se requiere sesión persistente._
+- [x] **Q4** Capa `src/services/calculo.js`: `calcularVenta` (desglose de IVA POS) y `calcularTotalCompra`, funciones puras. Los controladores de venta/compra/pedido las usan y quedaron más finos.
+- [x] **Q5** Suite **Vitest**: 40 tests (`npm test`) — cálculo de venta/IVA, política de contraseñas + bcrypt 12, paginación, `TtlCache`, y todos los esquemas zod (venta/compra/pedido/informe/producto).
+- [x] **Q6** Eliminados `check-db.js`, `fix-compra.js`, `fix-db.js`, `test-db.js`, `seed-pedido.js`.
+- [x] **Q7** Solo Postgres: `connection.js` sin `DB_DIALECT`, `qcol` sin rama MySQL, `mysql2` desinstalado, `.env.example` limpio.
+- [x] **Lint** ESLint del frontend en **0 errores** (venía de 34): catch sin binding, imports/estado sin usar, `useEffect` reordenados. Los 3 `set-state-in-effect` de las páginas POS quedan con `eslint-disable` puntual + nota (pendiente su migración a TanStack Query).
+- [x] **I2/I5/I7** Backend corre como usuario `node` (no root); `mem_limit` por contenedor (db 512m, backend 384m, nginx/frontend 128m); rotación de logs de Docker (`max-size 10m`, `max-file 3`) vía ancla YAML.
+- [x] **P5** `bulkCreate` de detalles en venta/compra/pedido/recepción.
+- [x] **C5 (parcial)** Migradas a TanStack Query: `DashboardUser`, `Inventario`, `Clientes`, `Proveedores`, `Servicios`, `AdminUsuarios`, `DashboardAdmin`, backoffice `Empresas` y `Usuarios`. _Pendientes: `Ventas`, `Compras`, `Pedidos`, `Informes` (formularios POS complejos; su lectura de listas sigue con `useEffect`)._
+
+Verificado E2E con la pila Docker: cookie httpOnly (login/navegación/reload/logout, invisible a JS), creación de cliente vía formulario migrado con invalidación de caché, validación zod (`""` de formularios, campos desconocidos), recálculo de `total` de venta tras el refactor a servicio, todas las páginas cargan sin errores de consola, 40 tests en verde, contenedor backend como `node`.
+
+### Deuda restante (Fase 4, opcional)
+
+- Migrar `Ventas`/`Compras`/`Pedidos`/`Informes` a TanStack Query.
+- Refresh tokens si se necesita sesión más larga sin re-login.
+- Tests de integración HTTP (supertest contra un Postgres de test).
+- `getVentas` incluye `Empresa` (atributos limitados) — se puede quitar si el frontend no lo usa.
 
 ---
 

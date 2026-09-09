@@ -1,6 +1,8 @@
-const { Usuario, Role, Empresa } = require('../models');
+const { sequelize, Usuario, Role, Empresa } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { hashPassword } = require('../utils/password');
+const { invalidateUser } = require('../middlewares/auth');
+const { parseListQuery, setTotalCount } = require('../utils/pagination');
 
 // Qué tipos de rol puede asignar cada tipo de rol. Un FRONT_ADMIN NUNCA puede
 // crear/promover a BACKOFFICE_ADMIN (evita escalada de privilegios).
@@ -22,25 +24,24 @@ async function assertRolAsignable(tipoRolActor, rolId) {
 }
 
 exports.getUsuarios = async (req, res) => {
-  const include = [
-    { model: Role },
-    { model: Empresa, through: { attributes: [] } },
-  ];
-
-  if (req.tipoRol === 'BACKOFFICE_ADMIN') {
-    const usuarios = await Usuario.findAll({ include, attributes: { exclude: ['contrasena_hash'] } });
-    return res.json(usuarios);
-  }
+  const { limit, offset } = parseListQuery(req.query, { defaultLimit: 100 });
 
   // FRONT_ADMIN: solo usuarios de su empresa activa (filtrado en la query).
-  const usuarios = await Usuario.findAll({
+  const empresaInclude = req.tipoRol === 'BACKOFFICE_ADMIN'
+    ? { model: Empresa, through: { attributes: [] } }
+    : { model: Empresa, through: { attributes: [] }, where: { id: req.empresaId } };
+
+  const { count, rows } = await Usuario.findAndCountAll({
     attributes: { exclude: ['contrasena_hash'] },
-    include: [
-      { model: Role },
-      { model: Empresa, through: { attributes: [] }, where: { id: req.empresaId } },
-    ],
+    include: [{ model: Role }, empresaInclude],
+    order: [['id', 'ASC']],
+    limit,
+    offset,
+    distinct: true,
   });
-  res.json(usuarios);
+
+  setTotalCount(res, count);
+  res.json(rows);
 };
 
 exports.createUsuario = async (req, res) => {
@@ -51,16 +52,19 @@ exports.createUsuario = async (req, res) => {
   const targetEmpresaIds = req.tipoRol === 'FRONT_ADMIN' ? [req.empresaId] : (empresaIds || []);
 
   const hash = await hashPassword(contrasena); // valida la política de complejidad
-  const usuario = await Usuario.create({
-    rolId,
-    nombre,
-    username,
-    contrasena_hash: hash,
-  });
 
-  if (targetEmpresaIds.length > 0) {
-    await usuario.setEmpresas(targetEmpresaIds);
-  }
+  // Transacción: el usuario y su vínculo con las empresas se crean juntos o
+  // no se crea nada (evita usuarios huérfanos si setEmpresas falla).
+  const usuario = await sequelize.transaction(async (t) => {
+    const u = await Usuario.create(
+      { rolId, nombre, username, contrasena_hash: hash },
+      { transaction: t }
+    );
+    if (targetEmpresaIds.length > 0) {
+      await u.setEmpresas(targetEmpresaIds, { transaction: t });
+    }
+    return u;
+  });
 
   const result = await Usuario.findByPk(usuario.id, {
     include: [Role, Empresa],
@@ -104,6 +108,9 @@ exports.updateUsuario = async (req, res) => {
   if (req.tipoRol === 'BACKOFFICE_ADMIN' && empresaIds) {
     await usuarioToUpdate.setEmpresas(empresaIds);
   }
+
+  // Refleja de inmediato el cambio de estado/rol/empresas en las sesiones activas.
+  invalidateUser(usuarioToUpdate.id);
 
   const result = await Usuario.findByPk(usuarioToUpdate.id, {
     include: [Role, Empresa],

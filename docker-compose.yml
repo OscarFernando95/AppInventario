@@ -1,7 +1,17 @@
+# Rotación de logs común: cada contenedor conserva como mucho 3 archivos de 10 MB
+# (evita que el disco del PC servidor se llene con logs de Docker).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 512m
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -20,6 +30,8 @@ services:
     build:
       context: ./backend
     restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 384m
     depends_on:
       db:
         condition: service_healthy
@@ -56,6 +68,8 @@ services:
       args:
         VITE_API_URL: /api
     restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 128m
     # Sin "ports": Nginx hace proxy_pass hacia este contenedor por su puerto 80 interno.
     networks:
       - appnet
@@ -63,6 +77,8 @@ services:
   nginx:
     image: nginx:alpine
     restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 128m
     ports:
       - "80:80"
     volumes:

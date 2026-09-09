@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const reporteController = require('../controllers/reporteController');
 const { verifyToken } = require('../middlewares/auth');
+const asyncHandler = require('../middlewares/asyncHandler');
 
 router.use(verifyToken);
 router.use((req, res, next) => {
@@ -9,6 +10,6 @@ router.use((req, res, next) => {
   next();
 });
 
-router.get('/dashboard', reporteController.getDashboardData);
+router.get('/dashboard', asyncHandler(reporteController.getDashboardData));
 
 module.exports = router;

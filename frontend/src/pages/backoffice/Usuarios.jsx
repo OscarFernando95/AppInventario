@@ -1,14 +1,25 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { UserPlus, User } from 'lucide-react';
 
+const EMPTY = { nombre: '', username: '', contrasena: '', rolId: 2, empresaIds: [] };
+
 const Usuarios = () => {
-  const [usuarios, setUsuarios] = useState([]);
-  const [empresas, setEmpresas] = useState([]);
+  const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [formData, setFormData] = useState({ nombre: '', username: '', contrasena: '', rolId: 2, empresaIds: [] });
+  const [formData, setFormData] = useState(EMPTY);
+
+  const { data: usuarios = [] } = useQuery({
+    queryKey: ['bo-usuarios'],
+    queryFn: async () => (await api.get('/usuarios')).data,
+  });
+  const { data: empresas = [] } = useQuery({
+    queryKey: ['bo-empresas'],
+    queryFn: async () => (await api.get('/empresas')).data,
+  });
 
   const handleToggleEmpresa = (id) => {
     setFormData(prev => ({
@@ -19,38 +30,24 @@ const Usuarios = () => {
     }));
   };
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  const guardar = useMutation({
+    mutationFn: (data) => (editId ? api.put(`/usuarios/${editId}`, data) : api.post('/usuarios', data)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bo-usuarios'] });
+      setShowModal(false);
+      setEditId(null);
+      setFormData(EMPTY);
+    },
+    onError: () => alert('Error al guardar el administrador'),
+  });
 
-  const fetchData = async () => {
-    try {
-      const [resUsers, resEmpresas] = await Promise.all([
-        api.get('/usuarios'),
-        api.get('/empresas')
-      ]);
-      setUsuarios(resUsers.data);
-      setEmpresas(resEmpresas.data);
-    } catch(err){}
-  };
-
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
     if (formData.rolId !== 1 && formData.empresaIds.length === 0) {
       alert('Debe seleccionar al menos una empresa para usuarios inquilinos');
       return;
     }
-    try {
-      if (editId) {
-        await api.put(`/usuarios/${editId}`, formData);
-      } else {
-        await api.post('/usuarios', formData);
-      }
-      setShowModal(false);
-      setEditId(null);
-      setFormData({ nombre: '', username: '', contrasena: '', rolId: 2, empresaIds: [] });
-      fetchData();
-    } catch (err) { alert('Error al crear administrador'); }
+    guardar.mutate(formData);
   };
 
   return (
@@ -60,7 +57,7 @@ const Usuarios = () => {
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">Cuentas de Acceso</h2>
           <p className="text-slate-500 mt-1">Gestión global de credenciales y administradores de inquilinos (Tenants).</p>
         </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setEditId(null); setFormData({ nombre: '', username: '', contrasena: '', rolId: 2, empresaIds: [] }); setShowModal(true); }}>
+        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { setEditId(null); setFormData(EMPTY); setShowModal(true); }}>
           <UserPlus className="w-5 h-5"/> Asignar Administrador
         </button>
       </div>

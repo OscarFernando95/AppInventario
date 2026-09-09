@@ -1,37 +1,34 @@
-import { useState, useEffect } from 'react';
-import api from '../../api/axios';
 import { Boxes, Package, ShoppingCart, TrendingUp, PlusCircle, ArrowRight, ClipboardList } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useNavigate } from 'react-router-dom';
+import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import api from '../../api/axios';
+import { formatCOP } from '../../utils/format';
 
 const DashboardUser = () => {
   const { user, activeEmpresa } = useAuthStore();
   const navigate = useNavigate();
-  const [stats, setStats] = useState({ prod: 0, comp: 0, vent: 0, ordMensuales: 0 });
 
-  useEffect(() => {
-    if(activeEmpresa?.id) {
-      Promise.all([
-        api.get('/productos'),
-        api.get('/compras'),
-        api.get('/ventas'),
-        api.get('/pedidos')
-      ]).then(([resP, resC, resV, resPed]) => {
-        setStats({
-          prod: resP.data.length,
-          comp: resC.data.length,
-          vent: resV.data.reduce((acc, curr) => acc + parseFloat(curr.total), 0).toFixed(2),
-          ordMensuales: resPed.data.length
-        });
-      }).catch(console.error);
-    }
-  }, [activeEmpresa]);
-  
+  // Endpoint agregado y cacheado en el backend (1 consulta en vez de 4).
+  const { data: dash } = useEmpresaQuery(['dashboard'], '/reportes/dashboard');
+
+  // Total de pedidos: solo el contador (cabecera X-Total-Count), sin traer filas.
+  const { data: totalPedidos } = useEmpresaQuery(['pedidos', 'count'], async () => {
+    const res = await api.get('/pedidos', { params: { limit: 1 } });
+    return Number(res.headers['x-total-count'] || 0);
+  });
+
+  const stats = {
+    prod: dash?.totalProductos ?? 0,
+    ventMes: dash?.ventasMes ?? 0,
+    compMes: dash?.comprasMes ?? 0,
+    pedidos: totalPedidos ?? 0,
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        
-        {/* Placeholder UI con Rich Aesthetics */}
+
         <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.03)] hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
           <div className="flex justify-between items-start">
             <div>
@@ -48,19 +45,19 @@ const DashboardUser = () => {
           <div className="flex justify-between items-start">
             <div>
               <p className="text-xs font-bold text-slate-500 mb-1 tracking-wider uppercase">Ventas Mes</p>
-              <h3 className="text-3xl font-extrabold text-slate-800">${stats.vent}</h3>
+              <h3 className="text-3xl font-extrabold text-slate-800">{formatCOP(stats.ventMes)}</h3>
             </div>
             <div className="w-14 h-14 rounded-2xl bg-emerald-50 flex items-center justify-center shadow-inner">
               <TrendingUp className="w-7 h-7 text-emerald-600" />
             </div>
           </div>
         </div>
-        
+
         <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.03)] hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-xs font-bold text-slate-500 mb-1 tracking-wider uppercase">Compras Mes</p>
-              <h3 className="text-3xl font-extrabold text-slate-800">{stats.comp}</h3>
+              <h3 className="text-3xl font-extrabold text-slate-800">{formatCOP(stats.compMes)}</h3>
             </div>
             <div className="w-14 h-14 rounded-2xl bg-blue-50 flex items-center justify-center shadow-inner">
               <Package className="w-7 h-7 text-blue-600" />
@@ -71,8 +68,8 @@ const DashboardUser = () => {
         <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.03)] hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-xs font-bold text-slate-500 mb-1 tracking-wider uppercase">Órdenes</p>
-              <h3 className="text-3xl font-extrabold text-slate-800">{stats.ordMensuales}</h3>
+              <p className="text-xs font-bold text-slate-500 mb-1 tracking-wider uppercase">Pedidos</p>
+              <h3 className="text-3xl font-extrabold text-slate-800">{stats.pedidos}</h3>
             </div>
             <div className="w-14 h-14 rounded-2xl bg-orange-50 flex items-center justify-center shadow-inner">
               <ShoppingCart className="w-7 h-7 text-orange-600" />
@@ -89,7 +86,7 @@ const DashboardUser = () => {
             Bienvenido a tu panel de control {activeEmpresa?.nombre ? `de ${activeEmpresa.nombre}` : ''}. Utiliza los accesos directos a continuación para agilizar tus operaciones diarias o explora el menú lateral para herramientas avanzadas.
           </p>
         </div>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 divide-y md:divide-y-0 md:divide-x divide-slate-100 bg-white">
           <button onClick={() => navigate('/app/ventas')} className="p-8 text-left hover:bg-slate-50 transition-colors group">
             <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><PlusCircle className="w-6 h-6"/></div>
@@ -97,7 +94,7 @@ const DashboardUser = () => {
             <p className="text-sm text-slate-500 mb-4 h-10">Crea una factura POS rápida y descuenta del inventario.</p>
             <span className="text-emerald-600 font-bold text-sm flex items-center gap-1">Iniciar <ArrowRight className="w-4 h-4"/></span>
           </button>
-          
+
           <button onClick={() => navigate('/app/pedidos')} className="p-8 text-left hover:bg-slate-50 transition-colors group">
             <div className="w-12 h-12 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><ClipboardList className="w-6 h-6"/></div>
             <h4 className="font-bold text-slate-800 text-lg mb-1">Nuevo Pedido</h4>

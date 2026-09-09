@@ -1,40 +1,36 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { PackageOpen, Plus, Search } from 'lucide-react';
+import { PackageOpen, Plus, Loader2 } from 'lucide-react';
 import { formatCOP } from '../../utils/format';
+import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+
+const EMPTY_FORM = {
+  codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
+  porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: '',
+};
 
 const Inventario = () => {
-  const [productos, setProductos] = useState([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
-  const [formData, setFormData] = useState({ 
-    codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
-    porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: ''
+  const [formData, setFormData] = useState(EMPTY_FORM);
+
+  const { data: productos = [], isLoading } = useEmpresaQuery(['productos'], '/productos');
+
+  const crearProducto = useMutation({
+    mutationFn: (payload) => api.post('/productos', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['empresa'] });
+      setShowModal(false);
+      setFormData(EMPTY_FORM);
+    },
+    onError: () => alert('Error al crear producto'),
   });
 
-  const fetchProductos = async () => {
-    setIsLoading(true);
-    try {
-      const res = await api.get('/productos');
-      setProductos(res.data);
-    } catch (err) { console.error(err); }
-    setIsLoading(false);
-  };
-
-  useEffect(() => { fetchProductos(); }, []);
-
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e.preventDefault();
-    try {
-      await api.post('/productos', { ...formData, stock_actual: parseInt(formData.stock_actual) || 0 });
-      setShowModal(false);
-      setFormData({ 
-        codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
-        porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: ''
-      });
-      fetchProductos();
-    } catch (err) { alert('Error al crear producto'); }
+    crearProducto.mutate({ ...formData, stock_actual: parseInt(formData.stock_actual, 10) || 0 });
   };
 
   return (
@@ -45,10 +41,7 @@ const Inventario = () => {
           <p className="text-slate-500 mt-1">Administra los productos base. El stock aumenta vía Compras.</p>
         </div>
         <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => {
-          setFormData({ 
-            codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
-            porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: ''
-          });
+          setFormData(EMPTY_FORM);
           setShowModal(true);
         }}>
           <Plus className="w-5 h-5" /> Nuevo Producto
@@ -67,7 +60,13 @@ const Inventario = () => {
               </tr>
             </thead>
             <tbody>
-              {productos.length === 0 ? (
+              {isLoading ? (
+                <tr>
+                  <td colSpan="4" className="text-center py-12 text-slate-400">
+                    <Loader2 className="w-8 h-8 mx-auto animate-spin opacity-40" />
+                  </td>
+                </tr>
+              ) : productos.length === 0 ? (
                 <tr>
                   <td colSpan="4" className="text-center py-12 text-slate-400">
                     <PackageOpen className="w-12 h-12 mx-auto mb-3 opacity-20" />
@@ -107,7 +106,7 @@ const Inventario = () => {
                 <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Precio de Venta ($)</label><input type="number" step="0.01" required className="input-field rounded-xl" placeholder="1500.00" value={formData.precio_unitario || ''} onChange={e => setFormData({...formData, precio_unitario: e.target.value})}/></div>
                 <div><label className="block text-sm font-semibold text-slate-700 mb-1.5">Stock Físico Inicial</label><input type="number" required className="input-field rounded-xl" placeholder="50" value={formData.stock_actual || ''} onChange={e => setFormData({...formData, stock_actual: e.target.value})}/></div>
               </div>
-              
+
               <div className="border-t border-slate-100 pt-3 mt-3">
                 <h4 className="font-bold text-brand-600 text-sm mb-3">Datos DIAN (Facturación Electrónica)</h4>
                 <div className="grid grid-cols-2 gap-4">
@@ -134,7 +133,9 @@ const Inventario = () => {
 
               <div className="flex gap-3 justify-end mt-8 pt-4 border-t border-slate-100">
                 <button type="button" className="btn-secondary rounded-xl" onClick={() => setShowModal(false)}>Cancelar</button>
-                <button type="submit" className="btn-primary rounded-xl px-6">Guardar en Base</button>
+                <button type="submit" disabled={crearProducto.isPending} className="btn-primary rounded-xl px-6 disabled:opacity-50">
+                  {crearProducto.isPending ? 'Guardando…' : 'Guardar en Base'}
+                </button>
               </div>
             </form>
           </div>

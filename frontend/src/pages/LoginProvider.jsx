@@ -21,9 +21,9 @@ const LoginProvider = () => {
 
     try {
       const response = await api.post('/auth/login', { username, contrasena });
-      const { token, usuario } = response.data;
-      
-      login(usuario, token);
+      const { usuario } = response.data;
+
+      login(usuario);
 
       if (usuario.mustChangePassword) {
         navigate('/cambiar-password', { replace: true });

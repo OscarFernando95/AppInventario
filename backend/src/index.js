@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const cookieParser = require('cookie-parser');
 const path = require('path');
 require('dotenv').config();
 const sequelize = require('./config/database');
@@ -36,9 +37,11 @@ const allowedOrigins = (process.env.FRONTEND_URL || '')
 app.use(cors({
   origin: allowedOrigins.length ? allowedOrigins : false,
   credentials: true,
+  exposedHeaders: ['X-Total-Count'],
 }));
 
 app.use(express.json({ limit: '1mb' }));
+app.use(cookieParser());
 
 // Log de acceso HTTP (a stdout — Docker lo captura). Se omite el healthcheck.
 app.use(morgan('combined', { skip: (req) => req.path === '/api/health' }));
@@ -77,12 +80,18 @@ app.use('/api/informes', informeRoutes);
 // Rutas /api desconocidas -> 404 JSON (no el index.html de React).
 app.use('/api', (req, res) => res.status(404).json({ error: 'Recurso no encontrado' }));
 
-// Servir React (Frontend Build)
+// Servir React (Frontend Build). En el despliegue con Docker esto no se usa
+// (Nginx sirve el frontend), pero sí en el modo "el backend sirve el build".
 const frontendDistPath = path.join(__dirname, '../../frontend/dist');
-app.use(express.static(frontendDistPath));
+app.use(express.static(frontendDistPath, {
+  index: false, // el index.html lo sirve el catch-all de abajo, con no-cache
+  maxAge: '1y',
+  immutable: true, // los assets de Vite llevan hash en el nombre
+}));
 
-// Cualquier otra ruta no capturada por /api se redirige al index.html de React
+// Cualquier otra ruta no capturada por /api se redirige al index.html de React.
 app.get('/*splat', (req, res) => {
+  res.set('Cache-Control', 'no-cache');
   res.sendFile(path.join(frontendDistPath, 'index.html'));
 });
 

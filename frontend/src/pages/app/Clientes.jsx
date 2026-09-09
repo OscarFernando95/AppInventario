@@ -1,44 +1,38 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { Users, Plus, Edit, Briefcase, Mail, Phone, MapPin, IdCard } from 'lucide-react';
+import { Users, Plus, Edit, Mail, Phone, MapPin, IdCard } from 'lucide-react';
+import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+
+const EMPTY = {
+  nombre: '', documento: '', email: '', telefono: '', direccion: '',
+  tipo_documento: '13', dv: '', tipo_persona: '2', regimen_fiscal: 'R-99-PN',
+  departamento_dane: '', municipio_dane: '',
+};
 
 const Clientes = () => {
-  const [clientes, setClientes] = useState([]);
+  const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
-  const [formData, setFormData] = useState({ 
-    nombre: '', documento: '', email: '', telefono: '', direccion: '',
-    tipo_documento: '13', dv: '', tipo_persona: '2', regimen_fiscal: 'R-99-PN',
-    departamento_dane: '', municipio_dane: ''
-  });
+  const [formData, setFormData] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
 
-  const fetchClientes = async () => {
-    try {
-      const res = await api.get('/clientes');
-      setClientes(res.data);
-    } catch (err) { console.error(err); }
-  };
+  const { data: clientes = [] } = useEmpresaQuery(['clientes'], '/clientes');
 
-  useEffect(() => { fetchClientes(); }, []);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    try {
-      if (editId) {
-        await api.put(`/clientes/${editId}`, formData);
-      } else {
-        await api.post('/clientes', formData);
-      }
+  const guardar = useMutation({
+    mutationFn: (data) => (editId ? api.put(`/clientes/${editId}`, data) : api.post('/clientes', data)),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['empresa'] });
       setShowModal(false);
       setEditId(null);
-      setFormData({ 
-        nombre: '', documento: '', email: '', telefono: '', direccion: '',
-        tipo_documento: '13', dv: '', tipo_persona: '2', regimen_fiscal: 'R-99-PN',
-        departamento_dane: '', municipio_dane: ''
-      });
-      fetchClientes();
-    } catch (err) { alert('Error al guardar cliente'); }
+      setFormData(EMPTY);
+    },
+    onError: () => alert('Error al guardar cliente'),
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    guardar.mutate(formData);
   };
 
   const startEdit = (c) => {
@@ -58,14 +52,10 @@ const Clientes = () => {
           <h2 className="text-3xl font-black text-slate-800 tracking-tight">Directorio de Clientes</h2>
           <p className="text-slate-500 mt-1">Gestiona tu cartera de clientes recurrentes para agilizar tus ventas</p>
         </div>
-        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => { 
-          setEditId(null); 
-          setFormData({ 
-            nombre: '', documento: '', email: '', telefono: '', direccion: '',
-            tipo_documento: '13', dv: '', tipo_persona: '2', regimen_fiscal: 'R-99-PN',
-            departamento_dane: '', municipio_dane: ''
-          }); 
-          setShowModal(true); 
+        <button className="btn-primary flex items-center gap-2 shadow-sm" onClick={() => {
+          setEditId(null);
+          setFormData(EMPTY);
+          setShowModal(true);
         }}>
           <Plus className="w-5 h-5" /> Nuevo Cliente
         </button>

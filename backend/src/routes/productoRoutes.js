@@ -2,6 +2,10 @@ const express = require('express');
 const router = express.Router();
 const productoController = require('../controllers/productoController');
 const { verifyToken } = require('../middlewares/auth');
+const asyncHandler = require('../middlewares/asyncHandler');
+const validate = require('../middlewares/validate');
+const { idParam } = require('../schemas/common');
+const { producto, productoUpdate } = require('../schemas/catalogoSchemas');
 
 router.use(verifyToken);
 // Solo operan dentro de una empresa
@@ -10,8 +14,8 @@ router.use((req, res, next) => {
   next();
 });
 
-router.get('/', productoController.getProductos);
-router.post('/', productoController.createProducto);
-router.put('/:id', productoController.updateProducto);
+router.get('/', asyncHandler(productoController.getProductos));
+router.post('/', validate({ body: producto }), asyncHandler(productoController.createProducto));
+router.put('/:id', validate({ params: idParam, body: productoUpdate }), asyncHandler(productoController.updateProducto));
 
 module.exports = router;

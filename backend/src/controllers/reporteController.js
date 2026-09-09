@@ -1,64 +1,40 @@
-const { sequelize, Compra, Venta, Producto } = require('../models');
 const { Op } = require('sequelize');
+const { Compra, Venta, Producto } = require('../models');
+const TtlCache = require('../utils/ttlCache');
 
-/**
- * Extrae una parte de una fecha (mes/año) de forma compatible con el dialecto activo.
- *
- * PostgreSQL no tiene las funciones MONTH()/YEAR() de MySQL: usa
- *   EXTRACT(MONTH FROM "columna")  /  EXTRACT(YEAR FROM "columna")
- *
- * Se mantiene la rama MySQL para no romper el entorno local mientras se migra
- * (DB_DIALECT=mysql). En Postgres EXTRACT devuelve numeric; la comparación con
- * un entero funciona sin casteo adicional.
- */
-const datePart = (part, column) => {
-  const p = part.toUpperCase(); // 'MONTH' | 'YEAR'
-  if (sequelize.getDialect() === 'postgres') {
-    return sequelize.fn('EXTRACT', sequelize.literal(`${p} FROM "${column}"`));
-  }
-  return sequelize.fn(p, sequelize.col(column));
-};
+// El dashboard agrega SUM/COUNT sobre ventas y compras; cambia poco entre
+// visitas seguidas. Se cachea 60 s por empresa.
+const dashboardCache = new TtlCache(Number(process.env.DASHBOARD_CACHE_TTL_MS || 60_000));
+
+exports.invalidateDashboard = (empresaId) => dashboardCache.delete(String(empresaId));
 
 exports.getDashboardData = async (req, res) => {
-  try {
-    const totalProductos = await Producto.count({ where: { empresaId: req.empresaId } });
+  const key = String(req.empresaId);
+  const cached = dashboardCache.get(key);
+  if (cached) return res.json(cached);
 
-    const currentDate = new Date();
-    const currentMonth = currentDate.getMonth() + 1; // 1-12
-    const currentYear = currentDate.getFullYear();
+  const where = { empresaId: req.empresaId };
 
-    const ventasMes = await Venta.sum('total', {
-      where: sequelize.and(
-        { empresaId: req.empresaId },
-        sequelize.where(datePart('month', 'fecha'), currentMonth),
-        sequelize.where(datePart('year', 'fecha'), currentYear)
-      )
-    });
+  // Rango del mes actual como intervalo [inicio, inicioMesSiguiente): permite
+  // usar el índice (empresaId, fecha) en vez de EXTRACT() sobre la columna.
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const enMesActual = { fecha: { [Op.gte]: monthStart, [Op.lt]: monthEnd } };
 
-    const comprasMes = await Compra.sum('total', {
-      where: sequelize.and(
-        { empresaId: req.empresaId },
-        sequelize.where(datePart('month', 'fecha'), currentMonth),
-        sequelize.where(datePart('year', 'fecha'), currentYear)
-      )
-    });
+  const [totalProductos, ventasMes, comprasMes, productosBajoStock] = await Promise.all([
+    Producto.count({ where }),
+    Venta.sum('total', { where: { ...where, ...enMesActual } }),
+    Compra.sum('total', { where: { ...where, ...enMesActual } }),
+    Producto.findAll({ where: { ...where, stock_actual: { [Op.lt]: 10 } }, limit: 10 }),
+  ]);
 
-    const productosBajoStock = await Producto.findAll({
-      where: {
-        empresaId: req.empresaId,
-        stock_actual: { [Op.lt]: 10 }
-      },
-      limit: 10
-    });
-
-    res.json({
-      totalProductos,
-      ventasMes: ventasMes || 0,
-      comprasMes: comprasMes || 0,
-      productosBajoStock
-    });
-  } catch (error) {
-    console.error('DASHBOARD ERROR:', error);
-    res.status(500).json({ error: 'Error al generar el dashboard' });
-  }
+  const payload = {
+    totalProductos,
+    ventasMes: ventasMes || 0,
+    comprasMes: comprasMes || 0,
+    productosBajoStock,
+  };
+  dashboardCache.set(key, payload);
+  res.json(payload);
 };

@@ -1,26 +1,29 @@
-import { useState, useEffect } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { Building2, Users } from 'lucide-react';
 
-const DashboardAdmin = () => {
-  const [stats, setStats] = useState({ empresas: 0, usuarios: 0 });
+const useCount = (key, url) =>
+  useQuery({
+    queryKey: [key, 'count'],
+    queryFn: async () => {
+      const res = await api.get(url, { params: { limit: 1 } });
+      return Number(res.headers['x-total-count'] || 0);
+    },
+  });
 
-  useEffect(() => {
-    Promise.all([api.get('/empresas'), api.get('/usuarios')])
-      .then(([resE, resU]) => {
-        setStats({ empresas: resE.data.length, usuarios: resU.data.length });
-      }).catch(console.error);
-  }, []);
+const DashboardAdmin = () => {
+  const { data: empresas = 0 } = useCount('empresas', '/empresas');
+  const { data: usuarios = 0 } = useCount('usuarios', '/usuarios');
 
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        
+
         <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-[0_2px_15px_-3px_rgba(0,0,0,0.03)] hover:shadow-lg transition-all duration-300 transform hover:-translate-y-1">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm font-semibold text-slate-500 mb-1 tracking-wide">EMPRESAS ACTIVAS</p>
-              <h3 className="text-4xl font-extrabold text-slate-800">{stats.empresas}</h3>
+              <h3 className="text-4xl font-extrabold text-slate-800">{empresas}</h3>
             </div>
             <div className="w-14 h-14 rounded-2xl bg-brand-50 flex items-center justify-center shadow-inner">
               <Building2 className="w-7 h-7 text-brand-600" />
@@ -32,7 +35,7 @@ const DashboardAdmin = () => {
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm font-semibold text-slate-500 mb-1 tracking-wide">USUARIOS TOTALES</p>
-              <h3 className="text-4xl font-extrabold text-slate-800">{stats.usuarios}</h3>
+              <h3 className="text-4xl font-extrabold text-slate-800">{usuarios}</h3>
             </div>
             <div className="w-14 h-14 rounded-2xl bg-indigo-50 flex items-center justify-center shadow-inner">
               <Users className="w-7 h-7 text-indigo-600" />
