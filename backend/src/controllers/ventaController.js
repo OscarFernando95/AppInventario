@@ -1,6 +1,8 @@
 const { sequelize, Venta, VentaDetalle, Producto, Servicio, Cliente, Usuario, Empresa } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
+const { buildListWhere } = require('../utils/listFilters');
+const { auditar } = require('../utils/audit');
 const { invalidateDashboard } = require('./reporteController');
 const { invalidateInforme } = require('./informeController');
 const { calcularVenta } = require('../services/calculo');
@@ -12,7 +14,10 @@ const MAX_DESC_LINEA_PCT = Math.min(100, Math.max(0, Number(process.env.VENTA_DE
 
 exports.getVentas = async (req, res) => {
   const { limit, offset } = parseListQuery(req.query);
-  const where = { empresaId: req.empresaId };
+  const where = {
+    empresaId: req.empresaId,
+    ...buildListWhere(req.query, { fecha: 'fecha', igualdad: ['clienteId'] }),
+  };
 
   const total = await Venta.count({ where });
   const ventas = await Venta.findAll({
@@ -130,6 +135,7 @@ exports.createVenta = async (req, res) => {
     await t.commit();
     invalidateDashboard(req.empresaId);
     invalidateInforme(req.empresaId);
+    auditar(req, 'venta_creada', { ventaId: venta.id, total: calc.total, clienteId: venta.clienteId });
     res.status(201).json(venta);
   } catch (error) {
     await t.rollback();

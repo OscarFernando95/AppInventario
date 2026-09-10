@@ -19,6 +19,7 @@ import Compras from './pages/app/Compras';
 import Ventas from './pages/app/Ventas';
 import Pedidos from './pages/app/Pedidos';
 import Informes from './pages/app/Informes';
+import Auditoria from './pages/app/Auditoria';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { isAuthenticated, user } = useAuthStore();
@@ -112,6 +113,7 @@ const App = () => {
           <Route path="pedidos" element={<ModuloRoute modulo="Pedidos"><Pedidos /></ModuloRoute>} />
           <Route path="informes" element={<ModuloRoute modulo="Informes"><Informes /></ModuloRoute>} />
           <Route path="admin" element={<SoloFrontAdmin><AdminUsuarios /></SoloFrontAdmin>} />
+          <Route path="auditoria" element={<SoloFrontAdmin><Auditoria /></SoloFrontAdmin>} />
         </Route>
 
         <Route path="/" element={<Navigate to="/login" replace />} />

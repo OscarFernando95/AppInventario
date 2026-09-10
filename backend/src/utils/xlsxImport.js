@@ -78,6 +78,11 @@ async function leerWorkbook(buffer) {
       if (!(col in indices)) continue;
       const valor = valorCelda(row.getCell(indices[col]));
       if (valor !== '') vacia = false;
+      // Una celda vacía en una columna OPCIONAL se omite (no se manda ''): así
+      // el schema la trata como ausente y la BD aplica su valor por defecto
+      // (p. ej. IVA 19%, unidad "94"). Si se mandara '' , `porcentaje_iva`
+      // quedaría en 0% y `unidad_medida` en cadena vacía.
+      if (valor === '' && !REQUERIDAS.includes(col)) continue;
       obj[col] = valor;
     }
     if (!vacia) filas.push(obj);

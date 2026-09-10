@@ -4,6 +4,7 @@ const { ValidationError } = require('../utils/errors');
 const { invalidateDashboard } = require('./reporteController');
 const { COLUMNAS, normalizarCodigo, leerWorkbook, validarFilas } = require('../utils/xlsxImport');
 const logger = require('../utils/logger');
+const { auditar } = require('../utils/audit');
 
 exports.getProductos = async (req, res) => {
   const productos = await Producto.findAll({
@@ -16,6 +17,7 @@ exports.getProductos = async (req, res) => {
 exports.createProducto = async (req, res) => {
   const producto = await Producto.create({ ...req.body, empresaId: req.empresaId });
   invalidateDashboard(req.empresaId);
+  auditar(req, 'producto_creado', { productoId: producto.id, codigo: producto.codigo });
   res.status(201).json(producto);
 };
 
@@ -27,6 +29,7 @@ exports.updateProducto = async (req, res) => {
   // El stock lo mueven compras/ventas, no esta edición (el esquema lo omite).
   await producto.update(req.body);
   invalidateDashboard(req.empresaId);
+  auditar(req, 'producto_actualizado', { productoId: producto.id, codigo: producto.codigo });
   res.json(producto);
 };
 

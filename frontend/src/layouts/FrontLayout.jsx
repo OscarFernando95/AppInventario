@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useQueryClient } from '@tanstack/react-query';
-import { Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X } from 'lucide-react';
+import { Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText } from 'lucide-react';
 
 const FrontLayout = () => {
   const { user, activeEmpresa, setActiveEmpresa, logout } = useAuthStore();
@@ -54,6 +54,7 @@ const FrontLayout = () => {
 
   if (user?.rol === 'FRONT_ADMIN') {
     menu.push({ name: 'Administración', path: '/app/admin', icon: Settings });
+    menu.push({ name: 'Auditoría', path: '/app/auditoria', icon: ScrollText });
   }
 
   return (

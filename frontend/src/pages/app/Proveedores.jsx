@@ -3,12 +3,15 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { Truck, Plus, Edit, Phone, Mail, UserCircle, MapPin } from 'lucide-react';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import { useTextFilter } from '../../hooks/useTextFilter';
 import DaneLocationFields from '../../components/DaneLocationFields';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
 import PageHeader from '../../components/ui/PageHeader';
 import Modal, { ModalActions } from '../../components/ui/Modal';
 import Field from '../../components/ui/Field';
+import FilterBar from '../../components/ui/FilterBar';
+import SearchInput from '../../components/ui/SearchInput';
 import { GridState } from '../../components/ui/DataState';
 
 const EMPTY = {
@@ -24,6 +27,7 @@ const Proveedores = () => {
   const [formError, setFormError] = useState(null);
 
   const { data: proveedores = [], isLoading, isError, error, refetch } = useEmpresaQuery(['proveedores'], '/proveedores');
+  const { busqueda, setBusqueda, filtrados } = useTextFilter(proveedores, ['nombre', 'nit']);
 
   const guardar = useMutation({
     mutationFn: (data) => (editId ? api.put(`/proveedores/${editId}`, data) : api.post('/proveedores', data)),
@@ -68,6 +72,10 @@ const Proveedores = () => {
         }
       />
 
+      <FilterBar hayFiltros={!!busqueda} onLimpiar={() => setBusqueda('')}>
+        <SearchInput placeholder="Nombre o NIT…" value={busqueda} onChange={setBusqueda} className="w-full sm:w-72" />
+      </FilterBar>
+
       {/* Mismo rol que la grilla de Clientes, así que los mismos breakpoints:
           antes esta iba a 2 columnas en xl y la de clientes en md. */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -76,12 +84,12 @@ const Proveedores = () => {
           isError={isError}
           error={error}
           onRetry={refetch}
-          isEmpty={proveedores.length === 0}
+          isEmpty={filtrados.length === 0}
           emptyIcon={Truck}
-          emptyTitle="Ningún proveedor registrado aún"
-          emptyHint="Crea el primero con «Nuevo Proveedor»."
+          emptyTitle={busqueda ? 'Sin proveedores para esta búsqueda' : 'Ningún proveedor registrado aún'}
+          emptyHint={busqueda ? 'Prueba con otro texto.' : 'Crea el primero con «Nuevo Proveedor».'}
         />
-        {proveedores.map((p) => (
+        {filtrados.map((p) => (
           <div
             key={p.id}
             className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm relative group hover:shadow-md transition-shadow"

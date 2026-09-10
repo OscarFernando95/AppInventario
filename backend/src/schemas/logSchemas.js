@@ -20,6 +20,7 @@ const textoOptFiltro = z.preprocess((v) => (v === '' || v == null ? undefined : 
 const logsQuery = z.object({
   evento: textoOptFiltro,
   nivel: z.preprocess((v) => (v === '' || v == null ? undefined : v), z.enum(NIVELES).optional()),
+  usuarioId: enteroOpc,
   desde: isoDateOpc,
   hasta: isoDateOpc,
   // Se validan aquí para que lleguen coaccionados; el clamping final

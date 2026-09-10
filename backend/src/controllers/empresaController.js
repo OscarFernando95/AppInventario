@@ -1,6 +1,7 @@
 const { Empresa, Modulo } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { invalidateAllProfiles } = require('../middlewares/auth');
+const { auditar } = require('../utils/audit');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 
 /**
@@ -58,6 +59,7 @@ exports.createEmpresa = async (req, res) => {
     await empresa.setModulos(modulosIds);
   }
   const conModulos = await Empresa.findByPk(empresa.id, { include: Modulo });
+  auditar(req, 'empresa_creada', { empresaId: conModulos.id, nombre: conModulos.nombre });
   res.status(201).json(conModulos);
 };
 
@@ -82,5 +84,6 @@ exports.updateEmpresa = async (req, res) => {
   }
 
   const actualizada = await Empresa.findByPk(id, { include: Modulo });
+  auditar(req, 'empresa_actualizada', { empresaId: actualizada.id, nombre: actualizada.nombre });
   res.json(actualizada);
 };

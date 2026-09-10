@@ -2,13 +2,19 @@ const { Op } = require('sequelize');
 const { LogEvento, Usuario, Empresa } = require('../models');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 
-exports.getLogs = async (req, res) => {
-  const { evento, nivel, desde, hasta } = req.query;
+/**
+ * Consulta paginada y filtrable de `logs_eventos`. La usa tanto el backoffice
+ * (todos los eventos de todas las empresas) como la vista de auditoría del
+ * FRONT_ADMIN (acotada a su empresa vía `whereBase`).
+ */
+async function listarEventos(req, res, whereBase = {}) {
+  const { evento, nivel, desde, hasta, usuarioId } = req.query;
   const { limit, offset } = parseListQuery(req.query, { defaultLimit: 50, maxLimit: 200 });
 
-  const where = {};
+  const where = { ...whereBase };
   if (evento) where.evento = evento;
   if (nivel) where.nivel = nivel;
+  if (usuarioId) where.usuarioId = Number(usuarioId);
   if (desde || hasta) {
     where.creado_en = {};
     // Mismo criterio que informeController: rango en hora local del servidor.
@@ -29,4 +35,12 @@ exports.getLogs = async (req, res) => {
 
   setTotalCount(res, count);
   res.json(rows);
-};
+}
+
+// Backoffice: todos los eventos, sin acotar.
+exports.getLogs = (req, res) => listarEventos(req, res, {});
+
+// FRONT_ADMIN: solo los eventos de su empresa activa.
+exports.getAuditoria = (req, res) => listarEventos(req, res, { empresaId: req.empresaId });
+
+exports.listarEventos = listarEventos;

@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import JSZip from 'jszip';
 import api from '../../api/axios';
-import { ShoppingCart, Trash2, Search, CheckCircle, Tag, Users, UserPlus, X, Percent, Eye, Receipt, Box, Briefcase, Minus, Plus, PackageOpen, FileDown } from 'lucide-react';
+import { ShoppingCart, Trash2, Search, CheckCircle, Tag, Users, UserPlus, X, Percent, Eye, Receipt, Box, Briefcase, Minus, Plus, PackageOpen, FileDown, FileArchive } from 'lucide-react';
 import { formatCOP, formatDocumento, formatCantidad } from '../../utils/format';
 import { generateInvoicePDF } from '../../utils/generateInvoicePDF';
 import { useAuthStore } from '../../store/authStore';
@@ -11,22 +12,98 @@ import { apiError } from '../../utils/apiError';
 import PageHeader from '../../components/ui/PageHeader';
 import Modal from '../../components/ui/Modal';
 import Field from '../../components/ui/Field';
+import FilterBar from '../../components/ui/FilterBar';
+import TablePagination from '../../components/ui/TablePagination';
 import { TableCard, THead, Th, Tr, Td } from '../../components/ui/Table';
 import { TableState } from '../../components/ui/DataState';
+
+const LIMIT = 20;
+const MAX_LOTE = 100;
+const FILTROS_VACIOS = { desde: '', hasta: '', clienteId: '' };
 
 const Ventas = () => {
   const { activeEmpresa } = useAuthStore();
   const queryClient = useQueryClient();
   const modulos = activeEmpresa?.modulos || [];
 
+  const [filtros, setFiltros] = useState(FILTROS_VACIOS);
+  const [offset, setOffset] = useState(0);
+  const [seleccionadas, setSeleccionadas] = useState(() => new Set());
+  const [descargaLote, setDescargaLote] = useState(null); // { hechas, total } | { error }
+
+  const hayFiltros = Object.values(filtros).some(Boolean);
+
   const {
-    data: ventas = [], isLoading: cargandoVentas, isError: errorVentas,
+    data: ventasData, isLoading: cargandoVentas, isError: errorVentas,
     error: errVentas, refetch: recargarVentas,
-  } = useEmpresaQuery(['ventas'], '/ventas');
+  } = useEmpresaQuery(['ventas', filtros, offset], async () => {
+    const params = { limit: LIMIT, offset };
+    Object.entries(filtros).forEach(([k, v]) => { if (v) params[k] = v; });
+    const res = await api.get('/ventas', { params });
+    return { rows: res.data, total: Number(res.headers['x-total-count'] || 0) };
+  });
+  const ventas = ventasData?.rows || [];
+  const totalVentas = ventasData?.total || 0;
+
+  // Consulta aparte (no paginada) solo para ordenar los "Top Frecuentes" del POS.
+  const { data: ventasRecientes = [] } = useEmpresaQuery(['ventas', 'recientes'], '/ventas');
+
   const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
   const { data: clientes = [] } = useEmpresaQuery(['clientes'], '/clientes', { enabled: modulos.includes('Clientes') });
   const { data: servicios = [] } = useEmpresaQuery(['servicios'], '/servicios', { enabled: modulos.includes('Servicios') });
   const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
+
+  const actualizarFiltro = (patch) => {
+    setOffset(0);
+    setFiltros((prev) => ({ ...prev, ...patch }));
+  };
+
+  const toggleSeleccion = (id) => {
+    setSeleccionadas((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const toggleSeleccionarPagina = () => {
+    setSeleccionadas((prev) => {
+      const idsPagina = ventas.map((v) => v.id);
+      const todas = idsPagina.every((id) => prev.has(id));
+      const next = new Set(prev);
+      idsPagina.forEach((id) => { if (todas) next.delete(id); else next.add(id); });
+      return next;
+    });
+  };
+
+  const descargarLote = async () => {
+    const ids = [...seleccionadas];
+    if (ids.length === 0) return;
+    if (ids.length > MAX_LOTE) {
+      setDescargaLote({ error: `Máximo ${MAX_LOTE} facturas por lote. Tienes ${ids.length} seleccionadas.` });
+      return;
+    }
+    const zip = new JSZip();
+    try {
+      for (let i = 0; i < ids.length; i++) {
+        setDescargaLote({ hechas: i, total: ids.length });
+        const { data } = await api.get(`/ventas/${ids[i]}`);
+        const { fileName, blob } = generateInvoicePDF(data, data.Empresa || activeEmpresa, { returnBlob: true });
+        zip.file(fileName, blob);
+      }
+      setDescargaLote({ hechas: ids.length, total: ids.length });
+      const contenido = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(contenido);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Facturas_${new Date().toISOString().slice(0, 10)}.zip`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+      setDescargaLote(null);
+      setSeleccionadas(new Set());
+    } catch (err) {
+      setDescargaLote({ error: apiError(err, 'No se pudo generar el ZIP') });
+    }
+  };
 
   const [showModal, setShowModal] = useState(false);
   const [clientSearch, setClientSearch] = useState('');
@@ -34,6 +111,9 @@ const Ventas = () => {
   const [activeTab, setActiveTab] = useState('P'); // 'P' or 'S'
   const [viewDetalle, setViewDetalle] = useState(null);
   const [formError, setFormError] = useState(null);
+  // Venta recién emitida: se muestra un modal de éxito con la opción de
+  // descargar la factura BAJO DEMANDA (antes se descargaba sola al emitir).
+  const [ventaEmitida, setVentaEmitida] = useState(null);
 
   const [formData, setFormData] = useState({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' });
   const [activeDiscountIdx, setActiveDiscountIdx] = useState(null);
@@ -41,10 +121,11 @@ const Ventas = () => {
   const [newClientData, setNewClientData] = useState({ nombre: '', documento: '', telefono: '', email: '', direccion: '' });
   const [showNewClient, setShowNewClient] = useState(false);
 
-  // Compute Frequencies to sort components
+  // Compute Frequencies to sort components (sobre las ventas recientes, no la
+  // página filtrada del listado).
   const freq = useMemo(() => {
     const cFreq = {}; const pFreq = {}; const sFreq = {};
-    ventas.forEach(v => {
+    ventasRecientes.forEach(v => {
       if (v.clienteId) cFreq[v.clienteId] = (cFreq[v.clienteId] || 0) + 1;
       v.VentaDetalles?.forEach(det => {
         if (det.productoId) pFreq[det.productoId] = (pFreq[det.productoId] || 0) + det.cantidad;
@@ -52,7 +133,7 @@ const Ventas = () => {
       });
     });
     return { cFreq, pFreq, sFreq };
-  }, [ventas]);
+  }, [ventasRecientes]);
 
   const topClientes = useMemo(() => {
     return [...clientes].sort((a,b) => (freq.cFreq[b.id] || 0) - (freq.cFreq[a.id] || 0)).slice(0, 5);
@@ -184,7 +265,7 @@ const Ventas = () => {
 
   const emitirVenta = useMutation({
     mutationFn: (payload) => api.post('/ventas', payload),
-    onSuccess: async (res) => {
+    onSuccess: (res) => {
       invalidar();
       setShowModal(false);
       setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' });
@@ -193,10 +274,17 @@ const Ventas = () => {
       setGlobalDiscount(0);
       setActiveDiscountIdx(null);
       setFormError(null);
-      await descargarPDF(res.data.id); // factura automática
+      setShowNewClient(false);
+      setVentaEmitida(res.data); // el usuario decide si descarga la factura
     },
     onError: (err) => setFormError(apiError(err, 'No se pudo facturar la venta')),
   });
+
+  const iniciarNuevaVenta = () => {
+    setVentaEmitida(null);
+    setFormError(null);
+    setShowModal(true);
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -225,14 +313,54 @@ const Ventas = () => {
         title="Registro POS de Ventas"
         description="Caja registradora. Factura rápido filtrando productos o escaneando clientes."
         action={
-          <button className="btn-primary gap-2" onClick={() => { setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' }); setGlobalDiscount(0); setShowNewClient(false); setClientSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); }}>
-            <Tag className="w-5 h-5" aria-hidden="true" /> Iniciar POS (Caja)
-          </button>
+          <div className="flex flex-wrap gap-2">
+            {seleccionadas.size > 0 && (
+              <button className="btn-secondary gap-2" onClick={descargarLote} disabled={!!descargaLote?.total}>
+                <FileArchive className="w-5 h-5" aria-hidden="true" />
+                {descargaLote?.total
+                  ? `Generando ${descargaLote.hechas}/${descargaLote.total}…`
+                  : `Descargar ${seleccionadas.size} factura(s)`}
+              </button>
+            )}
+            <button className="btn-primary gap-2" onClick={() => { setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' }); setGlobalDiscount(0); setShowNewClient(false); setClientSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); }}>
+              <Tag className="w-5 h-5" aria-hidden="true" /> Iniciar POS (Caja)
+            </button>
+          </div>
         }
       />
 
+      {descargaLote?.error && (
+        <FormError message={descargaLote.error} onDismiss={() => setDescargaLote(null)} />
+      )}
+
+      <FilterBar hayFiltros={hayFiltros} onLimpiar={() => actualizarFiltro(FILTROS_VACIOS)}>
+        <Field label="Desde" className="w-full sm:w-44">
+          <input type="date" className="input-field" value={filtros.desde} onChange={(e) => actualizarFiltro({ desde: e.target.value })} />
+        </Field>
+        <Field label="Hasta" className="w-full sm:w-44">
+          <input type="date" className="input-field" value={filtros.hasta} onChange={(e) => actualizarFiltro({ hasta: e.target.value })} />
+        </Field>
+        {modulos.includes('Clientes') && (
+          <Field label="Cliente" className="w-full sm:w-56">
+            <select className="input-field" value={filtros.clienteId} onChange={(e) => actualizarFiltro({ clienteId: e.target.value })}>
+              <option value="">Todos</option>
+              {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+          </Field>
+        )}
+      </FilterBar>
+
       <TableCard>
         <THead>
+          <Th align="center" className="w-10">
+            <input
+              type="checkbox"
+              aria-label="Seleccionar todas las de esta página"
+              className="w-4 h-4 rounded border-slate-300 text-brand-700 focus:ring-brand-600"
+              checked={ventas.length > 0 && ventas.every((v) => seleccionadas.has(v.id))}
+              onChange={toggleSeleccionarPagina}
+            />
+          </Th>
           <Th>Ref Caja</Th>
           <Th>Identificación Cliente</Th>
           <Th align="center">Items (Qty)</Th>
@@ -242,18 +370,27 @@ const Ventas = () => {
         </THead>
         <tbody>
           <TableState
-            colSpan={6}
+            colSpan={7}
             isLoading={cargandoVentas}
             isError={errorVentas}
             error={errVentas}
             onRetry={recargarVentas}
             isEmpty={ventas.length === 0}
             emptyIcon={Receipt}
-            emptyTitle="Sin transacciones en caja"
-            emptyHint="Abre la caja con «Iniciar POS»."
+            emptyTitle={hayFiltros ? 'Sin facturas para estos filtros' : 'Sin transacciones en caja'}
+            emptyHint={hayFiltros ? 'Ajusta el rango de fechas o el cliente.' : 'Abre la caja con «Iniciar POS».'}
           />
           {ventas.map(v => (
             <Tr key={v.id}>
+              <Td align="center">
+                <input
+                  type="checkbox"
+                  aria-label={`Seleccionar factura ${v.id}`}
+                  className="w-4 h-4 rounded border-slate-300 text-brand-700 focus:ring-brand-600"
+                  checked={seleccionadas.has(v.id)}
+                  onChange={() => toggleSeleccion(v.id)}
+                />
+              </Td>
               <Td className="font-mono text-xs text-slate-600 whitespace-nowrap">#FACT-{v.id.toString().padStart(4, '0')}</Td>
               <Td className="font-medium text-slate-800">
                 <div className="flex items-center gap-2">
@@ -273,6 +410,8 @@ const Ventas = () => {
           ))}
         </tbody>
       </TableCard>
+
+      <TablePagination total={totalVentas} offset={offset} limit={LIMIT} onChange={setOffset} />
 
       <Modal open={showModal} onClose={() => setShowModal(false)} variant="bare" title="Terminal de venta">
         <div className="xl:p-4">
@@ -576,6 +715,38 @@ const Ventas = () => {
                   <FileDown className="w-5 h-5" /> Descargar Factura PDF
                 </button>
               </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {ventaEmitida && (
+        <Modal open onClose={() => setVentaEmitida(null)} title="Factura emitida" size="md">
+          <div className="space-y-4">
+            <FormError message={formError} onDismiss={() => setFormError(null)} />
+            <div className="flex items-center gap-3 rounded-xl bg-emerald-50 border border-emerald-200 p-4">
+              <CheckCircle className="w-8 h-8 text-emerald-700 shrink-0" aria-hidden="true" />
+              <div>
+                <p className="font-semibold text-emerald-800">
+                  Factura #FACT-{ventaEmitida.id.toString().padStart(4, '0')} registrada
+                </p>
+                <p className="text-sm text-emerald-700">Total {formatCOP(ventaEmitida.total)}</p>
+              </div>
+            </div>
+            <p className="text-sm text-slate-500">
+              La factura ya quedó guardada. Descárgala si la necesitas ahora, o hazlo después desde el detalle de la venta.
+            </p>
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-3 pt-2">
+              <button type="button" className="btn-secondary" onClick={iniciarNuevaVenta}>
+                Nueva venta
+              </button>
+              <button
+                type="button"
+                className="btn-primary gap-2"
+                onClick={() => descargarPDF(ventaEmitida.id)}
+              >
+                <FileDown className="w-4 h-4" aria-hidden="true" /> Descargar factura PDF
+              </button>
             </div>
           </div>
         </Modal>

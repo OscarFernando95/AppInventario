@@ -120,7 +120,7 @@ const BackOfficeLayout = () => {
               {location.pathname === '/backoffice' ? 'Dashboard' : location.pathname.split('/').pop()}
             </h2>
           </div>
-          <div className="text-sm font-medium text-slate-500">v1.0.0</div>
+          <div className="text-sm font-medium text-slate-500">v2.0.0</div>
         </header>
         <div className="flex-1 overflow-auto p-4 sm:p-6 lg:p-8 bg-slate-50 relative">
           <div className="max-w-7xl mx-auto">

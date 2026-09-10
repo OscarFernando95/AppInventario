@@ -210,6 +210,24 @@ describe('N3 — gating por módulo', () => {
   });
 });
 
+describe('GET /api/productos/plantilla — descarga sin header de empresa', () => {
+  it('un FRONT_ADMIN la descarga solo con la sesión (el <a href> no manda X-Empresa-Id)', async () => {
+    const res = await agent.get('/api/productos/plantilla');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/spreadsheetml/);
+  });
+
+  it('sigue exigiendo sesión', async () => {
+    const res = await request(app).get('/api/productos/plantilla');
+    expect(res.status).toBe(401);
+  });
+
+  it('el resto de /api/productos sí exige empresa activa', async () => {
+    const res = await agent.get('/api/productos');
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('N9 — un FRONT_USER no puede gestionar usuarios', () => {
   it('403 en /api/usuarios para FRONT_USER', async () => {
     const op = await models.Usuario.create({
@@ -295,6 +313,49 @@ describe('N10 — recepción de pedido enlaza la compra y valida los productos',
     expect(ok.status).toBe(200);
     const compra = await models.Compra.findByPk(ok.body.compraId);
     expect(compra.pedidoId).toBe(ped.body.id);
+  });
+});
+
+describe('Recepción parcial de pedidos', () => {
+  it('recibir menos de lo pedido deja el pedido PARCIAL y acumula al completarlo', async () => {
+    const ped = await conEmpresa(agent.post('/api/pedidos')).send({
+      proveedorId: ctx.proveedor.id,
+      detalles: [{ productoId: ctx.producto.id, cantidad_pedida: 10, costo_estimado: 500 }],
+    });
+    expect(ped.status).toBe(201);
+    const stockAntes = Number((await models.Producto.findByPk(ctx.producto.id)).stock_actual);
+
+    const parcial = await conEmpresa(agent.post(`/api/pedidos/${ped.body.id}/checkin`)).send({
+      detalles_recibidos: [{ productoId: ctx.producto.id, cantidad: 4, costo_unitario: 500 }],
+    });
+    expect(parcial.status).toBe(200);
+    expect(parcial.body.estado).toBe('PARCIAL');
+    expect(Number((await models.Producto.findByPk(ctx.producto.id)).stock_actual)).toBe(stockAntes + 4);
+
+    const resto = await conEmpresa(agent.post(`/api/pedidos/${ped.body.id}/checkin`)).send({
+      detalles_recibidos: [{ productoId: ctx.producto.id, cantidad: 6, costo_unitario: 500 }],
+    });
+    expect(resto.status).toBe(200);
+    expect(resto.body.estado).toBe('COMPLETADO');
+    expect(Number((await models.Producto.findByPk(ctx.producto.id)).stock_actual)).toBe(stockAntes + 10);
+
+    const detalle = await models.PedidoDetalle.findOne({ where: { pedidoId: ped.body.id } });
+    expect(Number(detalle.cantidad_recibida)).toBe(10);
+  });
+});
+
+describe('Filtros de listado (ventas / compras / pedidos)', () => {
+  it('GET /api/compras y /api/pedidos aceptan filtros sin romper', async () => {
+    const compras = await conEmpresa(agent.get('/api/compras')).query({ desde: '2020-01-01', hasta: '2030-12-31' });
+    expect(compras.status).toBe(200);
+    expect(Array.isArray(compras.body)).toBe(true);
+
+    const pedidos = await conEmpresa(agent.get('/api/pedidos')).query({ estado: 'PENDIENTE' });
+    expect(pedidos.status).toBe(200);
+    expect(pedidos.body.every((p) => p.estado === 'PENDIENTE')).toBe(true);
+
+    const ventas = await conEmpresa(agent.get('/api/ventas')).query({ clienteId: ctx.cliente.id });
+    expect(ventas.status).toBe(200);
   });
 });
 

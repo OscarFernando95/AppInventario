@@ -10,20 +10,43 @@ import { apiError } from '../../utils/apiError';
 import PageHeader from '../../components/ui/PageHeader';
 import Modal from '../../components/ui/Modal';
 import Field from '../../components/ui/Field';
+import FilterBar from '../../components/ui/FilterBar';
+import TablePagination from '../../components/ui/TablePagination';
 import { TableCard, THead, Th, Tr, Td } from '../../components/ui/Table';
 import { TableState } from '../../components/ui/DataState';
+
+const LIMIT = 20;
+const FILTROS_VACIOS = { desde: '', hasta: '', proveedorId: '' };
 
 const Compras = () => {
   const queryClient = useQueryClient();
   const modulos = useAuthStore((s) => s.activeEmpresa?.modulos) || [];
 
+  const [filtros, setFiltros] = useState(FILTROS_VACIOS);
+  const [offset, setOffset] = useState(0);
+  const hayFiltros = Object.values(filtros).some(Boolean);
+
   const {
-    data: compras = [], isLoading: cargandoCompras, isError: errorCompras,
+    data: comprasData, isLoading: cargandoCompras, isError: errorCompras,
     error: errCompras, refetch: recargarCompras,
-  } = useEmpresaQuery(['compras'], '/compras');
+  } = useEmpresaQuery(['compras', filtros, offset], async () => {
+    const params = { limit: LIMIT, offset };
+    Object.entries(filtros).forEach(([k, v]) => { if (v) params[k] = v; });
+    const res = await api.get('/compras', { params });
+    return { rows: res.data, total: Number(res.headers['x-total-count'] || 0) };
+  });
+  const compras = comprasData?.rows || [];
+  const totalCompras = comprasData?.total || 0;
+
+  const { data: comprasRecientes = [] } = useEmpresaQuery(['compras', 'recientes'], '/compras');
   const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
   const { data: proveedores = [] } = useEmpresaQuery(['proveedores'], '/proveedores', { enabled: modulos.includes('Proveedores') });
   const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
+
+  const actualizarFiltro = (patch) => {
+    setOffset(0);
+    setFiltros((prev) => ({ ...prev, ...patch }));
+  };
 
   const [showModal, setShowModal] = useState(false);
   const [viewDetalle, setViewDetalle] = useState(null);
@@ -42,14 +65,14 @@ const Compras = () => {
 
   const freq = useMemo(() => {
     const pFreq = {}; const prodFreq = {};
-    compras.forEach(c => {
+    comprasRecientes.forEach(c => {
       if (c.proveedorId) pFreq[c.proveedorId] = (pFreq[c.proveedorId] || 0) + 1;
       c.CompraDetalles?.forEach(d => {
         if (d.productoId) prodFreq[d.productoId] = (prodFreq[d.productoId] || 0) + 1;
       });
     });
     return { pFreq, prodFreq };
-  }, [compras]);
+  }, [comprasRecientes]);
 
   const topProveedores = useMemo(() => {
     return [...proveedores].filter(p => freq.pFreq[p.id]).sort((a,b) => freq.pFreq[b.id] - freq.pFreq[a.id]).slice(0, 5);
@@ -193,6 +216,23 @@ const Compras = () => {
         }
       />
 
+      <FilterBar hayFiltros={hayFiltros} onLimpiar={() => actualizarFiltro(FILTROS_VACIOS)}>
+        <Field label="Desde" className="w-full sm:w-44">
+          <input type="date" className="input-field" value={filtros.desde} onChange={(e) => actualizarFiltro({ desde: e.target.value })} />
+        </Field>
+        <Field label="Hasta" className="w-full sm:w-44">
+          <input type="date" className="input-field" value={filtros.hasta} onChange={(e) => actualizarFiltro({ hasta: e.target.value })} />
+        </Field>
+        {modulos.includes('Proveedores') && (
+          <Field label="Proveedor" className="w-full sm:w-56">
+            <select className="input-field" value={filtros.proveedorId} onChange={(e) => actualizarFiltro({ proveedorId: e.target.value })}>
+              <option value="">Todos</option>
+              {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </Field>
+        )}
+      </FilterBar>
+
       <TableCard>
         <THead>
           <Th>Referencia</Th>
@@ -211,8 +251,8 @@ const Compras = () => {
             onRetry={recargarCompras}
             isEmpty={compras.length === 0}
             emptyIcon={Truck}
-            emptyTitle="Sin transacciones registradas"
-            emptyHint="Registra la primera con «Iniciar Compra»."
+            emptyTitle={hayFiltros ? 'Sin compras para estos filtros' : 'Sin transacciones registradas'}
+            emptyHint={hayFiltros ? 'Ajusta el rango de fechas o el proveedor.' : 'Registra la primera con «Iniciar Compra».'}
           />
           {compras.map(c => (
             <Tr key={c.id}>
@@ -235,6 +275,8 @@ const Compras = () => {
           ))}
         </tbody>
       </TableCard>
+
+      <TablePagination total={totalCompras} offset={offset} limit={LIMIT} onChange={setOffset} />
 
       <Modal open={showModal} onClose={() => setShowModal(false)} variant="bare" title="Registro de compra">
         <div className="xl:p-4">

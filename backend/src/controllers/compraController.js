@@ -1,13 +1,18 @@
 const { sequelize, Compra, CompraDetalle, Producto, Proveedor, Usuario } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
+const { buildListWhere } = require('../utils/listFilters');
 const { invalidateDashboard } = require('./reporteController');
 const { invalidateInforme } = require('./informeController');
 const { calcularTotalCompra } = require('../services/calculo');
+const { auditar } = require('../utils/audit');
 
 exports.getCompras = async (req, res) => {
   const { limit, offset } = parseListQuery(req.query);
-  const where = { empresaId: req.empresaId };
+  const where = {
+    empresaId: req.empresaId,
+    ...buildListWhere(req.query, { fecha: 'fecha', igualdad: ['proveedorId'] }),
+  };
 
   const total = await Compra.count({ where });
   const compras = await Compra.findAll({
@@ -83,6 +88,7 @@ exports.createCompra = async (req, res) => {
     await t.commit();
     invalidateDashboard(req.empresaId);
     invalidateInforme(req.empresaId);
+    auditar(req, 'compra_creada', { compraId: compra.id, total, proveedorId: compra.proveedorId });
     res.status(201).json(compra);
   } catch (error) {
     await t.rollback();

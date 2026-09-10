@@ -3,6 +3,7 @@ const { ValidationError, ForbiddenError } = require('../utils/errors');
 const { hashPassword } = require('../utils/password');
 const { invalidateUser } = require('../middlewares/auth');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
+const { auditar } = require('../utils/audit');
 
 // Qué tipos de rol puede asignar cada tipo de rol. Un FRONT_ADMIN NUNCA puede
 // crear/promover a BACKOFFICE_ADMIN (evita escalada de privilegios).
@@ -70,6 +71,7 @@ exports.createUsuario = async (req, res) => {
     include: [Role, Empresa],
     attributes: { exclude: ['contrasena_hash'] },
   });
+  auditar(req, 'usuario_creado', { usuarioId: result.id, username: result.username });
   res.status(201).json(result);
 };
 
@@ -116,5 +118,6 @@ exports.updateUsuario = async (req, res) => {
     include: [Role, Empresa],
     attributes: { exclude: ['contrasena_hash'] },
   });
+  auditar(req, 'usuario_actualizado', { usuarioId: result.id, username: result.username });
   res.json(result);
 };

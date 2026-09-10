@@ -10,20 +10,50 @@ import { apiError } from '../../utils/apiError';
 import PageHeader from '../../components/ui/PageHeader';
 import Modal from '../../components/ui/Modal';
 import Field from '../../components/ui/Field';
+import FilterBar from '../../components/ui/FilterBar';
+import TablePagination from '../../components/ui/TablePagination';
 import { TableCard, THead, Th, Tr, Td } from '../../components/ui/Table';
 import { TableState } from '../../components/ui/DataState';
+
+const LIMIT = 20;
+const FILTROS_VACIOS = { desde: '', hasta: '', proveedorId: '', estado: '' };
+
+const ESTADO_TONE = {
+  PENDIENTE: 'bg-amber-100 text-amber-800',
+  PARCIAL: 'bg-sky-100 text-sky-800',
+  COMPLETADO: 'bg-emerald-100 text-emerald-800',
+  CANCELADO: 'bg-red-100 text-red-800',
+};
 
 const Pedidos = () => {
   const queryClient = useQueryClient();
   const modulos = useAuthStore((s) => s.activeEmpresa?.modulos) || [];
 
+  const [filtros, setFiltros] = useState(FILTROS_VACIOS);
+  const [offset, setOffset] = useState(0);
+  const hayFiltros = Object.values(filtros).some(Boolean);
+
   const {
-    data: pedidos = [], isLoading: cargandoPedidos, isError: errorPedidos,
+    data: pedidosData, isLoading: cargandoPedidos, isError: errorPedidos,
     error: errPedidos, refetch: recargarPedidos,
-  } = useEmpresaQuery(['pedidos'], '/pedidos');
+  } = useEmpresaQuery(['pedidos', filtros, offset], async () => {
+    const params = { limit: LIMIT, offset };
+    Object.entries(filtros).forEach(([k, v]) => { if (v) params[k] = v; });
+    const res = await api.get('/pedidos', { params });
+    return { rows: res.data, total: Number(res.headers['x-total-count'] || 0) };
+  });
+  const pedidos = pedidosData?.rows || [];
+  const totalPedidos = pedidosData?.total || 0;
+
+  const { data: pedidosRecientes = [] } = useEmpresaQuery(['pedidos', 'recientes'], '/pedidos');
   const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
   const { data: proveedores = [] } = useEmpresaQuery(['proveedores'], '/proveedores', { enabled: modulos.includes('Proveedores') });
   const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
+
+  const actualizarFiltro = (patch) => {
+    setOffset(0);
+    setFiltros((prev) => ({ ...prev, ...patch }));
+  };
 
   const [showModal, setShowModal] = useState(false); // Modal para Crear Pedido
   const [viewDetalle, setViewDetalle] = useState(null); // Modal Ver PDF / Completado
@@ -41,17 +71,17 @@ const Pedidos = () => {
 
   const [checkInDetalles, setCheckInDetalles] = useState([]);
 
-  // Compute Frequencies
+  // Compute Frequencies (sobre pedidos recientes, no la página filtrada).
   const freq = useMemo(() => {
     const provFreq = {}; const prodFreq = {};
-    pedidos.forEach(p => {
+    pedidosRecientes.forEach(p => {
       if (p.proveedorId) provFreq[p.proveedorId] = (provFreq[p.proveedorId] || 0) + 1;
       p.PedidoDetalles?.forEach(det => {
         if (det.productoId) prodFreq[det.productoId] = (prodFreq[det.productoId] || 0) + det.cantidad_pedida;
       });
     });
     return { provFreq, prodFreq };
-  }, [pedidos]);
+  }, [pedidosRecientes]);
 
   const topProveedores = useMemo(() => {
     return [...proveedores].sort((a,b) => (freq.provFreq[b.id] || 0) - (freq.provFreq[a.id] || 0)).slice(0, 5);
@@ -161,14 +191,21 @@ const Pedidos = () => {
   // CHECK IN LOGIC
   const openCheckIn = (pedido) => {
     setFormError(null);
-    setCheckInDetalles(pedido.PedidoDetalles.map(d => ({
-      id: d.id,
-      productoId: d.productoId,
-      nombre: d.Producto?.nombre_producto,
-      cantidad_pedida: d.cantidad_pedida,
-      cantidad_llegada: d.cantidad_pedida,
-      costo_estimado: d.costo_estimado
-    })));
+    setCheckInDetalles(pedido.PedidoDetalles.map(d => {
+      const pedida = Number(d.cantidad_pedida);
+      const recibida = Number(d.cantidad_recibida || 0);
+      const pendiente = Math.max(0, pedida - recibida);
+      return {
+        id: d.id,
+        productoId: d.productoId,
+        nombre: d.Producto?.nombre_producto,
+        cantidad_pedida: pedida,
+        cantidad_ya_recibida: recibida,
+        cantidad_pendiente: pendiente,
+        cantidad_llegada: pendiente, // por defecto, recibir lo que falta
+        costo_estimado: d.costo_estimado,
+      };
+    }));
     setCheckInPedido(pedido);
   };
 
@@ -212,6 +249,32 @@ const Pedidos = () => {
         }
       />
 
+      <FilterBar hayFiltros={hayFiltros} onLimpiar={() => actualizarFiltro(FILTROS_VACIOS)}>
+        <Field label="Estado" className="w-full sm:w-44">
+          <select className="input-field" value={filtros.estado} onChange={(e) => actualizarFiltro({ estado: e.target.value })}>
+            <option value="">Todos</option>
+            <option value="PENDIENTE">Pendiente</option>
+            <option value="PARCIAL">Parcial</option>
+            <option value="COMPLETADO">Completado</option>
+            <option value="CANCELADO">Cancelado</option>
+          </select>
+        </Field>
+        <Field label="Desde" className="w-full sm:w-44">
+          <input type="date" className="input-field" value={filtros.desde} onChange={(e) => actualizarFiltro({ desde: e.target.value })} />
+        </Field>
+        <Field label="Hasta" className="w-full sm:w-44">
+          <input type="date" className="input-field" value={filtros.hasta} onChange={(e) => actualizarFiltro({ hasta: e.target.value })} />
+        </Field>
+        {modulos.includes('Proveedores') && (
+          <Field label="Proveedor" className="w-full sm:w-56">
+            <select className="input-field" value={filtros.proveedorId} onChange={(e) => actualizarFiltro({ proveedorId: e.target.value })}>
+              <option value="">Todos</option>
+              {proveedores.map((p) => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+            </select>
+          </Field>
+        )}
+      </FilterBar>
+
       <TableCard>
         <THead>
           <Th>Orden #</Th>
@@ -229,8 +292,8 @@ const Pedidos = () => {
             onRetry={recargarPedidos}
             isEmpty={pedidos.length === 0}
             emptyIcon={FileText}
-            emptyTitle="Sin órdenes registradas"
-            emptyHint="Crea la primera con «Nueva Orden»."
+            emptyTitle={hayFiltros ? 'Sin órdenes para estos filtros' : 'Sin órdenes registradas'}
+            emptyHint={hayFiltros ? 'Ajusta los filtros.' : 'Crea la primera con «Nueva Orden».'}
           />
           {pedidos.map(p => (
             <Tr key={p.id}>
@@ -243,7 +306,7 @@ const Pedidos = () => {
               </Td>
               <Td>
                 <div className="text-slate-500 mb-1 whitespace-nowrap">{new Date(p.fecha_pedido).toLocaleDateString()}</div>
-                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold tracking-wide uppercase ${p.estado === 'PENDIENTE' ? 'bg-amber-100 text-amber-800' : p.estado === 'COMPLETADO' ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold tracking-wide uppercase ${ESTADO_TONE[p.estado] || 'bg-slate-100 text-slate-700'}`}>
                   {p.estado}
                 </span>
               </Td>
@@ -253,9 +316,13 @@ const Pedidos = () => {
                   <button onClick={() => setViewDetalle(p)} className="btn-icon" aria-label={`Ver e imprimir la orden ${p.id}`}>
                     <Printer className="w-5 h-5"/>
                   </button>
-                  {p.estado === 'PENDIENTE' && (
-                    <button onClick={() => openCheckIn(p)} className="btn-icon hover:text-emerald-700 hover:bg-emerald-50" aria-label={`Registrar recepción de la orden ${p.id}`}>
-                      <Download className="w-5 h-5"/>
+                  {(p.estado === 'PENDIENTE' || p.estado === 'PARCIAL') && (
+                    <button
+                      onClick={() => openCheckIn(p)}
+                      className="btn-secondary gap-1.5 text-sm py-1.5 px-3 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200"
+                    >
+                      <Download className="w-4 h-4" aria-hidden="true" />
+                      {p.estado === 'PARCIAL' ? 'Recibir resto' : 'Recibir'}
                     </button>
                   )}
                 </div>
@@ -264,6 +331,8 @@ const Pedidos = () => {
           ))}
         </tbody>
       </TableCard>
+
+      <TablePagination total={totalPedidos} offset={offset} limit={LIMIT} onChange={setOffset} />
 
       {/* Modal CREAR PEDIDO */}
       <Modal open={showModal} onClose={() => setShowModal(false)} variant="bare" title="Nueva orden de compra">
@@ -420,39 +489,50 @@ const Pedidos = () => {
             </div>
             
             <div className="p-8">
-               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 flex justify-between">
-                  <p className="font-bold text-slate-600">Confirma la cantidad recibida de cada ítem.</p>
-                  <p className="text-sm text-slate-500 max-w-sm text-right">Si algo no llegó, pon 0. Modificar cantidades aquí las inyectará de forma certera al inventario y cerrará esta orden para siempre.</p>
+               <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6">
+                  <p className="font-bold text-slate-600">Confirma cuánto llegó de cada ítem en esta entrega.</p>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Lo recibido se suma al inventario. Si no llega todo, el pedido queda <strong>PARCIAL</strong> y puedes completarlo en otra entrega.
+                  </p>
                </div>
-               
-               <table className="w-full text-left mb-6">
-                  <thead className="border-b-2 border-slate-200">
-                      <tr>
-                        <th className="py-3 text-sm text-slate-500 uppercase">Producto</th>
-                        <th className="py-3 text-sm text-slate-500 uppercase text-center">Esperado</th>
-                        <th className="py-3 text-sm text-brand-700 font-bold uppercase text-center w-40">Recibido Real</th>
-                        <th className="py-3 text-sm text-slate-500 uppercase text-right w-32">Costo U.</th>
-                      </tr>
-                  </thead>
-                  <tbody>
-                      {checkInDetalles.map((d, idx) => (
-                         <tr key={d.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                            <td className="py-4 font-bold text-slate-800">{d.nombre}</td>
-                            <td className="py-4 text-center font-bold text-slate-500">{formatCantidad(d.cantidad_pedida)}</td>
-                            <td className="py-4 text-center">
-                              <input type="number" min="0" value={d.cantidad_llegada} onChange={(e) => updateCheckInItem(idx, 'cantidad_llegada', e.target.value)} className="w-full max-w-[100px] text-center px-3 py-2 border-2 border-brand-200 focus:border-brand-500 rounded-xl font-semibold text-brand-700 bg-brand-50 outline-none transition-all"/>
-                            </td>
-                            <td className="py-4 text-right">
-                              <input type="number" min="0" value={d.costo_estimado} onChange={(e) => updateCheckInItem(idx, 'costo_estimado', e.target.value)} className="w-full text-right px-2 py-1 border border-slate-200 rounded-lg text-sm font-bold text-slate-600"/>
-                            </td>
-                         </tr>
-                      ))}
-                  </tbody>
-               </table>
-               
+
+               <div className="overflow-x-auto">
+                 <table className="w-full text-left mb-6 min-w-[560px]">
+                    <thead className="border-b-2 border-slate-200">
+                        <tr>
+                          <th className="py-3 text-sm text-slate-500 uppercase">Producto</th>
+                          <th className="py-3 text-sm text-slate-500 uppercase text-center">Pedido</th>
+                          <th className="py-3 text-sm text-slate-500 uppercase text-center">Ya recibido</th>
+                          <th className="py-3 text-sm text-brand-700 font-bold uppercase text-center w-40">Recibo ahora</th>
+                          <th className="py-3 text-sm text-slate-500 uppercase text-right w-32">Costo U.</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {checkInDetalles.map((d, idx) => (
+                           <tr key={d.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
+                              <td className="py-4 font-bold text-slate-800">{d.nombre}</td>
+                              <td className="py-4 text-center font-bold text-slate-500">{formatCantidad(d.cantidad_pedida)}</td>
+                              <td className="py-4 text-center font-medium text-slate-500">
+                                {formatCantidad(d.cantidad_ya_recibida)}
+                                {d.cantidad_pendiente > 0 && (
+                                  <span className="block text-xs text-amber-700">faltan {formatCantidad(d.cantidad_pendiente)}</span>
+                                )}
+                              </td>
+                              <td className="py-4 text-center">
+                                <input type="number" min="0" value={d.cantidad_llegada} onChange={(e) => updateCheckInItem(idx, 'cantidad_llegada', e.target.value)} className="w-full max-w-[100px] text-center px-3 py-2 border-2 border-brand-200 focus:border-brand-500 rounded-xl font-semibold text-brand-700 bg-brand-50 outline-none transition-all"/>
+                              </td>
+                              <td className="py-4 text-right">
+                                <input type="number" min="0" value={d.costo_estimado} onChange={(e) => updateCheckInItem(idx, 'costo_estimado', e.target.value)} className="w-full text-right px-2 py-1 border border-slate-200 rounded-lg text-sm font-bold text-slate-600"/>
+                              </td>
+                           </tr>
+                        ))}
+                    </tbody>
+                 </table>
+               </div>
+
                <div className="flex justify-end pt-4 border-t border-slate-200">
                   <button onClick={submitCheckIn} disabled={recepcionar.isPending} className="px-8 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-[0_8px_20px_-8px_rgba(5,150,105,0.6)] flex items-center gap-2 transition-transform active:scale-95 disabled:opacity-50">
-                    <CheckCircle className="w-5 h-5"/> {recepcionar.isPending ? 'Procesando…' : 'Confirmar Check-in y Abonar Stock'}
+                    <CheckCircle className="w-5 h-5"/> {recepcionar.isPending ? 'Procesando…' : 'Confirmar recepción y sumar al stock'}
                   </button>
                </div>
             </div>

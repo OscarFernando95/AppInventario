@@ -3,12 +3,15 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { Users, Plus, Edit, Mail, Phone, MapPin, IdCard } from 'lucide-react';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import { useTextFilter } from '../../hooks/useTextFilter';
 import DaneLocationFields from '../../components/DaneLocationFields';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
 import PageHeader from '../../components/ui/PageHeader';
 import Modal, { ModalActions } from '../../components/ui/Modal';
 import Field from '../../components/ui/Field';
+import FilterBar from '../../components/ui/FilterBar';
+import SearchInput from '../../components/ui/SearchInput';
 import { GridState } from '../../components/ui/DataState';
 
 const EMPTY = {
@@ -25,6 +28,7 @@ const Clientes = () => {
   const [formError, setFormError] = useState(null);
 
   const { data: clientes = [], isLoading, isError, error, refetch } = useEmpresaQuery(['clientes'], '/clientes');
+  const { busqueda, setBusqueda, filtrados } = useTextFilter(clientes, ['nombre', 'documento']);
 
   const guardar = useMutation({
     mutationFn: (data) => (editId ? api.put(`/clientes/${editId}`, data) : api.post('/clientes', data)),
@@ -74,18 +78,22 @@ const Clientes = () => {
         }
       />
 
+      <FilterBar hayFiltros={!!busqueda} onLimpiar={() => setBusqueda('')}>
+        <SearchInput placeholder="Nombre o documento…" value={busqueda} onChange={setBusqueda} className="w-full sm:w-72" />
+      </FilterBar>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <GridState
           isLoading={isLoading}
           isError={isError}
           error={error}
           onRetry={refetch}
-          isEmpty={clientes.length === 0}
+          isEmpty={filtrados.length === 0}
           emptyIcon={Users}
-          emptyTitle="Ningún cliente registrado aún"
-          emptyHint="Crea el primero con «Nuevo Cliente»."
+          emptyTitle={busqueda ? 'Sin clientes para esta búsqueda' : 'Ningún cliente registrado aún'}
+          emptyHint={busqueda ? 'Prueba con otro texto.' : 'Crea el primero con «Nuevo Cliente».'}
         />
-        {clientes.map((c) => (
+        {filtrados.map((c) => (
           <div
             key={c.id}
             className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm relative group hover:shadow-md transition-shadow"

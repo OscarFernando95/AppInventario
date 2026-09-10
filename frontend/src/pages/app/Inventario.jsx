@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { PackageOpen, Plus, Upload, FileDown, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { PackageOpen, Plus, Upload, FileDown, CheckCircle2, AlertTriangle, Edit } from 'lucide-react';
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
@@ -9,6 +9,8 @@ import { apiError } from '../../utils/apiError';
 import PageHeader from '../../components/ui/PageHeader';
 import Modal, { ModalActions } from '../../components/ui/Modal';
 import Field from '../../components/ui/Field';
+import FilterBar from '../../components/ui/FilterBar';
+import SearchInput from '../../components/ui/SearchInput';
 import { TableCard, THead, Th, Tr, Td } from '../../components/ui/Table';
 import { TableState } from '../../components/ui/DataState';
 
@@ -38,6 +40,7 @@ const Inventario = () => {
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState(null);
+  const [editId, setEditId] = useState(null);
 
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFile, setImportFile] = useState(null);
@@ -45,23 +48,65 @@ const Inventario = () => {
   const [importError, setImportError] = useState(null);
   const [importResultado, setImportResultado] = useState(null);
 
+  const [busqueda, setBusqueda] = useState('');
+  const [filtroStock, setFiltroStock] = useState(''); // '' | 'bajo' | 'agotado'
+
   const { data: productos = [], isLoading, isError, error, refetch } = useEmpresaQuery(['productos'], '/productos');
 
-  const crearProducto = useMutation({
-    mutationFn: (payload) => api.post('/productos', payload),
+  const productosFiltrados = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    return productos.filter((p) => {
+      if (q && !(`${p.codigo} ${p.nombre_producto}`.toLowerCase().includes(q))) return false;
+      const stock = Number(p.stock_actual);
+      if (filtroStock === 'agotado' && stock > 0) return false;
+      if (filtroStock === 'bajo' && stock >= STOCK_BAJO) return false;
+      return true;
+    });
+  }, [productos, busqueda, filtroStock]);
+
+  const hayFiltros = !!busqueda || !!filtroStock;
+
+  const guardar = useMutation({
+    mutationFn: (payload) => (editId ? api.put(`/productos/${editId}`, payload) : api.post('/productos', payload)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['empresa'] });
       setShowModal(false);
+      setEditId(null);
       setFormData(EMPTY_FORM);
       setFormError(null);
     },
-    onError: (err) => setFormError(apiError(err, 'No se pudo crear el producto')),
+    onError: (err) => setFormError(apiError(err, 'No se pudo guardar el producto')),
   });
+
+  const abrirNuevo = () => {
+    setEditId(null);
+    setFormData(EMPTY_FORM);
+    setFormError(null);
+    setShowModal(true);
+  };
+
+  const startEdit = (p) => {
+    setEditId(p.id);
+    setFormError(null);
+    setFormData({
+      codigo: p.codigo || '', nombre_producto: p.nombre_producto || '', descripcion: p.descripcion || '',
+      precio_unitario: p.precio_unitario ?? '', stock_actual: '',
+      porcentaje_iva: p.porcentaje_iva ?? '19', unidad_medida: p.unidad_medida || '94',
+      codigo_estandar: p.codigo_estandar || '',
+    });
+    setShowModal(true);
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
     setFormError(null);
-    crearProducto.mutate({ ...formData, stock_actual: parseInt(formData.stock_actual, 10) || 0 });
+    if (editId) {
+      // El stock no se edita aquí (lo mueven compras/ventas); el schema lo omite igual.
+      const { stock_actual: _s, ...resto } = formData;
+      guardar.mutate(resto);
+    } else {
+      guardar.mutate({ ...formData, stock_actual: parseInt(formData.stock_actual, 10) || 0 });
+    }
   };
 
   const cerrarImportModal = () => {
@@ -106,15 +151,23 @@ const Inventario = () => {
             >
               <Upload className="w-5 h-5" aria-hidden="true" /> Importar Excel
             </button>
-            <button
-              className="btn-primary gap-2"
-              onClick={() => { setFormData(EMPTY_FORM); setFormError(null); setShowModal(true); }}
-            >
+            <button className="btn-primary gap-2" onClick={abrirNuevo}>
               <Plus className="w-5 h-5" aria-hidden="true" /> Nuevo Producto
             </button>
           </div>
         }
       />
+
+      <FilterBar hayFiltros={hayFiltros} onLimpiar={() => { setBusqueda(''); setFiltroStock(''); }}>
+        <SearchInput placeholder="Código o nombre…" value={busqueda} onChange={setBusqueda} className="w-full sm:w-64" />
+        <Field label="Stock" className="w-full sm:w-44">
+          <select className="input-field" value={filtroStock} onChange={(e) => setFiltroStock(e.target.value)}>
+            <option value="">Todos</option>
+            <option value="bajo">Stock bajo (&lt; {STOCK_BAJO})</option>
+            <option value="agotado">Agotados</option>
+          </select>
+        </Field>
+      </FilterBar>
 
       <TableCard>
         <THead>
@@ -122,20 +175,21 @@ const Inventario = () => {
           <Th>Producto</Th>
           <Th align="center">Stock Físico</Th>
           <Th align="right">Valor Unitario</Th>
+          <Th align="center" className="w-20">Acciones</Th>
         </THead>
         <tbody>
           <TableState
-            colSpan={4}
+            colSpan={5}
             isLoading={isLoading}
             isError={isError}
             error={error}
             onRetry={refetch}
-            isEmpty={productos.length === 0}
+            isEmpty={productosFiltrados.length === 0}
             emptyIcon={PackageOpen}
-            emptyTitle="No hay productos en el catálogo"
-            emptyHint="Crea el primero con «Nuevo Producto»."
+            emptyTitle={hayFiltros ? 'Sin productos para esta búsqueda' : 'No hay productos en el catálogo'}
+            emptyHint={hayFiltros ? 'Prueba con otro texto o quita el filtro de stock.' : 'Crea el primero con «Nuevo Producto».'}
           />
-          {productos.map((p) => (
+          {productosFiltrados.map((p) => (
             <Tr key={p.id}>
               <Td className="font-mono text-sm text-slate-600 whitespace-nowrap">{p.codigo}</Td>
               <Td className="font-medium text-slate-800">{p.nombre_producto}</Td>
@@ -145,12 +199,17 @@ const Inventario = () => {
                 </span>
               </Td>
               <Td align="right" className="font-semibold text-slate-800 whitespace-nowrap">{formatCOP(p.precio_unitario)}</Td>
+              <Td align="center">
+                <button onClick={() => startEdit(p)} aria-label={`Editar ${p.nombre_producto}`} className="btn-icon">
+                  <Edit className="w-4 h-4" />
+                </button>
+              </Td>
             </Tr>
           ))}
         </tbody>
       </TableCard>
 
-      <Modal open={showModal} onClose={() => setShowModal(false)} title="Crear Artículo" size="lg">
+      <Modal open={showModal} onClose={() => setShowModal(false)} title={editId ? 'Editar Artículo' : 'Crear Artículo'} size="lg">
         <form onSubmit={handleSubmit} className="space-y-4">
           <FormError message={formError} onDismiss={() => setFormError(null)} />
 
@@ -171,9 +230,15 @@ const Inventario = () => {
             <Field label="Precio de Venta ($)" required>
               <input type="number" step="0.01" className="input-field" placeholder="1500.00" value={formData.precio_unitario || ''} onChange={(e) => setFormData({ ...formData, precio_unitario: e.target.value })} />
             </Field>
-            <Field label="Stock Físico Inicial" required>
-              <input type="number" className="input-field" placeholder="50" value={formData.stock_actual || ''} onChange={(e) => setFormData({ ...formData, stock_actual: e.target.value })} />
-            </Field>
+            {editId ? (
+              <Field label="Stock actual" hint="El stock se ajusta con Compras y Ventas, no aquí.">
+                <input className="input-field bg-slate-50 text-slate-500" value={`${formatCantidad(productos.find((p) => p.id === editId)?.stock_actual ?? 0)} UD`} readOnly />
+              </Field>
+            ) : (
+              <Field label="Stock Físico Inicial" required>
+                <input type="number" className="input-field" placeholder="50" value={formData.stock_actual || ''} onChange={(e) => setFormData({ ...formData, stock_actual: e.target.value })} />
+              </Field>
+            )}
           </div>
 
           <div className="border-t border-slate-100 pt-3 mt-3">
@@ -200,8 +265,8 @@ const Inventario = () => {
 
           <ModalActions>
             <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Cancelar</button>
-            <button type="submit" disabled={crearProducto.isPending} className="btn-primary px-6">
-              {crearProducto.isPending ? 'Guardando…' : 'Guardar en Base'}
+            <button type="submit" disabled={guardar.isPending} className="btn-primary px-6">
+              {guardar.isPending ? 'Guardando…' : editId ? 'Actualizar' : 'Guardar en Base'}
             </button>
           </ModalActions>
         </form>

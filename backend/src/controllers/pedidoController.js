@@ -1,13 +1,18 @@
 const { sequelize, Pedido, PedidoDetalle, Proveedor, Producto, Compra, CompraDetalle } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
+const { buildListWhere } = require('../utils/listFilters');
 const { invalidateDashboard } = require('./reporteController');
 const { invalidateInforme } = require('./informeController');
 const { calcularTotalCompra } = require('../services/calculo');
+const { auditar } = require('../utils/audit');
 
 exports.getPedidos = async (req, res) => {
   const { limit, offset } = parseListQuery(req.query);
-  const where = { empresaId: req.empresaId };
+  const where = {
+    empresaId: req.empresaId,
+    ...buildListWhere(req.query, { fecha: 'fecha_pedido', igualdad: ['proveedorId', 'estado'] }),
+  };
 
   const total = await Pedido.count({ where });
   const pedidos = await Pedido.findAll({
@@ -69,6 +74,7 @@ exports.createPedido = async (req, res) => {
     );
 
     await t.commit();
+    auditar(req, 'pedido_creado', { pedidoId: pedido.id, total_estimado: totalEstimado, proveedorId });
     res.status(201).json(pedido);
   } catch (error) {
     await t.rollback();
@@ -97,17 +103,19 @@ exports.checkInPedido = async (req, res) => {
       lock: { level: t.LOCK.UPDATE, of: Pedido },
       transaction: t,
     });
-    if (!pedido || pedido.estado !== 'PENDIENTE') {
+    if (!pedido || !['PENDIENTE', 'PARCIAL'].includes(pedido.estado)) {
       throw new ValidationError('Pedido no encontrado o ya procesado');
     }
-    const productosDelPedido = new Set((pedido.PedidoDetalles || []).map((d) => d.productoId));
+    // Línea del pedido por producto (para validar pertenencia y acumular lo recibido).
+    const lineaPorProducto = new Map((pedido.PedidoDetalles || []).map((d) => [d.productoId, d]));
 
     // Validar todo (pertenencia al pedido + tenant + lock de stock) antes de tocar nada.
     const items = [];
     for (const item of detalles_recibidos) {
       const cantidad = Number(item.cantidad);
       if (cantidad === 0) continue;
-      if (!productosDelPedido.has(Number(item.productoId))) {
+      const linea = lineaPorProducto.get(Number(item.productoId));
+      if (!linea) {
         throw new ValidationError('Se recibió un producto que no estaba en el pedido.');
       }
       const producto = await Producto.findOne({
@@ -116,7 +124,7 @@ exports.checkInPedido = async (req, res) => {
         lock: t.LOCK.UPDATE,
       });
       if (!producto) throw new ValidationError('Producto inválido en la recepción del pedido.');
-      items.push({ producto, cantidad, costo: Number(item.costo_unitario) });
+      items.push({ producto, linea, cantidad, costo: Number(item.costo_unitario) });
     }
     if (items.length === 0) throw new ValidationError('No se recibió ninguna cantidad.');
 
@@ -145,14 +153,30 @@ exports.checkInPedido = async (req, res) => {
         { stock_actual: Number(i.producto.stock_actual) + i.cantidad },
         { transaction: t }
       );
+      // Acumular lo recibido en la línea del pedido.
+      await i.linea.update(
+        { cantidad_recibida: Number(i.linea.cantidad_recibida) + i.cantidad },
+        { transaction: t }
+      );
     }
 
-    await pedido.update({ estado: 'COMPLETADO' }, { transaction: t });
+    // El pedido queda COMPLETADO solo si todas sus líneas ya alcanzaron lo
+    // pedido; si no, queda PARCIAL y se puede volver a recibir después.
+    const todoRecibido = (pedido.PedidoDetalles || []).every(
+      (d) => Number(d.cantidad_recibida) >= Number(d.cantidad_pedida)
+    );
+    const nuevoEstado = todoRecibido ? 'COMPLETADO' : 'PARCIAL';
+    await pedido.update({ estado: nuevoEstado }, { transaction: t });
 
     await t.commit();
     invalidateDashboard(req.empresaId);
     invalidateInforme(req.empresaId);
-    res.status(200).json({ compraId: compra.id, message: 'Recepción completada exitosamente' });
+    auditar(req, 'pedido_recibido', { pedidoId: pedido.id, compraId: compra.id, completo: todoRecibido });
+    res.status(200).json({
+      compraId: compra.id,
+      estado: nuevoEstado,
+      message: todoRecibido ? 'Recepción completada' : 'Recepción parcial registrada',
+    });
   } catch (error) {
     await t.rollback();
     if (error instanceof ValidationError) {

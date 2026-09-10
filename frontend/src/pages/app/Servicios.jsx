@@ -4,11 +4,14 @@ import api from '../../api/axios';
 import { Briefcase, Plus, Edit } from 'lucide-react';
 import { formatCOP } from '../../utils/format';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import { useTextFilter } from '../../hooks/useTextFilter';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
 import PageHeader from '../../components/ui/PageHeader';
 import Modal, { ModalActions } from '../../components/ui/Modal';
 import Field from '../../components/ui/Field';
+import FilterBar from '../../components/ui/FilterBar';
+import SearchInput from '../../components/ui/SearchInput';
 import { TableCard, THead, Th, Tr, Td } from '../../components/ui/Table';
 import { TableState } from '../../components/ui/DataState';
 
@@ -25,6 +28,7 @@ const Servicios = () => {
   const [formError, setFormError] = useState(null);
 
   const { data: servicios = [], isLoading, isError, error, refetch } = useEmpresaQuery(['servicios'], '/servicios');
+  const { busqueda, setBusqueda, filtrados } = useTextFilter(servicios, ['nombre', 'descripcion']);
 
   const guardar = useMutation({
     mutationFn: (data) => (editId ? api.put(`/servicios/${editId}`, data) : api.post('/servicios', data)),
@@ -69,6 +73,10 @@ const Servicios = () => {
         }
       />
 
+      <FilterBar hayFiltros={!!busqueda} onLimpiar={() => setBusqueda('')}>
+        <SearchInput placeholder="Nombre o descripción…" value={busqueda} onChange={setBusqueda} className="w-full sm:w-72" />
+      </FilterBar>
+
       <TableCard>
         <THead>
           <Th>Servicio</Th>
@@ -83,12 +91,12 @@ const Servicios = () => {
             isError={isError}
             error={error}
             onRetry={refetch}
-            isEmpty={servicios.length === 0}
+            isEmpty={filtrados.length === 0}
             emptyIcon={Briefcase}
-            emptyTitle="Aún no ofreces servicios adicionales"
-            emptyHint="Crea el primero con «Nuevo Servicio»."
+            emptyTitle={busqueda ? 'Sin servicios para esta búsqueda' : 'Aún no ofreces servicios adicionales'}
+            emptyHint={busqueda ? 'Prueba con otro texto.' : 'Crea el primero con «Nuevo Servicio».'}
           />
-          {servicios.map((s) => (
+          {filtrados.map((s) => (
             <Tr key={s.id}>
               <Td className="font-medium text-slate-800">
                 <div className="flex items-center gap-3">

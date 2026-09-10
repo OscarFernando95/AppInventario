@@ -6,13 +6,16 @@ import { formatCOP, formatDocumento, formatNIT, formatCantidad } from './format'
  * Generates a professional PDF invoice for a sale.
  * @param {Object} venta - The sale data with Cliente, VentaDetalles, Empresa, Usuario
  * @param {Object} empresa - Company info { nombre, nit, contacto }
- * @param {Object} [options] - { autoOpen: true }
+ * @param {Object} [options] - { autoOpen, save, returnBlob }
+ * @returns {string|{fileName:string, blob:Blob}} nombre del archivo, o
+ *   `{ fileName, blob }` cuando `returnBlob` — usado por la descarga en lote
+ *   (varias facturas en un .zip) sin abrir pestañas ni descargar cada una.
  */
 export const generateInvoicePDF = (venta, empresa, options = {}) => {
   // `autoOpen`: abre el PDF en una pestaña nueva. `save`: dispara la descarga.
   // Los tests pasan ambos en `false` para ejercitar la construcción del PDF sin
   // tocar el navegador ni el disco.
-  const { autoOpen = true, save = true } = options;
+  const { autoOpen = true, save = true, returnBlob = false } = options;
 
   if (!venta || typeof venta !== 'object') {
     throw new Error('generateInvoicePDF: falta el objeto de la venta.');
@@ -384,6 +387,10 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
   // OUTPUT
   // ═══════════════════════════════════════════════
   const fileName = `Factura_${invoiceNo}_${new Date().toISOString().slice(0,10)}.pdf`;
+
+  if (returnBlob) {
+    return { fileName, blob: doc.output('blob') };
+  }
 
   if (autoOpen) {
     const pdfBlob = doc.output('blob');
