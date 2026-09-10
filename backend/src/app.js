@@ -54,6 +54,7 @@ app.use('/api', apiLimiter);
 
 app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/empresas', require('./routes/empresaRoutes'));
+app.use('/api/logs', require('./routes/logRoutes'));
 app.use('/api/modulos', require('./routes/moduloRoutes'));
 app.use('/api/catalogos', require('./routes/catalogoRoutes'));
 app.use('/api/usuarios', require('./routes/usuarioRoutes'));

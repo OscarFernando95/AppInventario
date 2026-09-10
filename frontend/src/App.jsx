@@ -10,6 +10,7 @@ import DashboardUser from './pages/app/DashboardUser';
 import AdminUsuarios from './pages/app/AdminUsuarios';
 import Empresas from './pages/backoffice/Empresas';
 import Usuarios from './pages/backoffice/Usuarios';
+import Logs from './pages/backoffice/Logs';
 import Inventario from './pages/app/Inventario';
 import Proveedores from './pages/app/Proveedores';
 import Clientes from './pages/app/Clientes';
@@ -90,6 +91,7 @@ const App = () => {
           <Route index element={<DashboardAdmin />} />
           <Route path="empresas" element={<Empresas />} />
           <Route path="usuarios" element={<Usuarios />} />
+          <Route path="logs" element={<Logs />} />
         </Route>
 
         <Route 

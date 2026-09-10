@@ -1,6 +1,7 @@
 const { Empresa, Modulo } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { invalidateAllProfiles } = require('../middlewares/auth');
+const { parseListQuery, setTotalCount } = require('../utils/pagination');
 
 /**
  * Comprueba que todos los ids de módulo existan. Antes, un id inexistente
@@ -28,8 +29,19 @@ async function validarModulos(modulosIds) {
 }
 
 exports.getEmpresas = async (req, res) => {
-  const empresas = await Empresa.findAll({ include: Modulo, order: [['nombre', 'ASC']] });
-  res.json(empresas);
+  // Antes usaba findAll() sin X-Total-Count: el dashboard de backoffice
+  // (que solo pide `?limit=1` para leer el total del header) siempre recibía
+  // "undefined" y mostraba "0 Empresas activas" aunque sí hubiera empresas.
+  const { limit, offset } = parseListQuery(req.query, { defaultLimit: 200 });
+  const { count, rows } = await Empresa.findAndCountAll({
+    include: Modulo,
+    order: [['nombre', 'ASC']],
+    limit,
+    offset,
+    distinct: true, // el include de Modulo es many-to-many; sin esto, count() infla con el join
+  });
+  setTotalCount(res, count);
+  res.json(rows);
 };
 
 exports.createEmpresa = async (req, res) => {

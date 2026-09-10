@@ -18,6 +18,7 @@ const Servicio = require('./Servicio');
 const Pedido = require('./Pedido');
 const PedidoDetalle = require('./PedidoDetalle');
 const Sesion = require('./Sesion');
+const LogEvento = require('./LogEvento');
 
 // Relaciones Administrativas
 Empresa.belongsToMany(Usuario, { through: 'usuarios_empresas', foreignKey: 'empresaId' });
@@ -87,7 +88,15 @@ VentaDetalle.belongsTo(Producto, { foreignKey: 'productoId' });
 Servicio.hasMany(VentaDetalle, { foreignKey: 'servicioId' });
 VentaDetalle.belongsTo(Servicio, { foreignKey: 'servicioId' });
 
+// Solo de lectura desde el backoffice (ver logController) — belongsTo basta,
+// no hace falta el lado hasMany en Usuario/Empresa.
+Usuario.hasMany(LogEvento, { foreignKey: 'usuarioId' });
+LogEvento.belongsTo(Usuario, { foreignKey: 'usuarioId' });
+Empresa.hasMany(LogEvento, { foreignKey: 'empresaId' });
+LogEvento.belongsTo(Empresa, { foreignKey: 'empresaId' });
+
 module.exports = {
   sequelize, Empresa, Role, Usuario, Modulo, Departamento, Municipio, ActividadCiiu, Sesion,
-  Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle
+  Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle,
+  LogEvento,
 };

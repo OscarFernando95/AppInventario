@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import { Building2, Users, LayoutDashboard, LogOut, Menu, X } from 'lucide-react';
+import { Building2, Users, LayoutDashboard, LogOut, Menu, X, ScrollText } from 'lucide-react';
 
 const BackOfficeLayout = () => {
   const { user, logout } = useAuthStore();
@@ -26,6 +26,7 @@ const BackOfficeLayout = () => {
     { name: 'Dashboard', path: '/backoffice', icon: LayoutDashboard },
     { name: 'Empresas', path: '/backoffice/empresas', icon: Building2 },
     { name: 'Usuarios', path: '/backoffice/usuarios', icon: Users },
+    { name: 'Logs', path: '/backoffice/logs', icon: ScrollText },
   ];
 
   return (

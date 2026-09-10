@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { PackageOpen, Plus } from 'lucide-react';
+import { PackageOpen, Plus, Upload, FileDown, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
@@ -16,6 +16,12 @@ const EMPTY_FORM = {
   codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
   porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: '',
 };
+
+const IMPORT_OPCIONES_INICIALES = { modoCantidad: 'sumar', modoPrecio: 'conservar' };
+
+// La cookie de sesión viaja sola en una navegación normal, así que un <a> a
+// esta URL basta para descargar la plantilla sin JS ni volver a pedir empresa.
+const URL_PLANTILLA = `${import.meta.env.VITE_API_URL || '/api'}/productos/plantilla`;
 
 /** Umbral por debajo del cual el stock se marca como bajo. */
 const STOCK_BAJO = 10;
@@ -32,6 +38,12 @@ const Inventario = () => {
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState(null);
+
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+  const [importOpciones, setImportOpciones] = useState(IMPORT_OPCIONES_INICIALES);
+  const [importError, setImportError] = useState(null);
+  const [importResultado, setImportResultado] = useState(null);
 
   const { data: productos = [], isLoading, isError, error, refetch } = useEmpresaQuery(['productos'], '/productos');
 
@@ -52,18 +64,55 @@ const Inventario = () => {
     crearProducto.mutate({ ...formData, stock_actual: parseInt(formData.stock_actual, 10) || 0 });
   };
 
+  const cerrarImportModal = () => {
+    setShowImportModal(false);
+    setImportFile(null);
+    setImportOpciones(IMPORT_OPCIONES_INICIALES);
+    setImportError(null);
+    setImportResultado(null);
+  };
+
+  const importarProductos = useMutation({
+    mutationFn: (datosFormulario) => api.post('/productos/importar', datosFormulario),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['empresa'] });
+      setImportResultado(res.data);
+      setImportError(null);
+    },
+    onError: (err) => setImportError(apiError(err, 'No se pudo procesar el archivo')),
+  });
+
+  const handleImportSubmit = (e) => {
+    e.preventDefault();
+    if (!importFile) return setImportError('Selecciona un archivo .xlsx primero.');
+    setImportError(null);
+    const datosFormulario = new FormData();
+    datosFormulario.append('archivo', importFile);
+    datosFormulario.append('modoCantidad', importOpciones.modoCantidad);
+    datosFormulario.append('modoPrecio', importOpciones.modoPrecio);
+    importarProductos.mutate(datosFormulario);
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
         title="Catálogo e Inventario"
         description="Administra los productos base. El stock aumenta vía Compras."
         action={
-          <button
-            className="btn-primary gap-2"
-            onClick={() => { setFormData(EMPTY_FORM); setFormError(null); setShowModal(true); }}
-          >
-            <Plus className="w-5 h-5" aria-hidden="true" /> Nuevo Producto
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className="btn-secondary gap-2"
+              onClick={() => { cerrarImportModal(); setShowImportModal(true); }}
+            >
+              <Upload className="w-5 h-5" aria-hidden="true" /> Importar Excel
+            </button>
+            <button
+              className="btn-primary gap-2"
+              onClick={() => { setFormData(EMPTY_FORM); setFormError(null); setShowModal(true); }}
+            >
+              <Plus className="w-5 h-5" aria-hidden="true" /> Nuevo Producto
+            </button>
+          </div>
         }
       />
 
@@ -156,6 +205,139 @@ const Inventario = () => {
             </button>
           </ModalActions>
         </form>
+      </Modal>
+
+      <Modal
+        open={showImportModal}
+        onClose={cerrarImportModal}
+        title="Importar Inventario desde Excel"
+        description={importResultado ? undefined : 'Crea productos nuevos o actualiza los que ya existan (por código).'}
+        size="lg"
+      >
+        {importResultado ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-4 text-center">
+                <p className="text-3xl font-bold text-emerald-700">{importResultado.creados.length}</p>
+                <p className="text-sm font-medium text-emerald-800 mt-1">Productos creados</p>
+              </div>
+              <div className="rounded-xl bg-brand-50 border border-brand-200 p-4 text-center">
+                <p className="text-3xl font-bold text-brand-700">{importResultado.actualizados.length}</p>
+                <p className="text-sm font-medium text-brand-800 mt-1">Productos actualizados</p>
+              </div>
+            </div>
+
+            {importResultado.omitidos.length > 0 ? (
+              <div>
+                <p className="flex items-center gap-2 text-sm font-semibold text-amber-800 mb-2">
+                  <AlertTriangle className="w-4 h-4" aria-hidden="true" />
+                  {importResultado.omitidos.length} fila(s) omitida(s)
+                </p>
+                <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200">
+                  <table className="w-full text-left text-sm">
+                    <tbody>
+                      {importResultado.omitidos.map((o) => (
+                        <tr key={o.fila} className="border-b border-slate-100 last:border-0">
+                          <td className="px-3 py-2 font-mono text-xs text-slate-500 whitespace-nowrap">Fila {o.fila}</td>
+                          <td className="px-3 py-2 text-slate-700">{o.error}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <p className="flex items-center gap-2 text-sm font-medium text-emerald-700">
+                <CheckCircle2 className="w-4 h-4" aria-hidden="true" /> Sin filas omitidas.
+              </p>
+            )}
+
+            <ModalActions>
+              <button type="button" className="btn-primary px-6" onClick={cerrarImportModal}>Cerrar</button>
+            </ModalActions>
+          </div>
+        ) : (
+          <form onSubmit={handleImportSubmit} className="space-y-4">
+            <FormError message={importError} onDismiss={() => setImportError(null)} />
+
+            <Field label="Archivo (.xlsx)" required>
+              <input
+                type="file"
+                accept=".xlsx"
+                className="input-field file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:bg-brand-50 file:text-brand-700 file:font-medium file:text-sm"
+                onChange={(e) => setImportFile(e.target.files?.[0] || null)}
+              />
+            </Field>
+
+            <a
+              href={URL_PLANTILLA}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-700 hover:text-brand-800"
+            >
+              <FileDown className="w-4 h-4" aria-hidden="true" /> Descargar plantilla de ejemplo
+            </a>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+              <fieldset>
+                <legend className="block text-sm font-medium text-slate-700 mb-1.5">Si el producto ya existe, la cantidad debe</legend>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="radio"
+                      name="modoCantidad"
+                      checked={importOpciones.modoCantidad === 'sumar'}
+                      onChange={() => setImportOpciones((o) => ({ ...o, modoCantidad: 'sumar' }))}
+                      className="text-brand-700 focus:ring-brand-600"
+                    />
+                    Sumarse a la cantidad actual
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="radio"
+                      name="modoCantidad"
+                      checked={importOpciones.modoCantidad === 'reemplazar'}
+                      onChange={() => setImportOpciones((o) => ({ ...o, modoCantidad: 'reemplazar' }))}
+                      className="text-brand-700 focus:ring-brand-600"
+                    />
+                    Reemplazar por la del archivo
+                  </label>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend className="block text-sm font-medium text-slate-700 mb-1.5">El precio debe</legend>
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="radio"
+                      name="modoPrecio"
+                      checked={importOpciones.modoPrecio === 'conservar'}
+                      onChange={() => setImportOpciones((o) => ({ ...o, modoPrecio: 'conservar' }))}
+                      className="text-brand-700 focus:ring-brand-600"
+                    />
+                    Conservar el actual
+                  </label>
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="radio"
+                      name="modoPrecio"
+                      checked={importOpciones.modoPrecio === 'actualizar'}
+                      onChange={() => setImportOpciones((o) => ({ ...o, modoPrecio: 'actualizar' }))}
+                      className="text-brand-700 focus:ring-brand-600"
+                    />
+                    Actualizar al del archivo
+                  </label>
+                </div>
+              </fieldset>
+            </div>
+
+            <ModalActions>
+              <button type="button" className="btn-secondary" onClick={cerrarImportModal}>Cancelar</button>
+              <button type="submit" disabled={importarProductos.isPending} className="btn-primary gap-2 px-6">
+                {importarProductos.isPending ? 'Procesando…' : (<><Upload className="w-4 h-4" aria-hidden="true" /> Importar</>)}
+              </button>
+            </ModalActions>
+          </form>
+        )}
       </Modal>
     </div>
   );

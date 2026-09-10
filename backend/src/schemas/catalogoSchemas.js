@@ -54,9 +54,18 @@ const servicio = z.object({
 });
 const servicioUpdate = servicio.partial();
 
+// Opciones de conflicto para la importación masiva de productos (multipart:
+// llegan como campos de texto junto al archivo, por eso no hay coerción de
+// tipos más allá del enum).
+const importarProductosOpciones = z.object({
+  modoCantidad: z.enum(['sumar', 'reemplazar']),
+  modoPrecio: z.enum(['conservar', 'actualizar']),
+});
+
 module.exports = {
   producto, productoUpdate,
   proveedor, proveedorUpdate,
   cliente, clienteUpdate,
   servicio, servicioUpdate,
+  importarProductosOpciones,
 };
