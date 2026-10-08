@@ -1,0 +1,13 @@
+{
+  "name": "e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pruebas de navegador (Playwright) de los flujos críticos de AppInventario",
+  "scripts": {
+    "test": "node correr.js",
+    "test:headed": "node correr.js --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
+  }
+}

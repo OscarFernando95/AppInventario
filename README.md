@@ -121,3 +121,9 @@ arrancar el contenedor `backend` (ver `backend/entrypoint.sh`).
 El despliegue en el PC servidor de la oficina (IP fija, firewall del puerto 80,
 autoarranque de Docker, backups automáticos y actualización de versiones) está
 documentado paso a paso en [`GUIA_INSTALACION.md`](./GUIA_INSTALACION.md).
+
+## Pruebas
+
+- Backend: `cd backend && npm test` (unitarias) y `npm run test:integration` (necesita `docker compose up -d db`).
+- Frontend: `cd frontend && npm test`.
+- Navegador (flujos completos): ver [`e2e/README.md`](e2e/README.md).
