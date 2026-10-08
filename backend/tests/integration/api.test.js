@@ -652,7 +652,7 @@ describe('Restaurante — insumos, recetas y venta de platos', () => {
     expect(res.body.error).toMatch(/no tiene receta/);
   });
 
-  it('el dashboard no lista platos como "bajo stock"', async () => {
+  it('el dashboard no alerta platos sin mínimo configurado', async () => {
     const res = await conEmpresa(agent.get('/api/reportes/dashboard'));
     expect(res.status).toBe(200);
     expect(res.body.productosBajoStock.some((p) => p.tipo === 'RECETA')).toBe(false);
@@ -1069,7 +1069,7 @@ describe('Fase C — sub-recetas (preparaciones)', () => {
     expect(anidado.status).toBe(400);
   });
 
-  it('el dashboard no lista preparaciones como "bajo stock"', async () => {
+  it('el dashboard no alerta platos ni preparaciones sin mínimo configurado', async () => {
     const res = await conEmpresa(agent.get('/api/reportes/dashboard'));
     expect(res.body.productosBajoStock.some((p) => ['RECETA', 'PREPARACION'].includes(p.tipo))).toBe(false);
   });
@@ -2101,5 +2101,131 @@ describe('Anulación de ventas', () => {
         .find((a) => a.accion === 'Anuló una venta' && a.descripcion.includes('solicitada por Cajero Anula'));
       expect(conSolicitante).toBeTruthy();
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stock mínimo y reposición (todos los tipos de producto)
+// ---------------------------------------------------------------------------
+describe('Stock mínimo y reposición', () => {
+  let harina; let gaseosa; let masa; let pan;
+  const nuevo = (body) => conEmpresa(agent.post('/api/productos')).send({ precio_unitario: 1000, porcentaje_iva: 0, ...body });
+  const listar = async () => (await conEmpresa(agent.get('/api/productos'))).body;
+  const deLista = async (id) => (await listar()).find((p) => p.id === id);
+  const reposicion = async () => (await conEmpresa(agent.get('/api/reposicion'))).body;
+
+  beforeAll(async () => {
+    await activarModulos(['Recetas']);
+    harina = (await nuevo({
+      codigo: 'MIN-H', nombre_producto: 'Harina mínimo', tipo: 'INSUMO', unidad_medida: 'GRM', stock_actual: 450,
+      stock_minimo: 500, stock_objetivo: 2000, costo_promedio: 3, unidad_compra: 'KGM', factor_compra: 1000,
+    })).body;
+    gaseosa = (await nuevo({ codigo: 'MIN-G', nombre_producto: 'Gaseosa mínimo', stock_actual: 8, stock_minimo: 10 })).body;
+    masa = (await nuevo({
+      codigo: 'MIN-M', nombre_producto: 'Masa mínimo', tipo: 'PREPARACION', unidad_medida: 'GRM', rendimiento: 1000, stock_minimo: 600,
+      receta: [{ insumoId: harina.id, cantidad: 500 }],
+    })).body;
+    pan = (await nuevo({
+      codigo: 'MIN-P', nombre_producto: 'Pan mínimo', tipo: 'RECETA', precio_unitario: 5000, stock_minimo: 5,
+      receta: [{ insumoId: masa.id, cantidad: 200 }],
+    })).body;
+  });
+  afterAll(async () => { await activarModulos([]); });
+
+  it('cada tipo de producto tiene su "disponible" y su estado de stock', async () => {
+    expect(Number((await deLista(harina.id)).stock_minimo)).toBe(500);
+    expect(await deLista(harina.id)).toMatchObject({ disponible: 450, estado_stock: 'BAJO', alerta_stock: true });
+    expect(await deLista(gaseosa.id)).toMatchObject({ disponible: 8, estado_stock: 'BAJO', alerta_stock: true });
+    // 450 g de harina producen 900 de masa (OK frente a 600) y 4 panes (bajo frente a 5)
+    expect(await deLista(masa.id)).toMatchObject({ disponible: 900, estado_stock: 'OK', alerta_stock: false });
+    expect(await deLista(pan.id)).toMatchObject({ disponible: 4, porciones_disponibles: 4, estado_stock: 'BAJO', alerta_stock: true });
+  });
+
+  it('el dashboard lista alertas de todos los tipos, no solo productos con stock', async () => {
+    const { productosBajoStock } = (await conEmpresa(agent.get('/api/reportes/dashboard'))).body;
+    const nombres = productosBajoStock.map((p) => p.nombre_producto);
+    expect(nombres).toEqual(expect.arrayContaining(['Harina mínimo', 'Gaseosa mínimo', 'Pan mínimo']));
+    expect(productosBajoStock.find((p) => p.nombre_producto === 'Pan mínimo')).toMatchObject({ tipo: 'RECETA', disponible: 4, stock_minimo: 5 });
+    expect(nombres).not.toContain('Masa mínimo'); // su disponible (900) supera su mínimo
+  });
+
+  it('GET /api/reposicion: alertas de todos los tipos y qué pedir (los platos piden sus ingredientes)', async () => {
+    const r = await reposicion();
+    expect(r.resumen).toEqual({ agotados: 0, bajos: 3 });
+    expect(r.alertas.map((a) => a.tipo).sort()).toEqual(['INSUMO', 'RECETA', 'VENTA']);
+
+    // Harina: su objetivo (2.000) pesa más que lo que piden los platos; se sugiere en kg (presentación).
+    const h = r.sugerencias.find((s) => s.productoId === harina.id);
+    expect(h).toMatchObject({ motivo: 'MINIMO', sugerido_base: 1550, costo_estimado: 4650 });
+    expect(h.pedido).toMatchObject({ cantidad: 1.55, unidad: 'KGM', cantidad_base: 1550 });
+    expect(h.para).toContain('Pan mínimo'); // el pan también la necesita
+
+    const g = r.sugerencias.find((s) => s.productoId === gaseosa.id);
+    expect(g).toMatchObject({ motivo: 'MINIMO', sugerido_base: 12 }); // hasta el doble del mínimo (20)
+    expect(r.sugerencias.map((s) => s.tipo)).not.toContain('RECETA'); // un plato no se compra
+    expect(r.sugerencias.map((s) => s.tipo)).not.toContain('PREPARACION');
+  });
+
+  it('al comprar lo sugerido, las alertas desaparecen', async () => {
+    const compra = await conEmpresa(agent.post('/api/compras')).send({
+      proveedorId: ctx.proveedor.id,
+      detalles: [
+        { productoId: harina.id, cantidad: 1.55, costo_unitario: 3000, en_presentacion: true },
+        { productoId: gaseosa.id, cantidad: 12, costo_unitario: 500 },
+      ],
+    });
+    expect(compra.status).toBe(201);
+    const r = await reposicion();
+    expect(r.alertas.map((a) => a.productoId)).not.toContain(harina.id);
+    expect(r.alertas.map((a) => a.productoId)).not.toContain(gaseosa.id);
+    expect(r.alertas.map((a) => a.productoId)).not.toContain(pan.id);
+    expect(r.sugerencias).toEqual([]);
+  });
+
+  it('vender hasta agotar un plato lo marca AGOTADO y vuelve a sugerir sus ingredientes', async () => {
+    const disponibles = (await deLista(pan.id)).disponible;
+    const venta = await conEmpresa(agent.post('/api/ventas')).send({
+      clienteId: ctx.cliente.id,
+      detalles: [{ productoId: pan.id, cantidad: disponibles, precio_unitario: 5000, precio_base: 5000 }],
+    });
+    expect(venta.status).toBe(201);
+    expect(await deLista(pan.id)).toMatchObject({ disponible: 0, estado_stock: 'AGOTADO', alerta_stock: true });
+    const r = await reposicion();
+    expect(r.resumen.agotados).toBeGreaterThanOrEqual(1);
+    expect(r.alertas[0].estado).toBe('AGOTADO'); // lo agotado primero
+    expect(r.sugerencias.find((s) => s.productoId === harina.id)?.para).toContain('Pan mínimo');
+  });
+
+  it('sin mínimo configurado no hay alerta, aunque el producto esté agotado', async () => {
+    const sinMinimo = (await nuevo({ codigo: 'MIN-S', nombre_producto: 'Sin mínimo', stock_actual: 0 })).body;
+    expect(Number(sinMinimo.stock_minimo)).toBe(0);
+    expect(await deLista(sinMinimo.id)).toMatchObject({ estado_stock: 'AGOTADO', alerta_stock: false });
+    expect((await reposicion()).alertas.map((a) => a.productoId)).not.toContain(sinMinimo.id);
+  });
+
+  it('el mínimo se edita; "reponer hasta" no puede quedar bajo el mínimo y se puede vaciar', async () => {
+    const malo = await conEmpresa(agent.put(`/api/productos/${gaseosa.id}`)).send({ stock_minimo: 30, stock_objetivo: 20 });
+    expect(malo.status).toBe(400);
+    expect(malo.body.error).toMatch(/Reponer hasta/);
+    expect((await nuevo({ codigo: 'MIN-X', nombre_producto: 'Neg', stock_minimo: -1 })).status).toBe(400);
+
+    const ok = await conEmpresa(agent.put(`/api/productos/${gaseosa.id}`)).send({ stock_minimo: 30, stock_objetivo: 100 });
+    expect(ok.status).toBe(200);
+    expect(await deLista(gaseosa.id)).toMatchObject({ estado_stock: 'BAJO', stock_objetivo_efectivo: 100 }); // 20 en stock ≤ 30
+    const sinObjetivo = await conEmpresa(agent.put(`/api/productos/${gaseosa.id}`)).send({ stock_objetivo: '' });
+    expect(sinObjetivo.status).toBe(200);
+    expect((await deLista(gaseosa.id)).stock_objetivo_efectivo).toBe(60); // el doble del mínimo
+    // un update que no menciona el mínimo no lo borra
+    await conEmpresa(agent.put(`/api/productos/${gaseosa.id}`)).send({ nombre_producto: 'Gaseosa renombrada' });
+    expect(Number((await deLista(gaseosa.id)).stock_minimo)).toBe(30);
+  });
+
+  it('el mínimo es por empresa y exige el módulo Inventario', async () => {
+    const todos = await ctx.empresa.getModulos();
+    await ctx.empresa.setModulos(todos.filter((m) => m.nombre_codigo !== 'Inventario' && !['Ventas', 'Compras', 'Pedidos', 'Recetas', 'Informes', 'Caja'].includes(m.nombre_codigo)));
+    invalidateAllProfiles();
+    expect((await conEmpresa(agent.get('/api/reposicion'))).status).toBe(403);
+    await ctx.empresa.setModulos(todos);
+    invalidateAllProfiles();
   });
 });

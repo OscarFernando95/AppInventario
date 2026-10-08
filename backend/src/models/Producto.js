@@ -59,6 +59,18 @@ const Producto = sequelize.define('Producto', {
     allowNull: false,
     defaultValue: 0,
   },
+  // Alerta de reposición: 0 = sin alerta. Se compara con el stock (producto, insumo), las porciones
+  // que se pueden preparar (plato) o las unidades que se pueden producir (preparación).
+  stock_minimo: {
+    type: DataTypes.DECIMAL(12, 3),
+    allowNull: false,
+    defaultValue: 0,
+  },
+  // Hasta dónde reponer cuando se llega al mínimo (vacío = el doble del mínimo).
+  stock_objetivo: {
+    type: DataTypes.DECIMAL(12, 3),
+    allowNull: true,
+  },
   // Presentación de compra: "1 <unidad_compra> = <factor_compra> unidades base"
   // (p. ej. KGM -> 1000 con unidad base GRM). Sin unidad_compra se compra en la unidad base.
   unidad_compra: {

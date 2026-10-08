@@ -22,6 +22,10 @@ const producto = z.object({
   porcentaje_iva: porcentajeIva,
   unidad_medida: z.string().trim().max(20).optional(),
   codigo_estandar: textoOpc,
+  // Stock mínimo (0 = sin alerta) y "reponer hasta" (null = el doble del mínimo). Valen para todos los
+  // tipos: en un plato son porciones; en una preparación, unidades producibles.
+  stock_minimo: stockInicial.optional(),
+  stock_objetivo: z.preprocess((v) => (v === '' ? null : v), stockInicial.nullish()),
   // Costo por unidad base (insumos y productos de venta); las compras lo
   // recalculan como promedio ponderado. Hasta 4 decimales (gramos baratos).
   costo_promedio: z.coerce.number().min(0).max(99_999_999).transform((n) => Math.round(n * 10000) / 10000).optional(),

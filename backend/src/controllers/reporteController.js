@@ -1,6 +1,8 @@
 const { Op } = require('sequelize');
-const { Compra, Venta, Producto, Gasto } = require('../models');
+const { Compra, Venta, Gasto } = require('../models');
 const TtlCache = require('../utils/ttlCache');
+const { cargarProductosConReceta } = require('../services/inventarioDb');
+const { analizarProductos } = require('../services/reposicion');
 
 // El dashboard agrega SUM/COUNT sobre ventas y compras; cambia poco entre
 // visitas seguidas. Se cachea 60 s por empresa.
@@ -22,17 +24,32 @@ exports.getDashboardData = async (req, res) => {
   const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
   const enMesActual = { fecha: { [Op.gte]: monthStart, [Op.lt]: monthEnd } };
 
-  const [totalProductos, ventasMes, comprasMes, gastosMes, productosBajoStock] = await Promise.all([
-    Producto.count({ where }),
+  const [ventasMes, comprasMes, gastosMes, productos] = await Promise.all([
     Venta.sum('total', { where: { ...where, estado: 'ACTIVA', ...enMesActual } }),
     Compra.sum('total', { where: { ...where, ...enMesActual } }),
     Gasto.sum('monto', { where: { ...where, estado: 'ACTIVO', ...enMesActual } }),
-    // Platos y preparaciones no tienen stock propio: su disponibilidad es la de sus insumos.
-    Producto.findAll({ where: { ...where, tipo: { [Op.notIn]: ['RECETA', 'PREPARACION'] }, stock_actual: { [Op.lt]: 10 } }, limit: 10 }),
+    cargarProductosConReceta(req.empresaId),
   ]);
 
+  // Alertas de stock mínimo de TODOS los tipos de producto (los más urgentes primero).
+  const analisis = analizarProductos(productos);
+  const productosBajoStock = productos
+    .filter((p) => analisis.get(p.id).alerta)
+    .map((p) => ({
+      id: p.id,
+      nombre_producto: p.nombre_producto,
+      tipo: p.tipo,
+      unidad_medida: p.unidad_medida,
+      stock_actual: Number(p.stock_actual),
+      disponible: analisis.get(p.id).disponible,
+      stock_minimo: Number(p.stock_minimo),
+      estado_stock: analisis.get(p.id).estado,
+    }))
+    .sort((x, y) => (x.estado_stock !== 'AGOTADO') - (y.estado_stock !== 'AGOTADO') || x.disponible / x.stock_minimo - y.disponible / y.stock_minimo)
+    .slice(0, 10);
+
   const payload = {
-    totalProductos,
+    totalProductos: productos.length,
     ventasMes: ventasMes || 0,
     comprasMes: comprasMes || 0,
     gastosMes: gastosMes || 0,

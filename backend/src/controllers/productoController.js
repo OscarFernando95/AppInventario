@@ -5,9 +5,8 @@ const { invalidateDashboard } = require('./reporteController');
 const { COLUMNAS, normalizarCodigo, leerWorkbook, validarFilas } = require('../utils/xlsxImport');
 const logger = require('../utils/logger');
 const { auditar } = require('../utils/audit');
-const {
-  TIPOS_CON_RECETA, construirMapaRecetas, consumoBase, costoDeConsumo, porcionesDisponibles,
-} = require('../services/recetas');
+const { TIPOS_CON_RECETA, consumoBase, costoDeConsumo } = require('../services/recetas');
+const { analizarProductos, objetivoDe } = require('../services/reposicion');
 const { cargarRecetas } = require('../services/recetasDb');
 const { margen } = require('../services/costos');
 
@@ -19,17 +18,21 @@ exports.getProductos = async (req, res) => {
   });
 
   const json = productos.map((p) => p.toJSON());
-  const recetas = construirMapaRecetas(json);
-  const stockPorId = new Map(json.map((p) => [p.id, Number(p.stock_actual)]));
+  const analisis = analizarProductos(json);
   const costoPorId = new Map(json.map((p) => [p.id, Number(p.costo_promedio)]));
 
   res.json(json.map((p) => {
-    // Un plato / preparación no tiene stock ni costo propios: salen de sus ingredientes.
+    const a = analisis.get(p.id);
+    // Disponible = lo que realmente se puede vender/usar: stock (producto, insumo), porciones (plato)
+    // o unidades producibles (preparación). Con él y el mínimo sale el estado de reposición.
+    p.disponible = a.disponible;
+    p.estado_stock = a.estado;
+    p.alerta_stock = a.alerta;
+    p.stock_objetivo_efectivo = objetivoDe(p);
     if (TIPOS_CON_RECETA.includes(p.tipo)) {
-      let consumo;
-      try { consumo = consumoBase(p.id, recetas, 1); } catch { consumo = new Map(); } // ciclo: dato inconsistente
-      p.costo = Math.round(costoDeConsumo(consumo, costoPorId) * 10000) / 10000;
-      if (p.tipo === 'RECETA') p.porciones_disponibles = porcionesDisponibles(consumo, stockPorId);
+      // Un plato / preparación no tiene stock ni costo propios: salen de sus ingredientes.
+      p.costo = Math.round(costoDeConsumo(a.consumo, costoPorId) * 10000) / 10000;
+      if (p.tipo === 'RECETA') p.porciones_disponibles = a.disponible;
     } else {
       p.costo = Number(p.costo_promedio);
     }
@@ -117,9 +120,17 @@ function limpiarPorTipo(datos, tipo) {
   return limpio;
 }
 
+/** "Reponer hasta" no puede quedar por debajo del mínimo (con los valores que quedarían tras guardar). */
+function validarObjetivo(minimo, objetivo) {
+  if (objetivo != null && Number(minimo) > 0 && Number(objetivo) < Number(minimo)) {
+    throw new ValidationError('«Reponer hasta» no puede ser menor que el stock mínimo.');
+  }
+}
+
 exports.createProducto = async (req, res) => {
   const { receta: recetaBody, ...datos } = req.body;
   const tipo = datos.tipo || 'VENTA';
+  validarObjetivo(datos.stock_minimo ?? 0, datos.stock_objetivo);
 
   const producto = await sequelize.transaction(async (t) => {
     const receta = await validarTipoYReceta(req, {
@@ -150,6 +161,10 @@ exports.updateProducto = async (req, res) => {
     if (!actual) return null;
 
     const tipo = datos.tipo || actual.tipo;
+    validarObjetivo(
+      datos.stock_minimo ?? actual.stock_minimo,
+      datos.stock_objetivo !== undefined ? datos.stock_objetivo : actual.stock_objetivo
+    );
     const cambiaTipo = tipo !== actual.tipo;
     if (cambiaTipo) {
       const comoIngrediente = await RecetaItem.count({ where: { insumoId: actual.id }, transaction: t })
