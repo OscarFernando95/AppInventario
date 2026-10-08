@@ -1,6 +1,7 @@
 'use strict';
 
 const { z, textoOpc, emailOpc, enteroOpc } = require('./common');
+const { TIPOS_NEGOCIO } = require('../services/modulos');
 
 // NIT normalizado: sin puntos, guiones ni espacios. Debe coincidir con la
 // normalización de la migración `20260913120000` para que el índice único
@@ -37,6 +38,9 @@ const base = z.object({
   fecha_vigencia_hasta: z.string().trim().optional().transform((v) => v || undefined),
   clave_tecnica: textoOpc,
   tipo_empresa: z.enum(['SIMPLE', 'FACTURACION_ELECTRONICA'], { error: 'Tipo de empresa no válido.' }).optional(),
+  // Dinero con el que la empresa empieza en el software (referencia para medir su crecimiento).
+  capital_inicial: z.preprocess((v) => (v === '' || v == null ? undefined : v), z.coerce.number().min(0).max(99_999_999_999).transform((n) => Math.round(n * 100) / 100).optional()),
+  tipo_negocio: z.enum(TIPOS_NEGOCIO, { error: 'Tipo de negocio no válido.' }).optional(),
   modulosIds: z.array(z.coerce.number().int().positive()).optional(),
 });
 

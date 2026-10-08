@@ -1,18 +1,40 @@
 'use strict';
 
-const { z, nombre, textoOpc, emailOpc, dinero } = require('./common');
+const { z, nombre, textoOpc, emailOpc, dinero, idRef } = require('./common');
+const { TIPOS_PRODUCTO } = require('../services/recetas');
 
 const porcentajeIva = z.coerce.number().min(0).max(100).optional();
+
+// Stock / cantidades de receta: admiten fracciones (g, ml, kg, litros) hasta 3
+// decimales (columna DECIMAL(12,3)).
+const redondear3 = (n) => Math.round(n * 1000) / 1000;
+const stockInicial = z.coerce.number().min(0).max(9_999_999).transform(redondear3);
+const cantidadReceta = z.coerce.number().positive().max(9_999_999).transform(redondear3);
+
+const recetaItem = z.object({ insumoId: idRef, cantidad: cantidadReceta });
 
 const producto = z.object({
   codigo: z.string().trim().min(1).max(100),
   nombre_producto: nombre,
   descripcion: textoOpc,
-  stock_actual: z.coerce.number().int().min(0).optional(),
+  stock_actual: stockInicial.optional(),
   precio_unitario: dinero,
   porcentaje_iva: porcentajeIva,
   unidad_medida: z.string().trim().max(20).optional(),
   codigo_estandar: textoOpc,
+  // Costo por unidad base (insumos y productos de venta); las compras lo
+  // recalculan como promedio ponderado. Hasta 4 decimales (gramos baratos).
+  costo_promedio: z.coerce.number().min(0).max(99_999_999).transform((n) => Math.round(n * 10000) / 10000).optional(),
+  // Presentación de compra: "1 <unidad_compra> = <factor_compra> unidades base".
+  // '' / null la quita (y deja el factor en 1).
+  unidad_compra: z.string().trim().max(30).nullish().transform((v) => (v === undefined ? undefined : (v || null))),
+  factor_compra: z.coerce.number().positive().max(99_999_999).transform((n) => Math.round(n * 1e6) / 1e6).optional(),
+  // Solo preparaciones: cuánto produce la receta (en la unidad del producto).
+  rendimiento: cantidadReceta.optional(),
+  // VENTA (por defecto) | INSUMO | PREPARACION | RECETA. Distinto de VENTA exige el módulo Recetas.
+  tipo: z.enum(TIPOS_PRODUCTO, { error: 'Tipo de producto no válido.' }).optional(),
+  // Ingredientes de un plato o preparación (solo con tipo RECETA / PREPARACION).
+  receta: z.array(recetaItem).max(60).optional(),
 });
 // En update no se toca el stock (lo mueven compras/ventas).
 const productoUpdate = producto.partial().omit({ stock_actual: true });

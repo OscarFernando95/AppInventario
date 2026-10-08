@@ -19,6 +19,10 @@ const Venta = sequelize.define('Venta', {
     type: DataTypes.INTEGER,
     allowNull: true, // Opcional, puede ser un cliente casual sin registro
   },
+  cajaId: {
+    type: DataTypes.INTEGER,
+    allowNull: true, // solo si la empresa tiene el módulo Caja
+  },
   fecha: {
     type: DataTypes.DATE,
     allowNull: false,

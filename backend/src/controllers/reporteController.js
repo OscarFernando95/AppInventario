@@ -1,5 +1,5 @@
 const { Op } = require('sequelize');
-const { Compra, Venta, Producto } = require('../models');
+const { Compra, Venta, Producto, Gasto } = require('../models');
 const TtlCache = require('../utils/ttlCache');
 
 // El dashboard agrega SUM/COUNT sobre ventas y compras; cambia poco entre
@@ -22,17 +22,20 @@ exports.getDashboardData = async (req, res) => {
   const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
   const enMesActual = { fecha: { [Op.gte]: monthStart, [Op.lt]: monthEnd } };
 
-  const [totalProductos, ventasMes, comprasMes, productosBajoStock] = await Promise.all([
+  const [totalProductos, ventasMes, comprasMes, gastosMes, productosBajoStock] = await Promise.all([
     Producto.count({ where }),
     Venta.sum('total', { where: { ...where, ...enMesActual } }),
     Compra.sum('total', { where: { ...where, ...enMesActual } }),
-    Producto.findAll({ where: { ...where, stock_actual: { [Op.lt]: 10 } }, limit: 10 }),
+    Gasto.sum('monto', { where: { ...where, estado: 'ACTIVO', ...enMesActual } }),
+    // Platos y preparaciones no tienen stock propio: su disponibilidad es la de sus insumos.
+    Producto.findAll({ where: { ...where, tipo: { [Op.notIn]: ['RECETA', 'PREPARACION'] }, stock_actual: { [Op.lt]: 10 } }, limit: 10 }),
   ]);
 
   const payload = {
     totalProductos,
     ventasMes: ventasMes || 0,
     comprasMes: comprasMes || 0,
+    gastosMes: gastosMes || 0,
     productosBajoStock,
   };
   dashboardCache.set(key, payload);

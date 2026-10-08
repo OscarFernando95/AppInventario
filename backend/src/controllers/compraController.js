@@ -1,3 +1,6 @@
+const { TIPOS_CON_RECETA } = require('../services/recetas');
+const { promedioPonderado } = require('../services/costos');
+const { aUnidadBase, presentacionDe } = require('../services/presentacion');
 const { sequelize, Compra, CompraDetalle, Producto, Proveedor, Usuario } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
@@ -6,6 +9,7 @@ const { invalidateDashboard } = require('./reporteController');
 const { invalidateInforme } = require('./informeController');
 const { calcularTotalCompra } = require('../services/calculo');
 const { auditar } = require('../utils/audit');
+const { registrarEgreso } = require('../services/cajaService');
 
 exports.getCompras = async (req, res) => {
   const { limit, offset } = parseListQuery(req.query);
@@ -30,7 +34,10 @@ exports.getCompras = async (req, res) => {
 exports.createCompra = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    const { proveedorId, detalles } = req.body;
+    const { proveedorId, detalles, pago_desde_caja: desdeCaja } = req.body;
+    if (desdeCaja && !req.empresaModulos?.has('Caja')) {
+      throw new ValidationError('El módulo "Caja" no está activo: no se puede pagar desde la caja.');
+    }
 
     const proveedor = await Proveedor.findOne({
       where: { id: proveedorId, empresaId: req.empresaId },
@@ -50,7 +57,22 @@ exports.createCompra = async (req, res) => {
     const porId = new Map(productos.map((p) => [p.id, p]));
     for (const id of productoIds) {
       if (!porId.has(id)) throw new ValidationError('Producto inválido en un detalle de la compra.');
+      if (TIPOS_CON_RECETA.includes(porId.get(id).tipo)) {
+        throw new ValidationError(`"${porId.get(id).nombre_producto}" es un plato o preparación; no se compra (se compran sus ingredientes).`);
+      }
     }
+
+    // Cada línea se lleva a la unidad BASE del producto (si se capturó en kg, caja…).
+    // El total sale de los valores originales: cantidad × costo no cambia al convertir.
+    const lineas = detalles.map((d) => {
+      const prod = d.productoId ? porId.get(d.productoId) : null;
+      const base = aUnidadBase(
+        { cantidad: d.cantidad, costo: d.costo_unitario, enPresentacion: d.en_presentacion },
+        presentacionDe(prod),
+        prod?.nombre_producto
+      );
+      return { d, base };
+    });
 
     const total = calcularTotalCompra(
       detalles.map((d) => ({ cantidad: d.cantidad, costoUnitario: d.costo_unitario }))
@@ -64,31 +86,41 @@ exports.createCompra = async (req, res) => {
     }, { transaction: t });
 
     await CompraDetalle.bulkCreate(
-      detalles.map((d) => ({
+      lineas.map(({ d, base }) => ({
         compraId: compra.id,
         productoId: d.productoId || null,
         descripcion_gasto: d.descripcion_gasto || null,
-        cantidad: Number(d.cantidad),
-        costo_unitario: Number(d.costo_unitario),
+        cantidad: base.cantidad,
+        costo_unitario: base.costo,
+        unidad_presentacion: base.unidad_presentacion,
+        factor_presentacion: base.factor_presentacion,
       })),
       { transaction: t }
     );
 
-    // Sumar al stock (acumulando por producto si aparece en varias líneas).
-    const sumaPorProducto = new Map();
-    for (const d of detalles) {
+    // Sumar al stock y recalcular el costo promedio (cada línea entra con su propio
+    // costo, ya por unidad base).
+    for (const { d, base } of lineas) {
       if (!d.productoId) continue;
-      sumaPorProducto.set(d.productoId, (sumaPorProducto.get(d.productoId) || 0) + Number(d.cantidad));
+      const p = porId.get(d.productoId);
+      await p.update(
+        {
+          stock_actual: Number(p.stock_actual) + base.cantidad,
+          costo_promedio: promedioPonderado(p.stock_actual, p.costo_promedio, base.cantidad, base.costoExacto),
+        },
+        { transaction: t }
+      );
     }
-    for (const [id, delta] of sumaPorProducto) {
-      const p = porId.get(id);
-      await p.update({ stock_actual: Number(p.stock_actual) + delta }, { transaction: t });
+
+    // Pagada en efectivo de la caja: queda como egreso del turno (resta del efectivo esperado).
+    if (desdeCaja) {
+      await registrarEgreso(req, t, { tipo: 'COMPRA', concepto: `Compra #${compra.id} · ${proveedor.nombre}`, monto: total, compraId: compra.id });
     }
 
     await t.commit();
     invalidateDashboard(req.empresaId);
     invalidateInforme(req.empresaId);
-    auditar(req, 'compra_creada', { compraId: compra.id, total, proveedorId: compra.proveedorId });
+    auditar(req, 'compra_creada', { compraId: compra.id, total, proveedorId: compra.proveedorId, proveedorNombre: proveedor.nombre, pagoDesdeCaja: !!desdeCaja });
     res.status(201).json(compra);
   } catch (error) {
     await t.rollback();

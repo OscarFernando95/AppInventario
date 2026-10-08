@@ -1,35 +1,189 @@
 const ExcelJS = require('exceljs');
-const { sequelize, Producto } = require('../models');
+const { sequelize, Producto, RecetaItem, ModificadorItem } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { invalidateDashboard } = require('./reporteController');
 const { COLUMNAS, normalizarCodigo, leerWorkbook, validarFilas } = require('../utils/xlsxImport');
 const logger = require('../utils/logger');
 const { auditar } = require('../utils/audit');
+const {
+  TIPOS_CON_RECETA, construirMapaRecetas, consumoBase, costoDeConsumo, porcionesDisponibles,
+} = require('../services/recetas');
+const { cargarRecetas } = require('../services/recetasDb');
+const { margen } = require('../services/costos');
 
 exports.getProductos = async (req, res) => {
   const productos = await Producto.findAll({
     where: { empresaId: req.empresaId },
+    include: [{ model: RecetaItem, as: 'receta', attributes: ['insumoId', 'cantidad'] }],
     order: [['nombre_producto', 'ASC']],
   });
-  res.json(productos);
+
+  const json = productos.map((p) => p.toJSON());
+  const recetas = construirMapaRecetas(json);
+  const stockPorId = new Map(json.map((p) => [p.id, Number(p.stock_actual)]));
+  const costoPorId = new Map(json.map((p) => [p.id, Number(p.costo_promedio)]));
+
+  res.json(json.map((p) => {
+    // Un plato / preparación no tiene stock ni costo propios: salen de sus ingredientes.
+    if (TIPOS_CON_RECETA.includes(p.tipo)) {
+      let consumo;
+      try { consumo = consumoBase(p.id, recetas, 1); } catch { consumo = new Map(); } // ciclo: dato inconsistente
+      p.costo = Math.round(costoDeConsumo(consumo, costoPorId) * 10000) / 10000;
+      if (p.tipo === 'RECETA') p.porciones_disponibles = porcionesDisponibles(consumo, stockPorId);
+    } else {
+      p.costo = Number(p.costo_promedio);
+    }
+    // Margen sobre el precio SIN IVA (el precio de lista incluye IVA).
+    if (p.tipo === 'RECETA' || p.tipo === 'VENTA') Object.assign(p, margen(p.precio_unitario, p.porcentaje_iva, p.costo));
+    return p;
+  }));
 };
 
+/**
+ * Valida tipo + receta de un producto y devuelve los ingredientes ya limpios.
+ *   - tipo distinto de VENTA exige el módulo Recetas.
+ *   - RECETA / PREPARACION: al menos 1 ingrediente; sin repetidos; ingredientes de
+ *     la misma empresa que no sean platos; ni el propio producto; sin ciclos
+ *     entre preparaciones.
+ *   - Otros tipos: no admiten receta.
+ * `recetaBody` undefined = "no tocar la receta existente" (solo en update).
+ */
+async function validarTipoYReceta(req, { tipo, recetaBody, productoId, rendimiento, t }) {
+  if (tipo !== 'VENTA' && !req.empresaModulos?.has('Recetas')) {
+    throw new ValidationError('El módulo "Recetas" no está activo para esta empresa.');
+  }
+  if (!TIPOS_CON_RECETA.includes(tipo)) {
+    if (recetaBody && recetaBody.length > 0) throw new ValidationError('Solo un plato o una preparación admite ingredientes.');
+    return [];
+  }
+  if (recetaBody === undefined) return undefined;
+  if (recetaBody.length === 0) throw new ValidationError('Un plato o preparación necesita al menos un ingrediente.');
+
+  const ids = recetaBody.map((i) => i.insumoId);
+  if (new Set(ids).size !== ids.length) throw new ValidationError('Hay ingredientes repetidos en la receta.');
+  if (productoId && ids.includes(productoId)) throw new ValidationError('Un producto no puede ser ingrediente de sí mismo.');
+
+  const insumos = await Producto.findAll({ where: { id: ids, empresaId: req.empresaId }, transaction: t });
+  if (insumos.length !== ids.length) throw new ValidationError('Ingrediente inválido en la receta.');
+  const plato = insumos.find((i) => i.tipo === 'RECETA');
+  if (plato) throw new ValidationError(`"${plato.nombre_producto}" es un plato; no puede ser ingrediente.`);
+
+  // Ciclos (A usa B y B usa A): se prueba la receta nueva sobre las existentes.
+  if (productoId) {
+    const recetas = await cargarRecetas(req.empresaId, {
+      transaction: t,
+      overrides: new Map([[productoId, { rendimiento: tipo === 'RECETA' ? 1 : rendimiento, items: recetaBody }]]),
+    });
+    try {
+      consumoBase(productoId, recetas, 1);
+    } catch {
+      throw new ValidationError('La receta genera un ciclo: una preparación termina usándose a sí misma.');
+    }
+  }
+  return recetaBody;
+}
+
+/**
+ * Presentación de compra coherente: sin unidad_compra el factor vuelve a 1; con
+ * unidad hay que decir cuántas unidades base trae. Platos y preparaciones no se
+ * compran, así que tampoco llevan presentación.
+ */
+function normalizarPresentacion(datos, tipo, actual) {
+  const out = { ...datos };
+  if (TIPOS_CON_RECETA.includes(tipo)) {
+    if (out.unidad_compra) throw new ValidationError('Un plato o preparación no se compra: no lleva presentación de compra.');
+    out.unidad_compra = null;
+    out.factor_compra = 1;
+    return out;
+  }
+  const unidad = out.unidad_compra !== undefined ? out.unidad_compra : actual?.unidad_compra;
+  if (!unidad) {
+    if (out.unidad_compra !== undefined) { out.unidad_compra = null; out.factor_compra = 1; }
+    return out;
+  }
+  // Si se manda la unidad hay que mandar también el factor (no se hereda el de otra unidad).
+  const factor = out.unidad_compra ? out.factor_compra : (out.factor_compra ?? Number(actual?.factor_compra));
+  if (!(factor > 0)) {
+    throw new ValidationError('Indica cuántas unidades base trae la presentación de compra (factor).');
+  }
+  return out;
+}
+
+/** Campos que no aplican según el tipo: costo en platos/preparaciones, rendimiento fuera de preparaciones. */
+function limpiarPorTipo(datos, tipo) {
+  const limpio = { ...datos };
+  if (TIPOS_CON_RECETA.includes(tipo)) delete limpio.costo_promedio;
+  if (tipo !== 'PREPARACION') delete limpio.rendimiento;
+  return limpio;
+}
+
 exports.createProducto = async (req, res) => {
-  const producto = await Producto.create({ ...req.body, empresaId: req.empresaId });
+  const { receta: recetaBody, ...datos } = req.body;
+  const tipo = datos.tipo || 'VENTA';
+
+  const producto = await sequelize.transaction(async (t) => {
+    const receta = await validarTipoYReceta(req, {
+      tipo, recetaBody: recetaBody ?? (TIPOS_CON_RECETA.includes(tipo) ? [] : undefined), rendimiento: datos.rendimiento || 1, t,
+    });
+    // El stock de un plato / preparación no se usa (se vende con el de sus insumos).
+    const nuevo = await Producto.create(
+      { ...limpiarPorTipo(normalizarPresentacion(datos, tipo), tipo), tipo, empresaId: req.empresaId, ...(TIPOS_CON_RECETA.includes(tipo) ? { stock_actual: 0 } : {}) },
+      { transaction: t }
+    );
+    if (receta && receta.length > 0) {
+      await RecetaItem.bulkCreate(receta.map((i) => ({ productoId: nuevo.id, insumoId: i.insumoId, cantidad: i.cantidad })), { transaction: t });
+    }
+    return nuevo;
+  });
+
   invalidateDashboard(req.empresaId);
-  auditar(req, 'producto_creado', { productoId: producto.id, codigo: producto.codigo });
+  auditar(req, 'producto_creado', { productoId: producto.id, nombre_producto: producto.nombre_producto, codigo: producto.codigo, tipo });
   res.status(201).json(producto);
 };
 
 exports.updateProducto = async (req, res) => {
   const { id } = req.params;
-  const producto = await Producto.findOne({ where: { id, empresaId: req.empresaId } });
+  const { receta: recetaBody, ...datos } = req.body;
+
+  const producto = await sequelize.transaction(async (t) => {
+    const actual = await Producto.findOne({ where: { id, empresaId: req.empresaId }, transaction: t, lock: t.LOCK.UPDATE });
+    if (!actual) return null;
+
+    const tipo = datos.tipo || actual.tipo;
+    const cambiaTipo = tipo !== actual.tipo;
+    if (cambiaTipo) {
+      const comoIngrediente = await RecetaItem.count({ where: { insumoId: actual.id }, transaction: t })
+        + await ModificadorItem.count({ where: { insumoId: actual.id }, transaction: t });
+      if (comoIngrediente > 0 && (tipo === 'RECETA' || actual.tipo === 'PREPARACION')) {
+        throw new ValidationError(tipo === 'RECETA'
+          ? 'Este producto es ingrediente de otros platos o modificadores; no puede convertirse en plato.'
+          : 'Esta preparación se usa como ingrediente; no puede dejar de ser preparación.');
+      }
+    }
+
+    // Al convertir en plato/preparación hay que mandar la receta; si ya lo era y
+    // no se manda, se conserva la que tiene.
+    const nuevoConReceta = TIPOS_CON_RECETA.includes(tipo) && !TIPOS_CON_RECETA.includes(actual.tipo);
+    const pedirReceta = nuevoConReceta ? (recetaBody ?? []) : recetaBody;
+    const rendimiento = datos.rendimiento ?? Number(actual.rendimiento);
+    const receta = await validarTipoYReceta(req, { tipo, recetaBody: pedirReceta, productoId: actual.id, rendimiento, t });
+
+    // El stock lo mueven compras/ventas, no esta edición (el esquema lo omite).
+    await actual.update({ ...limpiarPorTipo(normalizarPresentacion(datos, tipo, actual), tipo), tipo }, { transaction: t });
+
+    // Receta: si cambia o el producto deja de tener receta, se reemplaza completa.
+    if (receta !== undefined) {
+      await RecetaItem.destroy({ where: { productoId: actual.id }, transaction: t });
+      if (receta.length > 0) {
+        await RecetaItem.bulkCreate(receta.map((i) => ({ productoId: actual.id, insumoId: i.insumoId, cantidad: i.cantidad })), { transaction: t });
+      }
+    }
+    return actual;
+  });
   if (!producto) return res.status(404).json({ error: 'Producto no encontrado' });
 
-  // El stock lo mueven compras/ventas, no esta edición (el esquema lo omite).
-  await producto.update(req.body);
   invalidateDashboard(req.empresaId);
-  auditar(req, 'producto_actualizado', { productoId: producto.id, codigo: producto.codigo });
+  auditar(req, 'producto_actualizado', { productoId: producto.id, nombre_producto: producto.nombre_producto, codigo: producto.codigo, tipo: producto.tipo });
   res.json(producto);
 };
 

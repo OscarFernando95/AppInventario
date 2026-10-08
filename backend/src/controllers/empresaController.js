@@ -3,6 +3,7 @@ const { ValidationError } = require('../utils/errors');
 const { invalidateAllProfiles } = require('../middlewares/auth');
 const { auditar } = require('../utils/audit');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
+const { dependenciasFaltantes, mensajeDependencias } = require('../services/modulos');
 
 /**
  * Comprueba que todos los ids de módulo existan. Antes, un id inexistente
@@ -21,12 +22,15 @@ function traducirNitDuplicado(err) {
 
 async function validarModulos(modulosIds) {
   if (!modulosIds || modulosIds.length === 0) return;
-  const encontrados = await Modulo.findAll({ where: { id: modulosIds }, attributes: ['id'] });
-  if (encontrados.length !== modulosIds.length) {
+  const encontrados = await Modulo.findAll({ where: { id: modulosIds }, attributes: ['id', 'nombre_codigo'] });
+  if (encontrados.length !== new Set(modulosIds).size) {
     const ok = new Set(encontrados.map((m) => m.id));
     const faltan = modulosIds.filter((id) => !ok.has(id));
     throw new ValidationError(`Módulos inexistentes: ${faltan.join(', ')}`);
   }
+  // Módulos "amarrados": no se puede contratar uno sin los que requiere.
+  const problemas = dependenciasFaltantes(encontrados.map((m) => m.nombre_codigo));
+  if (problemas.length > 0) throw new ValidationError(mensajeDependencias(problemas));
 }
 
 exports.getEmpresas = async (req, res) => {
@@ -72,6 +76,7 @@ exports.updateEmpresa = async (req, res) => {
 
   await validarModulos(modulosIds);
 
+  const capitalAntes = Number(empresa.capital_inicial);
   try {
     await empresa.update(datos);
   } catch (err) {
@@ -85,5 +90,8 @@ exports.updateEmpresa = async (req, res) => {
 
   const actualizada = await Empresa.findByPk(id, { include: Modulo });
   auditar(req, 'empresa_actualizada', { empresaId: actualizada.id, nombre: actualizada.nombre });
+  if (Number(actualizada.capital_inicial) !== capitalAntes) {
+    auditar(req, 'capital_inicial_cambiado', { empresaId: actualizada.id, antes: capitalAntes, despues: Number(actualizada.capital_inicial) });
+  }
   res.json(actualizada);
 };

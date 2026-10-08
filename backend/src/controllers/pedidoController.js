@@ -1,3 +1,6 @@
+const { TIPOS_CON_RECETA } = require('../services/recetas');
+const { promedioPonderado } = require('../services/costos');
+const { aUnidadBase, presentacionDe } = require('../services/presentacion');
 const { sequelize, Pedido, PedidoDetalle, Proveedor, Producto, Compra, CompraDetalle } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
@@ -6,6 +9,7 @@ const { invalidateDashboard } = require('./reporteController');
 const { invalidateInforme } = require('./informeController');
 const { calcularTotalCompra } = require('../services/calculo');
 const { auditar } = require('../utils/audit');
+const { registrarEgreso } = require('../services/cajaService');
 
 exports.getPedidos = async (req, res) => {
   const { limit, offset } = parseListQuery(req.query);
@@ -21,7 +25,7 @@ exports.getPedidos = async (req, res) => {
       { model: Proveedor, attributes: ['nombre', 'nit', 'contacto', 'email', 'telefono'] },
       {
         model: PedidoDetalle,
-        include: [{ model: Producto, attributes: ['nombre_producto', 'codigo'] }],
+        include: [{ model: Producto, attributes: ['nombre_producto', 'codigo', 'unidad_medida', 'unidad_compra', 'factor_compra'] }],
       },
     ],
     order: [['fecha_pedido', 'DESC']],
@@ -44,12 +48,25 @@ exports.createPedido = async (req, res) => {
     });
     if (!proveedor) throw new ValidationError('Proveedor inválido');
 
+    // Cada línea se lleva a la unidad BASE del producto (si se pidió en kg, caja…).
+    const lineas = [];
     for (const item of detalles) {
       const producto = await Producto.findOne({
         where: { id: item.productoId, empresaId: req.empresaId },
         transaction: t,
       });
       if (!producto) throw new ValidationError('Producto inválido en un detalle del pedido.');
+      if (TIPOS_CON_RECETA.includes(producto.tipo)) {
+        throw new ValidationError(`"${producto.nombre_producto}" es un plato o preparación; no se pide (se piden sus ingredientes).`);
+      }
+      lineas.push({
+        item,
+        base: aUnidadBase(
+          { cantidad: item.cantidad_pedida, costo: item.costo_estimado, enPresentacion: item.en_presentacion },
+          presentacionDe(producto),
+          producto.nombre_producto
+        ),
+      });
     }
 
     const totalEstimado = calcularTotalCompra(
@@ -64,17 +81,19 @@ exports.createPedido = async (req, res) => {
     }, { transaction: t });
 
     await PedidoDetalle.bulkCreate(
-      detalles.map((d) => ({
+      lineas.map(({ item, base }) => ({
         pedidoId: pedido.id,
-        productoId: d.productoId,
-        cantidad_pedida: Number(d.cantidad_pedida),
-        costo_estimado: Number(d.costo_estimado),
+        productoId: item.productoId,
+        cantidad_pedida: base.cantidad,
+        costo_estimado: base.costo,
+        unidad_presentacion: base.unidad_presentacion,
+        factor_presentacion: base.factor_presentacion,
       })),
       { transaction: t }
     );
 
     await t.commit();
-    auditar(req, 'pedido_creado', { pedidoId: pedido.id, total_estimado: totalEstimado, proveedorId });
+    auditar(req, 'pedido_creado', { pedidoId: pedido.id, total_estimado: totalEstimado, proveedorId, proveedorNombre: proveedor.nombre });
     res.status(201).json(pedido);
   } catch (error) {
     await t.rollback();
@@ -91,7 +110,10 @@ exports.checkInPedido = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { id } = req.params;
-    const { detalles_recibidos } = req.body;
+    const { detalles_recibidos, pago_desde_caja: desdeCaja } = req.body;
+    if (desdeCaja && !req.empresaModulos?.has('Caja')) {
+      throw new ValidationError('El módulo "Caja" no está activo: no se puede pagar desde la caja.');
+    }
 
     // Lock de la fila del pedido: dos recepciones concurrentes del mismo pedido
     // no pueden leer ambas `estado = 'PENDIENTE'` y abonar el stock dos veces.
@@ -124,11 +146,22 @@ exports.checkInPedido = async (req, res) => {
         lock: t.LOCK.UPDATE,
       });
       if (!producto) throw new ValidationError('Producto inválido en la recepción del pedido.');
-      items.push({ producto, linea, cantidad, costo: Number(item.costo_unitario) });
+      // Lo recibido puede capturarse en la presentación (kg, caja…): se usa la de la
+      // línea del pedido (foto) o, si se pidió en unidad base, la del producto.
+      const presentacion = linea.unidad_presentacion
+        ? { unidad: linea.unidad_presentacion, factor: Number(linea.factor_presentacion) }
+        : presentacionDe(producto);
+      const base = aUnidadBase(
+        { cantidad, costo: item.costo_unitario, enPresentacion: item.en_presentacion },
+        presentacion,
+        producto.nombre_producto
+      );
+      items.push({ producto, linea, cantidad: base.cantidad, costo: base.costo, costoExacto: base.costoExacto, base, totalLinea: cantidad * Number(item.costo_unitario) });
     }
     if (items.length === 0) throw new ValidationError('No se recibió ninguna cantidad.');
 
-    const totalReal = calcularTotalCompra(items.map((i) => ({ cantidad: i.cantidad, costoUnitario: i.costo })));
+    // El total sale de lo capturado (cantidad × costo no cambia al convertir de unidad).
+    const totalReal = Math.round(items.reduce((acc, i) => acc + i.totalLinea, 0) * 100) / 100;
 
     const compra = await Compra.create({
       empresaId: req.empresaId,
@@ -144,13 +177,18 @@ exports.checkInPedido = async (req, res) => {
         productoId: i.producto.id,
         cantidad: i.cantidad,
         costo_unitario: i.costo,
+        unidad_presentacion: i.base.unidad_presentacion,
+        factor_presentacion: i.base.factor_presentacion,
       })),
       { transaction: t }
     );
 
     for (const i of items) {
       await i.producto.update(
-        { stock_actual: Number(i.producto.stock_actual) + i.cantidad },
+        {
+          stock_actual: Number(i.producto.stock_actual) + i.cantidad,
+          costo_promedio: promedioPonderado(i.producto.stock_actual, i.producto.costo_promedio, i.cantidad, i.costoExacto),
+        },
         { transaction: t }
       );
       // Acumular lo recibido en la línea del pedido.
@@ -168,10 +206,16 @@ exports.checkInPedido = async (req, res) => {
     const nuevoEstado = todoRecibido ? 'COMPLETADO' : 'PARCIAL';
     await pedido.update({ estado: nuevoEstado }, { transaction: t });
 
+    // La mercancía recibida se pagó en efectivo de la caja: egreso del turno.
+    if (desdeCaja) {
+      await registrarEgreso(req, t, { tipo: 'COMPRA', concepto: `Recepción pedido #${pedido.id}`, monto: totalReal, compraId: compra.id });
+    }
+
+    const proveedorNombre = (await Proveedor.findByPk(pedido.proveedorId, { attributes: ['nombre'], transaction: t }))?.nombre;
     await t.commit();
     invalidateDashboard(req.empresaId);
     invalidateInforme(req.empresaId);
-    auditar(req, 'pedido_recibido', { pedidoId: pedido.id, compraId: compra.id, completo: todoRecibido });
+    auditar(req, 'pedido_recibido', { pedidoId: pedido.id, compraId: compra.id, completo: todoRecibido, proveedorNombre });
     res.status(200).json({
       compraId: compra.id,
       estado: nuevoEstado,

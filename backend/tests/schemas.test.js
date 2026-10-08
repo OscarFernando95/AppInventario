@@ -75,23 +75,20 @@ describe('compraCreate', () => {
     expect(compraCreate.safeParse({ detalles: [{ productoId: 1, cantidad: 1, costo_unitario: 5 }] }).success).toBe(false);
   });
 
-  it('acepta línea de gasto sin productoId', () => {
+  it('rechaza una línea sin producto: los gastos ya no van en una compra', () => {
     const r = compraCreate.safeParse({
       proveedorId: 3,
       detalles: [{ descripcion_gasto: 'Flete', cantidad: 1, costo_unitario: 20000 }],
     });
-    expect(r.success).toBe(true);
+    expect(r.success).toBe(false);
   });
 
-  it('tolera productoId:null / descripcion_gasto:null (payload del POS)', () => {
-    const r = compraCreate.safeParse({
-      proveedorId: 3,
-      detalles: [
-        { productoId: 7, descripcion_gasto: null, cantidad: 2, costo_unitario: 100 },
-        { productoId: null, descripcion_gasto: 'Flete', cantidad: 1, costo_unitario: 50 },
-      ],
-    });
+  it('exige proveedor y acepta pago desde la caja', () => {
+    const base = { detalles: [{ productoId: 7, cantidad: 2, costo_unitario: 100 }] };
+    expect(compraCreate.safeParse({ ...base, proveedorId: null }).success).toBe(false);
+    const r = compraCreate.safeParse({ ...base, proveedorId: 3, pago_desde_caja: true });
     expect(r.success).toBe(true);
+    expect(r.data.pago_desde_caja).toBe(true);
   });
 });
 

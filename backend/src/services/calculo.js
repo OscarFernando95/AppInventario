@@ -48,6 +48,8 @@ function calcularVenta(lineas, descuentoGlobalPct = 0) {
       porcentaje_iva: iva,
       valor_iva: ivaLinea,
       subtotal_bruto: subtotalLinea,
+      costo_unitario: Number(l.costoUnitario || 0),
+      modificadores: l.modificadores && l.modificadores.length ? l.modificadores : null,
     };
   });
 

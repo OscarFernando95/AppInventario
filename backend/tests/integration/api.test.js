@@ -25,6 +25,13 @@ afterAll(async () => {
   await models.sequelize.close();
 });
 
+// YYYY-MM-DD de hoy en hora LOCAL (como lo interpretan los filtros del servidor);
+// new Date().toISOString() daría la fecha UTC, que de noche en Colombia ya es mañana.
+const fechaLocal = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 const withEmpresa = (req) => req.set('X-Empresa-Id', String(ctx.empresa.id));
 
 describe('POST /api/ventas — importes (N1) y precio de línea (N2)', () => {
@@ -167,7 +174,7 @@ describe('N5 — informes con zona horaria', () => {
     });
     expect(venta.status).toBe(201);
 
-    const hoy = new Date().toISOString().slice(0, 10); // YYYY-MM-DD (hora local del server)
+    const hoy = fechaLocal(); // YYYY-MM-DD en hora LOCAL del server (toISOString daría el día UTC)
     const inf = await withEmpresa(agent.get('/api/informes')).query({ tipo: 'ventas_resumen', start: hoy, end: hoy });
     expect(inf.status).toBe(200);
     expect(inf.body.some((v) => v.id === venta.body.id)).toBe(true);
@@ -399,5 +406,1413 @@ describe('Fase 9 — NIT de empresa único', () => {
     await expect(
       models.Empresa.create({ nombre: 'SinNit-2', tipo_empresa: 'SIMPLE' })
     ).resolves.toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Restaurantes: módulos amarrados, recetas e inventario por ingredientes, caja
+// ---------------------------------------------------------------------------
+
+/** Deja la empresa base con los módulos base + los extra indicados. */
+async function activarModulos(extra = []) {
+  const todos = await models.Modulo.findAll();
+  const base = ['Inventario', 'Ventas', 'Compras', 'Proveedores', 'Informes', 'Clientes', 'Servicios', 'Pedidos', 'Gastos'];
+  const nombres = new Set([...base, ...extra]);
+  await ctx.empresa.setModulos(todos.filter((m) => nombres.has(m.nombre_codigo)).map((m) => m.id));
+  invalidateAllProfiles(); // el cambio directo no pasa por el controlador
+}
+
+describe('Módulos amarrados (dependencias) y tipo de negocio', () => {
+  let bo; // agente BACKOFFICE_ADMIN
+  let ids; // nombre -> id de módulo
+
+  beforeAll(async () => {
+    const admin = await models.Usuario.create({
+      rolId: 1, nombre: 'BO', username: 'boadmin',
+      contrasena_hash: await bcrypt.hash('Clave1234', 10), estado: true, must_change_password: false,
+    });
+    expect(admin.id).toBeTruthy();
+    bo = request.agent(app);
+    const login = await bo.post('/api/auth/login').send({ username: 'boadmin', contrasena: 'Clave1234' });
+    expect(login.status).toBe(200);
+    ids = Object.fromEntries((await models.Modulo.findAll()).map((m) => [m.nombre_codigo, m.id]));
+  });
+
+  it('GET /api/modulos expone lo que requiere cada módulo', async () => {
+    const res = await bo.get('/api/modulos');
+    expect(res.status).toBe(200);
+    const ventas = res.body.find((m) => m.nombre_codigo === 'Ventas');
+    expect(ventas.requiere).toEqual(['Inventario', 'Clientes']);
+    expect(res.body.find((m) => m.nombre_codigo === 'Recetas').requiere).toEqual(['Inventario']);
+  });
+
+  it('rechaza contratar Ventas sin Inventario ni Clientes', async () => {
+    const res = await bo.post('/api/empresas').send({ nombre: 'Solo Ventas', nit: '901000001', modulosIds: [ids.Ventas] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Ventas requiere Inventario y Clientes/);
+  });
+
+  it('rechaza Compras sin Proveedores y reporta todas las carencias', async () => {
+    const res = await bo.post('/api/empresas').send({
+      nombre: 'Compras mal', nit: '901000002', modulosIds: [ids.Inventario, ids.Compras, ids.Caja],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Compras requiere Proveedores/);
+    expect(res.body.error).toMatch(/Caja requiere Ventas/);
+  });
+
+  it('crea un restaurante con módulos completos y guarda su tipo de negocio', async () => {
+    const res = await bo.post('/api/empresas').send({
+      nombre: 'Café Central', nit: '901000003', tipo_negocio: 'RESTAURANTE',
+      modulosIds: [ids.Inventario, ids.Clientes, ids.Ventas, ids.Recetas, ids.Caja],
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.tipo_negocio).toBe('RESTAURANTE');
+    expect(res.body.Modulos.map((m) => m.nombre_codigo).sort()).toEqual(['Caja', 'Clientes', 'Inventario', 'Recetas', 'Ventas']);
+  });
+
+  it('el tipo de negocio es COMERCIO por defecto y se puede cambiar al editar', async () => {
+    const creada = await bo.post('/api/empresas').send({ nombre: 'Tienda', nit: '901000004', modulosIds: [ids.Inventario] });
+    expect(creada.status).toBe(201);
+    expect(creada.body.tipo_negocio).toBe('COMERCIO');
+
+    const editada = await bo.put(`/api/empresas/${creada.body.id}`).send({ tipo_negocio: 'RESTAURANTE' });
+    expect(editada.status).toBe(200);
+    expect(editada.body.tipo_negocio).toBe('RESTAURANTE');
+  });
+
+  it('rechaza un tipo de negocio desconocido', async () => {
+    const res = await bo.post('/api/empresas').send({ nombre: 'X', nit: '901000005', tipo_negocio: 'FABRICA' });
+    expect(res.status).toBe(400);
+  });
+
+  it('al editar también valida las dependencias', async () => {
+    const creada = await bo.post('/api/empresas').send({ nombre: 'Edit', nit: '901000006', modulosIds: [ids.Inventario] });
+    const res = await bo.put(`/api/empresas/${creada.body.id}`).send({ modulosIds: [ids.Inventario, ids.Pedidos] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Pedidos requiere Proveedores/);
+  });
+});
+
+describe('Restaurante — insumos, recetas y venta de platos', () => {
+  let leche; let cafe; let capuchino;
+
+  const crearProducto = (body) => conEmpresa(agent.post('/api/productos')).send({
+    precio_unitario: 1000, porcentaje_iva: 0, ...body,
+  });
+  const stockDe = async (id) => Number((await models.Producto.findByPk(id)).stock_actual);
+  const vender = (productoId, cantidad, extra = {}) => conEmpresa(agent.post('/api/ventas')).send({
+    clienteId: ctx.cliente.id,
+    detalles: [{ productoId, cantidad, precio_unitario: 6000, precio_base: 6000 }],
+    ...extra,
+  });
+
+  beforeAll(async () => { await activarModulos([]); });
+  afterAll(async () => { await activarModulos([]); });
+
+  it('sin el módulo Recetas no se crean insumos ni platos', async () => {
+    const res = await crearProducto({ codigo: 'X-INS', nombre_producto: 'Sin módulo', tipo: 'INSUMO' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Recetas/);
+  });
+
+  it('crea insumos con stock fraccionario y un plato con su receta', async () => {
+    await activarModulos(['Recetas']);
+    const l = await crearProducto({ codigo: 'LECHE', nombre_producto: 'Leche', tipo: 'INSUMO', unidad_medida: 'MLT', stock_actual: 1000 });
+    const c = await crearProducto({ codigo: 'CAFE', nombre_producto: 'Café molido', tipo: 'INSUMO', unidad_medida: 'GRM', stock_actual: 100.5 });
+    expect(l.status).toBe(201);
+    expect(c.status).toBe(201);
+    leche = l.body; cafe = c.body;
+    expect(Number(c.body.stock_actual)).toBe(100.5);
+
+    const plato = await crearProducto({
+      codigo: 'CAPU', nombre_producto: 'Capuchino', tipo: 'RECETA', precio_unitario: 6000, stock_actual: 99,
+      receta: [{ insumoId: leche.id, cantidad: 200 }, { insumoId: cafe.id, cantidad: 15 }],
+    });
+    expect(plato.status).toBe(201);
+    capuchino = plato.body;
+    expect(Number(capuchino.stock_actual)).toBe(0); // el stock propio de un plato se ignora
+  });
+
+  it('GET /api/productos devuelve la receta y las porciones disponibles', async () => {
+    const res = await conEmpresa(agent.get('/api/productos'));
+    const plato = res.body.find((p) => p.id === capuchino.id);
+    expect(plato.receta).toHaveLength(2);
+    // leche: 1000/200 = 5 · café: 100.5/15 = 6.7 -> manda la leche
+    expect(plato.porciones_disponibles).toBe(5);
+  });
+
+  it('vender un plato descuenta los ingredientes de su receta', async () => {
+    const res = await vender(capuchino.id, 2);
+    expect(res.status).toBe(201);
+    expect(await stockDe(leche.id)).toBe(600);
+    expect(await stockDe(cafe.id)).toBe(70.5);
+    expect(await stockDe(capuchino.id)).toBe(0);
+  });
+
+  it('rechaza (y no descuenta nada) si falta un ingrediente', async () => {
+    const res = await vender(capuchino.id, 4); // leche: 800 > 600
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Stock insuficiente de "Leche" para preparar "Capuchino"/);
+    expect(await stockDe(leche.id)).toBe(600);
+    expect(await stockDe(cafe.id)).toBe(70.5);
+  });
+
+  it('acumula el consumo de un mismo ingrediente entre líneas de la venta', async () => {
+    const res = await conEmpresa(agent.post('/api/ventas')).send({
+      clienteId: ctx.cliente.id,
+      detalles: [
+        { productoId: capuchino.id, cantidad: 2, precio_unitario: 6000, precio_base: 6000 }, // 400 de leche
+        { productoId: capuchino.id, cantidad: 2, precio_unitario: 6000, precio_base: 6000 }, // otros 400 > 200 restantes
+      ],
+    });
+    expect(res.status).toBe(400);
+    expect(await stockDe(leche.id)).toBe(600); // la transacción deshizo la primera línea
+  });
+
+  it('un insumo no se vende directamente', async () => {
+    const res = await vender(leche.id, 1);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/insumo/i);
+  });
+
+  it('un plato no puede comprarse ni pedirse', async () => {
+    const compra = await conEmpresa(agent.post('/api/compras')).send({
+      proveedorId: ctx.proveedor.id,
+      detalles: [{ productoId: capuchino.id, cantidad: 1, costo_unitario: 100 }],
+    });
+    expect(compra.status).toBe(400);
+    expect(compra.body.error).toMatch(/plato/i);
+
+    const pedido = await conEmpresa(agent.post('/api/pedidos')).send({
+      proveedorId: ctx.proveedor.id,
+      detalles: [{ productoId: capuchino.id, cantidad_pedida: 1, costo_estimado: 100 }],
+    });
+    expect(pedido.status).toBe(400);
+  });
+
+  it('valida la receta: sin ingredientes, repetidos o con un plato como ingrediente', async () => {
+    const vacia = await crearProducto({ codigo: 'P-V', nombre_producto: 'Vacío', tipo: 'RECETA', receta: [] });
+    expect(vacia.status).toBe(400);
+
+    const repetidos = await crearProducto({
+      codigo: 'P-R', nombre_producto: 'Repetido', tipo: 'RECETA',
+      receta: [{ insumoId: leche.id, cantidad: 1 }, { insumoId: leche.id, cantidad: 2 }],
+    });
+    expect(repetidos.status).toBe(400);
+    expect(repetidos.body.error).toMatch(/repetidos/);
+
+    const anidado = await crearProducto({
+      codigo: 'P-A', nombre_producto: 'Anidado', tipo: 'RECETA',
+      receta: [{ insumoId: capuchino.id, cantidad: 1 }],
+    });
+    expect(anidado.status).toBe(400);
+    expect(anidado.body.error).toMatch(/es un plato/);
+  });
+
+  it('no admite ingredientes de otra empresa', async () => {
+    const otra = await models.Empresa.create({ nombre: 'Otra', tipo_empresa: 'SIMPLE' });
+    const ajeno = await models.Producto.create({
+      empresaId: otra.id, codigo: 'AJENO', nombre_producto: 'Ajeno', precio_unitario: 1, tipo: 'INSUMO',
+    });
+    const res = await crearProducto({
+      codigo: 'P-X', nombre_producto: 'Con ajeno', tipo: 'RECETA', receta: [{ insumoId: ajeno.id, cantidad: 1 }],
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('editar la receta la reemplaza; editar sin mandarla la conserva', async () => {
+    const sinTocar = await conEmpresa(agent.put(`/api/productos/${capuchino.id}`)).send({ precio_unitario: 6500 });
+    expect(sinTocar.status).toBe(200);
+    expect(await models.RecetaItem.count({ where: { productoId: capuchino.id } })).toBe(2);
+
+    const nueva = await conEmpresa(agent.put(`/api/productos/${capuchino.id}`)).send({
+      receta: [{ insumoId: leche.id, cantidad: 150 }],
+    });
+    expect(nueva.status).toBe(200);
+    const items = await models.RecetaItem.findAll({ where: { productoId: capuchino.id } });
+    expect(items).toHaveLength(1);
+    expect(Number(items[0].cantidad)).toBe(150);
+  });
+
+  it('un ingrediente en uso no puede convertirse en plato', async () => {
+    const res = await conEmpresa(agent.put(`/api/productos/${leche.id}`)).send({
+      tipo: 'RECETA', receta: [{ insumoId: cafe.id, cantidad: 1 }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/ingrediente de otros platos/);
+  });
+
+  it('un plato sin receta configurada no se puede vender', async () => {
+    const huerfano = await models.Producto.create({
+      empresaId: ctx.empresa.id, codigo: 'H', nombre_producto: 'Huérfano', precio_unitario: 6000, tipo: 'RECETA',
+    });
+    const res = await vender(huerfano.id, 1);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/no tiene receta/);
+  });
+
+  it('el dashboard no lista platos como "bajo stock"', async () => {
+    const res = await conEmpresa(agent.get('/api/reportes/dashboard'));
+    expect(res.status).toBe(200);
+    expect(res.body.productosBajoStock.some((p) => p.tipo === 'RECETA')).toBe(false);
+  });
+});
+
+describe('Flujo de caja (apertura, ventas y cierre)', () => {
+  let cajaId;
+  const venderServicio = (extra = {}) => conEmpresa(agent.post('/api/ventas')).send({
+    clienteId: ctx.cliente.id,
+    detalles: [{ servicioId: ctx.servicio.id, cantidad: 1, precio_unitario: 100000, precio_base: 100000 }],
+    ...extra,
+  });
+
+  beforeAll(async () => {
+    await models.Servicio.update({ precio: 100000, porcentaje_iva: 0 }, { where: { id: ctx.servicio.id } });
+    await activarModulos(['Caja']);
+  });
+  afterAll(async () => { await activarModulos([]); });
+
+  it('no se puede vender sin caja abierta', async () => {
+    const res = await venderServicio();
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/abrir caja/i);
+  });
+
+  it('sin el módulo Caja el endpoint responde 403', async () => {
+    await activarModulos([]);
+    expect((await conEmpresa(agent.get('/api/caja/actual'))).status).toBe(403);
+    await activarModulos(['Caja']);
+  });
+
+  it('GET /api/caja/actual es null mientras no haya caja abierta', async () => {
+    const res = await conEmpresa(agent.get('/api/caja/actual'));
+    expect(res.status).toBe(200);
+    expect(res.body).toBeNull();
+  });
+
+  it('abre caja con base y rechaza abrir una segunda', async () => {
+    const res = await conEmpresa(agent.post('/api/caja/abrir')).send({ monto_inicial: 50000, observaciones: 'Turno mañana' });
+    expect(res.status).toBe(201);
+    expect(res.body.estado).toBe('ABIERTA');
+    expect(Number(res.body.monto_inicial)).toBe(50000);
+    cajaId = res.body.id;
+
+    const otra = await conEmpresa(agent.post('/api/caja/abrir')).send({ monto_inicial: 0 });
+    expect(otra.status).toBe(400);
+    expect(otra.body.error).toMatch(/caja abierta/i);
+  });
+
+  it('las ventas quedan ligadas a la caja y el resumen separa efectivo de otros medios', async () => {
+    const efectivo = await venderServicio({ medio_pago: '10' });
+    const tarjeta = await venderServicio({ medio_pago: '48' });
+    const credito = await venderServicio({ forma_pago: '2', medio_pago: '10' });
+    for (const r of [efectivo, tarjeta, credito]) {
+      expect(r.status).toBe(201);
+      expect(r.body.cajaId).toBe(cajaId);
+    }
+
+    const res = await conEmpresa(agent.get('/api/caja/actual'));
+    expect(res.body.id).toBe(cajaId);
+    expect(res.body.resumen.num_ventas).toBe(3);
+    expect(res.body.resumen.total_ventas).toBe(300000);
+    expect(res.body.resumen.ventas_efectivo).toBe(100000); // la de crédito no entra
+    expect(res.body.resumen.efectivo_esperado).toBe(150000); // base + efectivo
+  });
+
+  it('un FRONT_USER no puede ver ni cerrar la caja de otro usuario', async () => {
+    const u = await models.Usuario.create({
+      rolId: 3, nombre: 'Cajero', username: 'cajero',
+      contrasena_hash: await bcrypt.hash('Clave1234', 10), estado: true, must_change_password: false,
+    });
+    await u.setEmpresas([ctx.empresa.id]);
+    const cajero = request.agent(app);
+    expect((await cajero.post('/api/auth/login').send({ username: 'cajero', contrasena: 'Clave1234' })).status).toBe(200);
+
+    const ver = await withEmpresa(cajero.get(`/api/caja/${cajaId}`));
+    expect(ver.status).toBe(404);
+    const cerrar = await withEmpresa(cajero.post(`/api/caja/${cajaId}/cerrar`)).send({ monto_contado: 0 });
+    expect(cerrar.status).toBe(404);
+    const lista = await withEmpresa(cajero.get('/api/caja'));
+    expect(lista.body).toHaveLength(0);
+  });
+
+  it('cierra la caja: guarda la foto del turno y calcula la diferencia', async () => {
+    const res = await conEmpresa(agent.post(`/api/caja/${cajaId}/cerrar`)).send({
+      monto_contado: 148000, observaciones: 'Faltaron 2.000',
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.estado).toBe('CERRADA');
+    expect(Number(res.body.efectivo_esperado)).toBe(150000);
+    expect(Number(res.body.monto_contado)).toBe(148000);
+    expect(Number(res.body.diferencia)).toBe(-2000);
+    expect(res.body.resumen.num_ventas).toBe(3);
+    expect(res.body.usuarioCierre.nombre).toBe('Front Admin');
+  });
+
+  it('no se puede cerrar dos veces ni vender después del cierre', async () => {
+    const dos = await conEmpresa(agent.post(`/api/caja/${cajaId}/cerrar`)).send({ monto_contado: 1 });
+    expect(dos.status).toBe(400);
+    expect(dos.body.error).toMatch(/ya está cerrada/i);
+
+    expect((await venderServicio()).status).toBe(400);
+  });
+
+  it('GET /api/caja/:id devuelve el detalle con las ventas del turno (para el PDF)', async () => {
+    const res = await conEmpresa(agent.get(`/api/caja/${cajaId}`));
+    expect(res.status).toBe(200);
+    expect(res.body.ventas).toHaveLength(3);
+    expect(res.body.Empresa.nombre).toBe('TestCo');
+    expect(res.body.resumen.medios.length).toBeGreaterThan(0);
+  });
+
+  it('el historial lista las cajas y filtra por estado', async () => {
+    const todas = await conEmpresa(agent.get('/api/caja'));
+    expect(todas.status).toBe(200);
+    expect(todas.body.length).toBeGreaterThanOrEqual(1);
+    const abiertas = await conEmpresa(agent.get('/api/caja?estado=ABIERTA'));
+    expect(abiertas.body).toHaveLength(0);
+  });
+
+  it('tras cerrar se puede abrir una caja nueva', async () => {
+    const res = await conEmpresa(agent.post('/api/caja/abrir')).send({});
+    expect(res.status).toBe(201);
+    expect(Number(res.body.monto_inicial)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Restaurantes fase B: costo promedio, margen, rentabilidad, mermas y conteo
+// ---------------------------------------------------------------------------
+describe('Fase B — costos, margen y ajustes de inventario', () => {
+  let harina; let pan; let lector;
+
+  const crearProducto = (body) => conEmpresa(agent.post('/api/productos')).send({
+    precio_unitario: 1000, porcentaje_iva: 0, ...body,
+  });
+  const dbProducto = (id) => models.Producto.findByPk(id);
+
+  beforeAll(async () => { await activarModulos(['Recetas']); });
+  afterAll(async () => { await activarModulos([]); });
+
+  it('el costo inicial se guarda y cada compra lo recalcula como promedio ponderado', async () => {
+    const res = await crearProducto({
+      codigo: 'HAR', nombre_producto: 'Harina', tipo: 'INSUMO', unidad_medida: 'GRM', stock_actual: 1000, costo_promedio: 2,
+    });
+    expect(res.status).toBe(201);
+    harina = res.body;
+    expect(Number(harina.costo_promedio)).toBe(2);
+
+    const compra = await conEmpresa(agent.post('/api/compras')).send({
+      proveedorId: ctx.proveedor.id,
+      detalles: [{ productoId: harina.id, cantidad: 1000, costo_unitario: 4 }],
+    });
+    expect(compra.status).toBe(201);
+    const h = await dbProducto(harina.id);
+    expect(Number(h.stock_actual)).toBe(2000);
+    expect(Number(h.costo_promedio)).toBe(3); // (1000×2 + 1000×4) / 2000
+  });
+
+  it('la recepción de un pedido también recalcula el costo', async () => {
+    const ped = await conEmpresa(agent.post('/api/pedidos')).send({
+      proveedorId: ctx.proveedor.id,
+      detalles: [{ productoId: harina.id, cantidad_pedida: 2000, costo_estimado: 5 }],
+    });
+    const rec = await conEmpresa(agent.post(`/api/pedidos/${ped.body.id}/checkin`)).send({
+      detalles_recibidos: [{ productoId: harina.id, cantidad: 2000, costo_unitario: 5 }],
+    });
+    expect(rec.status).toBe(200);
+    expect(Number((await dbProducto(harina.id)).costo_promedio)).toBe(4); // (2000×3 + 2000×5) / 4000
+    // Se deja el costo en 3 y el stock en 2000 para el resto de pruebas.
+    await models.Producto.update({ costo_promedio: 3, stock_actual: 2000 }, { where: { id: harina.id } });
+  });
+
+  it('con stock agotado, el costo pasa a ser el de la nueva compra', async () => {
+    const p = (await crearProducto({ codigo: 'VACIO', nombre_producto: 'Sin stock', tipo: 'INSUMO', stock_actual: 0, costo_promedio: 99 })).body;
+    await conEmpresa(agent.post('/api/compras')).send({
+      proveedorId: ctx.proveedor.id, detalles: [{ productoId: p.id, cantidad: 10, costo_unitario: 7 }],
+    });
+    expect(Number((await dbProducto(p.id)).costo_promedio)).toBe(7);
+  });
+
+  it('GET /api/productos calcula costo del plato, margen sobre precio sin IVA y porciones', async () => {
+    const plato = await crearProducto({
+      codigo: 'PAN', nombre_producto: 'Pan', tipo: 'RECETA', precio_unitario: 11900, porcentaje_iva: 19,
+      receta: [{ insumoId: harina.id, cantidad: 100 }],
+    });
+    expect(plato.status).toBe(201);
+    pan = plato.body;
+
+    const lista = (await conEmpresa(agent.get('/api/productos'))).body;
+    const p = lista.find((x) => x.id === pan.id);
+    expect(p.costo).toBe(300); // 100 g × $3
+    expect(p.precio_neto).toBe(10000); // 11.900 / 1,19
+    expect(p.margen).toBe(9700);
+    expect(p.margen_pct).toBe(97);
+    expect(p.porciones_disponibles).toBe(20);
+    expect(lista.find((x) => x.id === harina.id).costo).toBe(3);
+  });
+
+  it('cada venta guarda el costo de lo vendido y el reporte de rentabilidad lo usa', async () => {
+    const res = await conEmpresa(agent.post('/api/ventas')).send({
+      clienteId: ctx.cliente.id,
+      detalles: [{ productoId: pan.id, cantidad: 2, precio_unitario: 11900, precio_base: 11900 }],
+    });
+    expect(res.status).toBe(201);
+    const det = await models.VentaDetalle.findOne({ where: { ventaId: res.body.id } });
+    expect(Number(det.costo_unitario)).toBe(300);
+
+    // Un cambio posterior del costo NO altera lo ya vendido.
+    await models.Producto.update({ costo_promedio: 10 }, { where: { id: harina.id } });
+    const rent = await conEmpresa(agent.get('/api/recetas/rentabilidad'));
+    expect(rent.status).toBe(200);
+    const fila = rent.body.filas.find((f) => f.productoId === pan.id);
+    expect(fila.unidades).toBe(2);
+    expect(fila.ingresos).toBe(20000);
+    expect(fila.costo).toBe(600);
+    expect(fila.margen).toBe(19400);
+    expect(fila.margen_pct).toBe(97);
+    expect(rent.body.totales.margen).toBeGreaterThanOrEqual(19400);
+    await models.Producto.update({ costo_promedio: 3 }, { where: { id: harina.id } });
+  });
+
+  it('la rentabilidad acepta rango de fechas y rechaza formatos inválidos', async () => {
+    expect((await conEmpresa(agent.get('/api/recetas/rentabilidad?desde=2020-01-01&hasta=2020-01-02'))).body.filas).toEqual([]);
+    expect((await conEmpresa(agent.get('/api/recetas/rentabilidad?desde=ayer'))).status).toBe(400);
+  });
+
+  it('una merma baja el stock y se valoriza al costo', async () => {
+    const antes = Number((await dbProducto(harina.id)).stock_actual);
+    const res = await conEmpresa(agent.post('/api/ajustes')).send({ productoId: harina.id, tipo: 'MERMA', cantidad: 50, motivo: 'Se humedeció' });
+    expect(res.status).toBe(201);
+    expect(Number(res.body.diferencia)).toBe(-50);
+    expect(Number(res.body.valor)).toBe(-150);
+    expect(Number((await dbProducto(harina.id)).stock_actual)).toBe(antes - 50);
+  });
+
+  it('rechaza mermar más de lo que hay, ajustar un plato o un tipo desconocido', async () => {
+    const mucho = await conEmpresa(agent.post('/api/ajustes')).send({ productoId: harina.id, tipo: 'VENCIDO', cantidad: 999999 });
+    expect(mucho.status).toBe(400);
+    expect(mucho.body.error).toMatch(/no hay suficiente stock/i);
+
+    const plato = await conEmpresa(agent.post('/api/ajustes')).send({ productoId: pan.id, tipo: 'MERMA', cantidad: 1 });
+    expect(plato.status).toBe(400);
+    expect(plato.body.error).toMatch(/no tiene stock propio/);
+
+    expect((await conEmpresa(agent.post('/api/ajustes')).send({ productoId: harina.id, tipo: 'ROBO', cantidad: 1 })).status).toBe(400);
+  });
+
+  it('el conteo físico fija el stock real y solo registra donde hay diferencia', async () => {
+    const otro = (await crearProducto({ codigo: 'SAL', nombre_producto: 'Sal', tipo: 'INSUMO', stock_actual: 500, costo_promedio: 1 })).body;
+    const stockHarina = Number((await dbProducto(harina.id)).stock_actual);
+
+    const res = await conEmpresa(agent.post('/api/ajustes/conteo')).send({
+      motivo: 'Inventario de cierre de mes',
+      items: [
+        { productoId: harina.id, cantidad_contada: stockHarina - 100 }, // faltan 100 g
+        { productoId: otro.id, cantidad_contada: 500 }, // cuadra
+      ],
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.ajustados).toBe(1);
+    expect(res.body.sin_cambio).toBe(1);
+    expect(res.body.valor_total).toBe(-300);
+    expect(Number((await dbProducto(harina.id)).stock_actual)).toBe(stockHarina - 100);
+    expect(res.body.ajustes[0].tipo).toBe('CONTEO');
+  });
+
+  it('el conteo es solo para el administrador y rechaza productos repetidos', async () => {
+    const u = await models.Usuario.create({
+      rolId: 3, nombre: 'Operario', username: 'operario',
+      contrasena_hash: await bcrypt.hash('Clave1234', 10), estado: true, must_change_password: false,
+    });
+    await u.setEmpresas([ctx.empresa.id]);
+    lector = request.agent(app);
+    expect((await lector.post('/api/auth/login').send({ username: 'operario', contrasena: 'Clave1234' })).status).toBe(200);
+
+    const conteo = { items: [{ productoId: harina.id, cantidad_contada: 1 }] };
+    expect((await withEmpresa(lector.post('/api/ajustes/conteo')).send(conteo)).status).toBe(403);
+    // …pero un operario sí puede registrar una merma.
+    expect((await withEmpresa(lector.post('/api/ajustes')).send({ productoId: harina.id, tipo: 'CONSUMO_INTERNO', cantidad: 1 })).status).toBe(201);
+
+    const dup = await conEmpresa(agent.post('/api/ajustes/conteo')).send({
+      items: [{ productoId: harina.id, cantidad_contada: 1 }, { productoId: harina.id, cantidad_contada: 2 }],
+    });
+    expect(dup.status).toBe(400);
+  });
+
+  it('el historial lista ajustes, filtra por tipo y resume las pérdidas valorizadas', async () => {
+    const lista = await conEmpresa(agent.get('/api/ajustes?tipo=MERMA'));
+    expect(lista.status).toBe(200);
+    expect(lista.body.length).toBeGreaterThanOrEqual(1);
+    expect(lista.body.every((a) => a.tipo === 'MERMA')).toBe(true);
+    expect(lista.body[0].Producto.nombre_producto).toBeTruthy();
+    expect(Number(lista.headers['x-total-count'])).toBeGreaterThanOrEqual(1);
+
+    const resumen = await conEmpresa(agent.get('/api/ajustes/resumen'));
+    expect(resumen.status).toBe(200);
+    expect(resumen.body.por_tipo.map((r) => r.tipo)).toEqual(expect.arrayContaining(['MERMA', 'CONTEO']));
+    expect(resumen.body.valor_total).toBeLessThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Restaurantes fase C: sub-recetas y modificadores
+// ---------------------------------------------------------------------------
+describe('Fase C — sub-recetas (preparaciones)', () => {
+  let tomate; let aceite; let salsa; let pizza;
+
+  const crearProducto = (body) => conEmpresa(agent.post('/api/productos')).send({
+    precio_unitario: 1000, porcentaje_iva: 0, ...body,
+  });
+  const stockDe = async (id) => Number((await models.Producto.findByPk(id)).stock_actual);
+  const vender = (productoId, cantidad, extra = {}) => conEmpresa(agent.post('/api/ventas')).send({
+    clienteId: ctx.cliente.id,
+    detalles: [{ productoId, cantidad, precio_unitario: 20000, precio_base: 20000, ...extra }],
+  });
+
+  beforeAll(async () => { await activarModulos(['Recetas']); });
+  afterAll(async () => { await activarModulos([]); });
+
+  it('crea una preparación con rendimiento y un plato que la usa', async () => {
+    tomate = (await crearProducto({ codigo: 'TOM', nombre_producto: 'Tomate', tipo: 'INSUMO', unidad_medida: 'GRM', stock_actual: 5000, costo_promedio: 1 })).body;
+    aceite = (await crearProducto({ codigo: 'ACE', nombre_producto: 'Aceite', tipo: 'INSUMO', unidad_medida: 'MLT', stock_actual: 1000, costo_promedio: 2 })).body;
+
+    const s = await crearProducto({
+      codigo: 'SALSA', nombre_producto: 'Salsa base', tipo: 'PREPARACION', unidad_medida: 'MLT', rendimiento: 1000, stock_actual: 77, costo_promedio: 55,
+      receta: [{ insumoId: tomate.id, cantidad: 800 }, { insumoId: aceite.id, cantidad: 100 }],
+    });
+    expect(s.status).toBe(201);
+    salsa = s.body;
+    expect(Number(salsa.stock_actual)).toBe(0); // una preparación no guarda stock
+    expect(Number(salsa.rendimiento)).toBe(1000);
+    expect(Number(salsa.costo_promedio)).toBe(0); // el costo sale de la receta
+
+    const p = await crearProducto({
+      codigo: 'PIZZA', nombre_producto: 'Pizza', tipo: 'RECETA', precio_unitario: 20000,
+      receta: [{ insumoId: salsa.id, cantidad: 150 }, { insumoId: aceite.id, cantidad: 10 }],
+    });
+    expect(p.status).toBe(201);
+    pizza = p.body;
+  });
+
+  it('el costo y las porciones se calculan expandiendo la sub-receta', async () => {
+    const lista = (await conEmpresa(agent.get('/api/productos'))).body;
+    // salsa: 800 g tomate + 100 ml aceite por 1000 ml -> (800×1 + 100×2) / 1000 = $1 por ml
+    expect(lista.find((x) => x.id === salsa.id).costo).toBe(1);
+    // pizza: 150 ml salsa (120 g tomate + 15 ml aceite) + 10 ml aceite -> 120×1 + 25×2 = 170
+    const p = lista.find((x) => x.id === pizza.id);
+    expect(p.costo).toBe(170);
+    expect(p.porciones_disponibles).toBe(40); // aceite: 1000 / 25
+  });
+
+  it('vender el plato descuenta los ingredientes base de la preparación', async () => {
+    const res = await vender(pizza.id, 2);
+    expect(res.status).toBe(201);
+    expect(await stockDe(tomate.id)).toBe(4760); // 5000 - 2×120
+    expect(await stockDe(aceite.id)).toBe(950); // 1000 - 2×25
+    expect(await stockDe(salsa.id)).toBe(0);
+    const det = await models.VentaDetalle.findOne({ where: { ventaId: res.body.id } });
+    expect(Number(det.costo_unitario)).toBe(170);
+  });
+
+  it('rechaza si falta un ingrediente de la sub-receta', async () => {
+    await models.Producto.update({ stock_actual: 100 }, { where: { id: tomate.id } });
+    const res = await vender(pizza.id, 1); // necesita 120 g de tomate
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/Stock insuficiente de "Tomate" para preparar "Pizza"/);
+    expect(await stockDe(aceite.id)).toBe(950); // nada se descontó
+    await models.Producto.update({ stock_actual: 4760 }, { where: { id: tomate.id } });
+  });
+
+  it('una preparación no se vende, no se compra ni se pide', async () => {
+    const venta = await vender(salsa.id, 1);
+    expect(venta.status).toBe(400);
+    expect(venta.body.error).toMatch(/no se vende directamente/);
+
+    const compra = await conEmpresa(agent.post('/api/compras')).send({
+      proveedorId: ctx.proveedor.id, detalles: [{ productoId: salsa.id, cantidad: 1, costo_unitario: 1 }],
+    });
+    expect(compra.status).toBe(400);
+    const pedido = await conEmpresa(agent.post('/api/pedidos')).send({
+      proveedorId: ctx.proveedor.id, detalles: [{ productoId: salsa.id, cantidad_pedida: 1, costo_estimado: 1 }],
+    });
+    expect(pedido.status).toBe(400);
+  });
+
+  it('detecta ciclos entre preparaciones', async () => {
+    const b = await crearProducto({
+      codigo: 'SALSAB', nombre_producto: 'Salsa picante', tipo: 'PREPARACION', unidad_medida: 'MLT', rendimiento: 500,
+      receta: [{ insumoId: salsa.id, cantidad: 200 }],
+    });
+    expect(b.status).toBe(201);
+
+    // salsa base -> salsa picante -> salsa base
+    const ciclo = await conEmpresa(agent.put(`/api/productos/${salsa.id}`)).send({
+      receta: [{ insumoId: b.body.id, cantidad: 10 }],
+    });
+    expect(ciclo.status).toBe(400);
+    expect(ciclo.body.error).toMatch(/ciclo/);
+    // y una preparación tampoco puede usarse a sí misma
+    const propio = await conEmpresa(agent.put(`/api/productos/${salsa.id}`)).send({ receta: [{ insumoId: salsa.id, cantidad: 1 }] });
+    expect(propio.status).toBe(400);
+  });
+
+  it('una preparación en uso no deja de serlo; un plato sigue sin poder ser ingrediente', async () => {
+    const res = await conEmpresa(agent.put(`/api/productos/${salsa.id}`)).send({ tipo: 'INSUMO' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/se usa como ingrediente/);
+
+    const anidado = await crearProducto({
+      codigo: 'X-PLATO', nombre_producto: 'Plato en plato', tipo: 'RECETA', receta: [{ insumoId: pizza.id, cantidad: 1 }],
+    });
+    expect(anidado.status).toBe(400);
+  });
+
+  it('el dashboard no lista preparaciones como "bajo stock"', async () => {
+    const res = await conEmpresa(agent.get('/api/reportes/dashboard'));
+    expect(res.body.productosBajoStock.some((p) => ['RECETA', 'PREPARACION'].includes(p.tipo))).toBe(false);
+  });
+});
+
+describe('Fase C — modificadores de platos', () => {
+  let tomate; let aceite; let salsa; let pizza; let extraQueso; let sinSalsa;
+
+  const crearProducto = (body) => conEmpresa(agent.post('/api/productos')).send({
+    precio_unitario: 1000, porcentaje_iva: 0, ...body,
+  });
+  const stockDe = async (id) => Number((await models.Producto.findByPk(id)).stock_actual);
+  const vender = (detalle) => conEmpresa(agent.post('/api/ventas')).send({
+    clienteId: ctx.cliente.id,
+    detalles: [{ productoId: pizza.id, cantidad: 1, precio_unitario: 20000, precio_base: 20000, ...detalle }],
+  });
+
+  beforeAll(async () => {
+    await activarModulos(['Recetas']);
+    tomate = (await crearProducto({ codigo: 'M-TOM', nombre_producto: 'Tomate M', tipo: 'INSUMO', stock_actual: 5000, costo_promedio: 1 })).body;
+    aceite = (await crearProducto({ codigo: 'M-ACE', nombre_producto: 'Aceite M', tipo: 'INSUMO', stock_actual: 1000, costo_promedio: 2 })).body;
+    salsa = (await crearProducto({
+      codigo: 'M-SAL', nombre_producto: 'Salsa M', tipo: 'PREPARACION', rendimiento: 1000,
+      receta: [{ insumoId: tomate.id, cantidad: 800 }, { insumoId: aceite.id, cantidad: 100 }],
+    })).body;
+    pizza = (await crearProducto({
+      codigo: 'M-PIZ', nombre_producto: 'Pizza M', tipo: 'RECETA', precio_unitario: 20000,
+      receta: [{ insumoId: salsa.id, cantidad: 150 }, { insumoId: aceite.id, cantidad: 10 }],
+    })).body;
+  });
+  afterAll(async () => { await activarModulos([]); });
+
+  it('crea modificadores con precio extra e ingredientes con signo', async () => {
+    const a = await conEmpresa(agent.post('/api/modificadores')).send({
+      nombre: 'Extra queso', precio_extra: 2000, items: [{ insumoId: aceite.id, cantidad: 5 }],
+    });
+    expect(a.status).toBe(201);
+    extraQueso = a.body;
+    expect(extraQueso.items).toHaveLength(1);
+
+    const b = await conEmpresa(agent.post('/api/modificadores')).send({
+      nombre: 'Sin salsa', items: [{ insumoId: salsa.id, cantidad: -150 }],
+    });
+    expect(b.status).toBe(201);
+    sinSalsa = b.body;
+    expect(Number(sinSalsa.items[0].cantidad)).toBe(-150);
+    expect(Number(sinSalsa.precio_extra)).toBe(0);
+  });
+
+  it('valida nombre único, ingredientes y exige el módulo Recetas', async () => {
+    const dup = await conEmpresa(agent.post('/api/modificadores')).send({ nombre: 'Extra queso' });
+    expect(dup.status).toBe(400);
+    expect(dup.body.error).toMatch(/ya existe/i);
+
+    const plato = await conEmpresa(agent.post('/api/modificadores')).send({
+      nombre: 'Con plato', items: [{ insumoId: pizza.id, cantidad: 1 }],
+    });
+    expect(plato.status).toBe(400);
+
+    const cero = await conEmpresa(agent.post('/api/modificadores')).send({
+      nombre: 'En cero', items: [{ insumoId: aceite.id, cantidad: 0 }],
+    });
+    expect(cero.status).toBe(400);
+
+    await activarModulos([]);
+    expect((await conEmpresa(agent.get('/api/modificadores'))).status).toBe(403);
+    await activarModulos(['Recetas']);
+  });
+
+  it('un extra suma al precio y al consumo; la factura guarda los modificadores', async () => {
+    const res = await vender({ cantidad: 2, precio_unitario: 22000, precio_base: 22000, modificadores: [extraQueso.id] });
+    expect(res.status).toBe(201);
+    expect(Number(res.body.total)).toBe(44000);
+    // por pizza: aceite 15 (salsa) + 10 (receta) + 5 (extra) = 30
+    expect(await stockDe(aceite.id)).toBe(1000 - 60);
+    expect(await stockDe(tomate.id)).toBe(5000 - 240);
+
+    const det = await models.VentaDetalle.findOne({ where: { ventaId: res.body.id } });
+    expect(det.modificadores).toEqual([{ id: extraQueso.id, nombre: 'Extra queso', precio_extra: 2000 }]);
+    expect(Number(det.costo_unitario)).toBe(120 + 30 * 2); // tomate 120×1 + aceite 30×2
+  });
+
+  it('el precio no puede superar el de lista MÁS los extras', async () => {
+    const caro = await vender({ precio_unitario: 22001, modificadores: [extraQueso.id] });
+    expect(caro.status).toBe(400);
+    expect(caro.body.error).toMatch(/precio de lista/);
+    // sin el modificador, el mismo precio tampoco se permite
+    expect((await vender({ precio_unitario: 22000 })).status).toBe(400);
+  });
+
+  it('"sin salsa" quita la sub-receta del consumo', async () => {
+    const tomateAntes = await stockDe(tomate.id);
+    const aceiteAntes = await stockDe(aceite.id);
+    const res = await vender({ modificadores: [sinSalsa.id] });
+    expect(res.status).toBe(201);
+    expect(await stockDe(tomate.id)).toBe(tomateAntes); // sin tomate: la salsa no se usó
+    expect(await stockDe(aceite.id)).toBe(aceiteAntes - 10); // solo el aceite de la receta
+  });
+
+  it('un modificador inactivo, inexistente o en una línea que no es plato se rechaza', async () => {
+    await conEmpresa(agent.put(`/api/modificadores/${extraQueso.id}`)).send({ activo: false });
+    const inactivo = await vender({ modificadores: [extraQueso.id] });
+    expect(inactivo.status).toBe(400);
+    expect(inactivo.body.error).toMatch(/inactivo/i);
+    expect((await vender({ modificadores: [999999] })).status).toBe(400);
+
+    const enProducto = await conEmpresa(agent.post('/api/ventas')).send({
+      clienteId: ctx.cliente.id,
+      detalles: [{ productoId: ctx.producto.id, cantidad: 1, precio_unitario: 1190, modificadores: [sinSalsa.id] }],
+    });
+    expect(enProducto.status).toBe(400);
+    expect(enProducto.body.error).toMatch(/solo los platos/i);
+    await conEmpresa(agent.put(`/api/modificadores/${extraQueso.id}`)).send({ activo: true });
+  });
+
+  it('editar un modificador reemplaza sus ingredientes; la lista oculta inactivos salvo ?todos', async () => {
+    const edit = await conEmpresa(agent.put(`/api/modificadores/${extraQueso.id}`)).send({
+      precio_extra: 2500, items: [{ insumoId: tomate.id, cantidad: 10 }, { insumoId: aceite.id, cantidad: 2 }],
+    });
+    expect(edit.status).toBe(200);
+    expect(edit.body.items).toHaveLength(2);
+    expect(Number(edit.body.precio_extra)).toBe(2500);
+
+    await conEmpresa(agent.put(`/api/modificadores/${sinSalsa.id}`)).send({ activo: false });
+    const activos = (await conEmpresa(agent.get('/api/modificadores'))).body.map((m) => m.nombre);
+    expect(activos).toContain('Extra queso');
+    expect(activos).not.toContain('Sin salsa');
+    const todos = (await conEmpresa(agent.get('/api/modificadores?todos=1'))).body.map((m) => m.nombre);
+    expect(todos).toContain('Sin salsa');
+
+    expect((await conEmpresa(agent.put('/api/modificadores/999999')).send({ nombre: 'X' })).status).toBe(404);
+  });
+
+  it('un ingrediente usado en un modificador no puede convertirse en plato', async () => {
+    const res = await conEmpresa(agent.put(`/api/productos/${aceite.id}`)).send({
+      tipo: 'RECETA', receta: [{ insumoId: tomate.id, cantidad: 1 }],
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Presentación de compra: se compra en kg / caja y se gasta en g / unidades
+// ---------------------------------------------------------------------------
+describe('Presentación de compra (comprar en kg, gastar en g)', () => {
+  let harina;
+
+  const crearProducto = (body) => conEmpresa(agent.post('/api/productos')).send({
+    precio_unitario: 1000, porcentaje_iva: 0, ...body,
+  });
+  const dbProducto = (id) => models.Producto.findByPk(id);
+  const comprar = (detalle) => conEmpresa(agent.post('/api/compras')).send({
+    proveedorId: ctx.proveedor.id, detalles: [{ productoId: harina.id, ...detalle }],
+  });
+
+  beforeAll(async () => { await activarModulos(['Recetas']); });
+  afterAll(async () => { await activarModulos([]); });
+
+  it('un producto guarda su presentación de compra (unidad + factor)', async () => {
+    const res = await crearProducto({
+      codigo: 'HAR-PRES', nombre_producto: 'Harina presentación', tipo: 'INSUMO', unidad_medida: 'GRM',
+      stock_actual: 0, unidad_compra: 'KGM', factor_compra: 1000,
+    });
+    expect(res.status).toBe(201);
+    harina = res.body;
+    expect(harina.unidad_compra).toBe('KGM');
+    expect(Number(harina.factor_compra)).toBe(1000);
+    const lista = (await conEmpresa(agent.get('/api/productos'))).body;
+    expect(lista.find((p) => p.id === harina.id).unidad_compra).toBe('KGM');
+  });
+
+  it('exige el factor con la unidad y no admite presentación en platos', async () => {
+    const sinFactor = await crearProducto({ codigo: 'X1', nombre_producto: 'Sin factor', tipo: 'INSUMO', unidad_compra: 'KGM' });
+    expect(sinFactor.status).toBe(400);
+    expect(sinFactor.body.error).toMatch(/factor/);
+
+    const factorCero = await crearProducto({ codigo: 'X2', nombre_producto: 'Factor cero', tipo: 'INSUMO', unidad_compra: 'KGM', factor_compra: 0 });
+    expect(factorCero.status).toBe(400);
+
+    const plato = await crearProducto({
+      codigo: 'X3', nombre_producto: 'Plato con presentación', tipo: 'RECETA',
+      receta: [{ insumoId: harina.id, cantidad: 100 }], unidad_compra: 'CAJA', factor_compra: 2,
+    });
+    expect(plato.status).toBe(400);
+  });
+
+  it('comprar en presentación suma el stock en unidad base y el costo por unidad base', async () => {
+    const res = await comprar({ cantidad: 2.5, costo_unitario: 17333, en_presentacion: true });
+    expect(res.status).toBe(201);
+    expect(Number(res.body.total)).toBe(43332.5); // 2,5 kg × $17.333 (no cambia al convertir)
+
+    const p = await dbProducto(harina.id);
+    expect(Number(p.stock_actual)).toBe(2500);
+    expect(Number(p.costo_promedio)).toBe(17.333);
+
+    const det = await models.CompraDetalle.findOne({ where: { compraId: res.body.id } });
+    expect(Number(det.cantidad)).toBe(2500);
+    expect(Number(det.costo_unitario)).toBe(17.333);
+    expect(det.unidad_presentacion).toBe('KGM');
+    expect(Number(det.factor_presentacion)).toBe(1000);
+  });
+
+  it('mezcla compras en presentación y en unidad base en el promedio ponderado', async () => {
+    const res = await comprar({ cantidad: 1000, costo_unitario: 20 }); // 1000 g a $20/g, en unidad base
+    expect(res.status).toBe(201);
+    expect(Number(res.body.total)).toBe(20000);
+    const p = await dbProducto(harina.id);
+    expect(Number(p.stock_actual)).toBe(3500);
+    expect(Number(p.costo_promedio)).toBe(18.095); // (2500×17,333 + 1000×20) / 3500
+    const det = await models.CompraDetalle.findOne({ where: { compraId: res.body.id } });
+    expect(det.unidad_presentacion).toBeNull();
+  });
+
+  it('rechaza comprar en presentación un producto que no la tiene, o un gasto', async () => {
+    const sin = await conEmpresa(agent.post('/api/compras')).send({
+      proveedorId: ctx.proveedor.id,
+      detalles: [{ productoId: ctx.producto.id, cantidad: 1, costo_unitario: 100, en_presentacion: true }],
+    });
+    expect(sin.status).toBe(400);
+    expect(sin.body.error).toMatch(/no tiene presentación de compra/);
+
+    const gasto = await conEmpresa(agent.post('/api/compras')).send({
+      proveedorId: ctx.proveedor.id,
+      detalles: [{ descripcion_gasto: 'Flete', cantidad: 1, costo_unitario: 100, en_presentacion: true }],
+    });
+    expect(gasto.status).toBe(400); // las compras solo llevan productos
+  });
+
+  it('el pedido en presentación guarda cantidades base y la recepción puede hacerse en kg o en g', async () => {
+    const ped = await conEmpresa(agent.post('/api/pedidos')).send({
+      proveedorId: ctx.proveedor.id,
+      detalles: [{ productoId: harina.id, cantidad_pedida: 3, costo_estimado: 18000, en_presentacion: true }],
+    });
+    expect(ped.status).toBe(201);
+    expect(Number(ped.body.total_estimado)).toBe(54000);
+    const linea = await models.PedidoDetalle.findOne({ where: { pedidoId: ped.body.id } });
+    expect(Number(linea.cantidad_pedida)).toBe(3000);
+    expect(Number(linea.costo_estimado)).toBe(18);
+    expect(linea.unidad_presentacion).toBe('KGM');
+
+    const stockAntes = Number((await dbProducto(harina.id)).stock_actual);
+    // 1 kg recibido, capturado en kg
+    const parcial = await conEmpresa(agent.post(`/api/pedidos/${ped.body.id}/checkin`)).send({
+      detalles_recibidos: [{ productoId: harina.id, cantidad: 1, costo_unitario: 18000, en_presentacion: true }],
+    });
+    expect(parcial.status).toBe(200);
+    expect(parcial.body.estado).toBe('PARCIAL');
+    expect(Number((await dbProducto(harina.id)).stock_actual)).toBe(stockAntes + 1000);
+    expect(Number((await models.Compra.findByPk(parcial.body.compraId)).total)).toBe(18000);
+
+    // los 2 kg restantes, capturados en gramos
+    const resto = await conEmpresa(agent.post(`/api/pedidos/${ped.body.id}/checkin`)).send({
+      detalles_recibidos: [{ productoId: harina.id, cantidad: 2000, costo_unitario: 18 }],
+    });
+    expect(resto.status).toBe(200);
+    expect(resto.body.estado).toBe('COMPLETADO');
+    expect(Number((await dbProducto(harina.id)).stock_actual)).toBe(stockAntes + 3000);
+    const recibida = await models.PedidoDetalle.findOne({ where: { pedidoId: ped.body.id } });
+    expect(Number(recibida.cantidad_recibida)).toBe(3000);
+  });
+
+  it('quitar la presentación deja el factor en 1; cambiar de unidad exige un factor nuevo', async () => {
+    const cambio = await conEmpresa(agent.put(`/api/productos/${harina.id}`)).send({ unidad_compra: 'LBR' });
+    expect(cambio.status).toBe(400);
+
+    const ok = await conEmpresa(agent.put(`/api/productos/${harina.id}`)).send({ unidad_compra: 'LBR', factor_compra: 453.592 });
+    expect(ok.status).toBe(200);
+    expect(Number((await dbProducto(harina.id)).factor_compra)).toBe(453.592);
+
+    const quitar = await conEmpresa(agent.put(`/api/productos/${harina.id}`)).send({ unidad_compra: null });
+    expect(quitar.status).toBe(200);
+    const p = await dbProducto(harina.id);
+    expect(p.unidad_compra).toBeNull();
+    expect(Number(p.factor_compra)).toBe(1);
+    // y un update que no menciona la presentación no la toca
+    await conEmpresa(agent.put(`/api/productos/${harina.id}`)).send({ unidad_compra: 'KGM', factor_compra: 1000 });
+    await conEmpresa(agent.put(`/api/productos/${harina.id}`)).send({ nombre_producto: 'Harina renombrada' });
+    expect((await dbProducto(harina.id)).unidad_compra).toBe('KGM');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Capital base, gastos sin proveedor y egresos de caja
+// ---------------------------------------------------------------------------
+describe('Capital inicial de la empresa', () => {
+  it('se fija al crear la empresa, se puede cambiar y su cambio queda auditado', async () => {
+    const bo = request.agent(app);
+    expect((await bo.post('/api/auth/login').send({ username: 'boadmin', contrasena: 'Clave1234' })).status).toBe(200);
+
+    const sinCapital = await bo.post('/api/empresas').send({ nombre: 'Sin capital', nit: '902000001' });
+    expect(Number(sinCapital.body.capital_inicial)).toBe(0);
+
+    const creada = await bo.post('/api/empresas').send({ nombre: 'Con capital', nit: '902000002', capital_inicial: '5000000' });
+    expect(creada.status).toBe(201);
+    expect(Number(creada.body.capital_inicial)).toBe(5000000);
+
+    const editada = await bo.put(`/api/empresas/${creada.body.id}`).send({ capital_inicial: 7500000.5 });
+    expect(editada.status).toBe(200);
+    expect(Number(editada.body.capital_inicial)).toBe(7500000.5);
+
+    expect((await bo.post('/api/empresas').send({ nombre: 'Negativo', nit: '902000003', capital_inicial: -1 })).status).toBe(400);
+  });
+});
+
+describe('Gastos (sin proveedor) y flujo de dinero de la caja', () => {
+  let cajaId; let gastoCaja; let gastoPendiente;
+  const gastoBody = (extra = {}) => ({ categoria: 'SERVICIOS', descripcion: 'Recibo de luz', monto: 150000, ...extra });
+  const dbCaja = (id) => models.Caja.findByPk(id);
+  const actual = async () => (await conEmpresa(agent.get('/api/caja/actual'))).body;
+  const balance = async (q = '') => (await conEmpresa(agent.get(`/api/caja/balance${q}`))).body;
+  const venderEfectivo = (monto) => conEmpresa(agent.post('/api/ventas')).send({
+    clienteId: ctx.cliente.id,
+    detalles: [{ servicioId: ctx.servicio.id, cantidad: 1, precio_unitario: monto, precio_base: monto }],
+  });
+
+  beforeAll(async () => {
+    await models.Servicio.update({ precio: 100000, porcentaje_iva: 0 }, { where: { id: ctx.servicio.id } });
+    await models.Empresa.update({ capital_inicial: 1000000 }, { where: { id: ctx.empresa.id } });
+    await activarModulos(['Caja']);
+  });
+  afterAll(async () => { await activarModulos([]); });
+
+  it('registra un gasto SIN proveedor (recibo de luz) y valida sus datos', async () => {
+    const res = await conEmpresa(agent.post('/api/gastos')).send(gastoBody());
+    expect(res.status).toBe(201);
+    expect(res.body.proveedorId).toBeNull();
+    expect(res.body.origen_pago).toBe('OTRO');
+    expect(res.body.estado).toBe('ACTIVO');
+
+    expect((await conEmpresa(agent.post('/api/gastos')).send(gastoBody({ categoria: 'DIVERSION' }))).status).toBe(400);
+    expect((await conEmpresa(agent.post('/api/gastos')).send(gastoBody({ monto: 0 }))).status).toBe(400);
+    expect((await conEmpresa(agent.post('/api/gastos')).send(gastoBody({ descripcion: '  ' }))).status).toBe(400);
+    expect((await conEmpresa(agent.post('/api/gastos')).send(gastoBody({ proveedorId: 999999 }))).status).toBe(400);
+  });
+
+  it('un gasto puede llevar proveedor opcional y fecha anterior', async () => {
+    const res = await conEmpresa(agent.post('/api/gastos')).send(gastoBody({
+      proveedorId: ctx.proveedor.id, fecha: '2026-01-15', descripcion: 'Arriendo enero', categoria: 'ARRIENDO', monto: 2000000,
+    }));
+    expect(res.status).toBe(201);
+    expect(res.body.Proveedor.nombre).toBe('Proveedor Test');
+    expect(res.body.fecha).toMatch(/^2026-01-15/);
+  });
+
+  it('exige el módulo Gastos', async () => {
+    const todos = await ctx.empresa.getModulos();
+    await ctx.empresa.setModulos(todos.filter((m) => m.nombre_codigo !== 'Gastos'));
+    invalidateAllProfiles();
+    expect((await conEmpresa(agent.get('/api/gastos'))).status).toBe(403);
+    await ctx.empresa.setModulos(todos);
+    invalidateAllProfiles();
+  });
+
+  it('las compras siguen exigiendo proveedor y solo productos', async () => {
+    const sinProv = await conEmpresa(agent.post('/api/compras')).send({
+      detalles: [{ productoId: ctx.producto.id, cantidad: 1, costo_unitario: 100 }],
+    });
+    expect(sinProv.status).toBe(400);
+    const gasto = await conEmpresa(agent.post('/api/compras')).send({
+      proveedorId: ctx.proveedor.id, detalles: [{ descripcion_gasto: 'Flete', cantidad: 1, costo_unitario: 100 }],
+    });
+    expect(gasto.status).toBe(400);
+  });
+
+  it('pagar desde la caja exige una caja abierta', async () => {
+    // Deja las cajas de pruebas anteriores cerradas.
+    await models.Caja.update({ estado: 'CERRADA', fecha_cierre: new Date(), monto_contado: 0, total_egresos: 0 }, { where: { empresaId: ctx.empresa.id, estado: 'ABIERTA' } });
+    const res = await conEmpresa(agent.post('/api/gastos')).send(gastoBody({ pagar_desde_caja: true }));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/caja abierta/i);
+    const retiro = await conEmpresa(agent.post('/api/caja/retiros')).send({ concepto: 'Sin caja', monto: 100 });
+    expect(retiro.status).toBe(400);
+  });
+
+  it('la base sugerida es lo contado en el último cierre', async () => {
+    const res = await conEmpresa(agent.get('/api/caja/base-sugerida'));
+    expect(res.status).toBe(200);
+    expect(res.body.origen).toBe('CIERRE_ANTERIOR');
+    expect(res.body.monto).toBe(0); // la última caja se cerró en 0 (arriba)
+  });
+
+  it('sin cierres previos, la base sugerida es el capital inicial', async () => {
+    const otra = await models.Empresa.create({ nombre: 'Nueva', tipo_empresa: 'SIMPLE', capital_inicial: 2500000 });
+    const mods = await models.Modulo.findAll({ where: { nombre_codigo: ['Inventario', 'Clientes', 'Ventas', 'Caja'] } });
+    await otra.setModulos(mods);
+    await ctx.usuario.addEmpresa(otra);
+    invalidateAllProfiles();
+    const res = await agent.get('/api/caja/base-sugerida').set('X-Empresa-Id', String(otra.id));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ monto: 2500000, origen: 'CAPITAL_INICIAL' });
+  });
+
+  it('abrir caja con la base: es el efectivo con el que se mueve el turno', async () => {
+    const res = await conEmpresa(agent.post('/api/caja/abrir')).send({ monto_inicial: 50000 });
+    expect(res.status).toBe(201);
+    cajaId = res.body.id;
+    expect(res.body.resumen.efectivo_esperado).toBe(50000);
+  });
+
+  it('una venta suma, y retiros / gastos / compras en efectivo restan del efectivo esperado', async () => {
+    const b0 = await balance();
+    expect(b0.capital_inicial).toBe(1000000);
+
+    expect((await venderEfectivo(100000)).status).toBe(201); // +100.000 -> 150.000
+    expect((await actual()).resumen.efectivo_esperado).toBe(150000);
+
+    const retiro = await conEmpresa(agent.post('/api/caja/retiros')).send({ concepto: 'Consignación al banco', monto: 20000 });
+    expect(retiro.status).toBe(201);
+    expect((await actual()).resumen.efectivo_esperado).toBe(130000);
+
+    const g = await conEmpresa(agent.post('/api/gastos')).send(gastoBody({
+      categoria: 'TRANSPORTE', descripcion: 'Domiciliario', monto: 30000, pagar_desde_caja: true,
+    }));
+    expect(g.status).toBe(201);
+    expect(g.body.origen_pago).toBe('CAJA');
+    gastoCaja = g.body;
+    expect((await actual()).resumen.efectivo_esperado).toBe(100000);
+
+    const compra = await conEmpresa(agent.post('/api/compras')).send({
+      proveedorId: ctx.proveedor.id, pago_desde_caja: true,
+      detalles: [{ productoId: ctx.producto.id, cantidad: 10, costo_unitario: 500 }],
+    });
+    expect(compra.status).toBe(201);
+    expect((await actual()).resumen.efectivo_esperado).toBe(95000);
+
+    gastoPendiente = (await conEmpresa(agent.post('/api/gastos')).send(gastoBody({ descripcion: 'Papelería', categoria: 'OTROS', monto: 10000, pagar_desde_caja: true }))).body;
+    expect((await actual()).resumen.efectivo_esperado).toBe(85000);
+
+    const movs = (await conEmpresa(agent.get(`/api/caja/${cajaId}`))).body.movimientos;
+    expect(movs.map((m) => m.tipo)).toEqual(['RETIRO', 'GASTO', 'COMPRA', 'GASTO']);
+    expect(movs.map((m) => Number(m.monto))).toEqual([20000, 30000, 5000, 10000]);
+
+    // Dinero de la empresa: +100.000 de venta − 20.000 retiro − 30.000 gasto − 5.000 compra − 10.000 gasto
+    const b1 = await balance();
+    expect(b1.dinero_actual - b0.dinero_actual).toBe(35000);
+    expect(b1.acumulado.retiros - b0.acumulado.retiros).toBe(20000);
+    expect(b1.acumulado.gastos - b0.acumulado.gastos).toBe(40000);
+    expect(b1.acumulado.compras - b0.acumulado.compras).toBe(5000);
+  });
+
+  it('no se puede sacar más efectivo del que hay, y no queda nada registrado a medias', async () => {
+    const gastosAntes = await models.Gasto.count({ where: { empresaId: ctx.empresa.id } });
+    const retiro = await conEmpresa(agent.post('/api/caja/retiros')).send({ concepto: 'Mucho', monto: 999999 });
+    expect(retiro.status).toBe(400);
+    expect(retiro.body.error).toMatch(/no alcanza/);
+
+    const gasto = await conEmpresa(agent.post('/api/gastos')).send(gastoBody({ monto: 999999, pagar_desde_caja: true }));
+    expect(gasto.status).toBe(400);
+    expect(await models.Gasto.count({ where: { empresaId: ctx.empresa.id } })).toBe(gastosAntes);
+
+    const compra = await conEmpresa(agent.post('/api/compras')).send({
+      proveedorId: ctx.proveedor.id, pago_desde_caja: true,
+      detalles: [{ productoId: ctx.producto.id, cantidad: 1000, costo_unitario: 1000 }],
+    });
+    expect(compra.status).toBe(400);
+  });
+
+  it('el balance compara el dinero actual con el capital inicial', async () => {
+    const b = await balance();
+    const a = b.acumulado;
+    expect(b.dinero_actual).toBeCloseTo(b.capital_inicial + a.ventas - a.compras - a.gastos - a.retiros, 2);
+    expect(b.variacion).toBeCloseTo(b.dinero_actual - b.capital_inicial, 2);
+    expect(b.variacion_pct).toBeCloseTo((b.variacion / b.capital_inicial) * 100, 1);
+    expect(b.efectivo_en_cajas).toBe(85000);
+    expect(b.cajas_abiertas).toBe(1);
+    expect(b.periodo).toBeNull();
+
+    const hoy = fechaLocal();
+    const conPeriodo = await balance(`?desde=${hoy}&hasta=${hoy}`);
+    expect(conPeriodo.periodo.retiros).toBe(20000);
+    expect(conPeriodo.periodo.neto).toBeCloseTo(conPeriodo.periodo.ventas - conPeriodo.periodo.compras - conPeriodo.periodo.gastos - conPeriodo.periodo.retiros, 2);
+    expect((await conEmpresa(agent.get('/api/caja/balance?desde=hoy'))).status).toBe(400);
+  });
+
+  it('las ventas a crédito no cuentan como dinero cobrado', async () => {
+    const antes = await balance();
+    const res = await conEmpresa(agent.post('/api/ventas')).send({
+      clienteId: ctx.cliente.id, forma_pago: '2',
+      detalles: [{ servicioId: ctx.servicio.id, cantidad: 1, precio_unitario: 100000, precio_base: 100000 }],
+    });
+    expect(res.status).toBe(201);
+    const despues = await balance();
+    expect(despues.dinero_actual).toBe(antes.dinero_actual);
+    expect(despues.acumulado.ventas_credito - antes.acumulado.ventas_credito).toBe(100000);
+    expect((await actual()).resumen.efectivo_esperado).toBe(85000); // tampoco entra a la caja
+  });
+
+  it('un FRONT_USER no ve el balance ni anula gastos, pero sí registra gastos y retiros de su caja', async () => {
+    const u = await models.Usuario.create({
+      rolId: 3, nombre: 'Cajero 2', username: 'cajero2',
+      contrasena_hash: await bcrypt.hash('Clave1234', 10), estado: true, must_change_password: false,
+    });
+    await u.setEmpresas([ctx.empresa.id]);
+    const cajero = request.agent(app);
+    expect((await cajero.post('/api/auth/login').send({ username: 'cajero2', contrasena: 'Clave1234' })).status).toBe(200);
+
+    expect((await withEmpresa(cajero.get('/api/caja/balance'))).status).toBe(403);
+    expect((await withEmpresa(cajero.post(`/api/gastos/${gastoCaja.id}/anular`))).status).toBe(403);
+    expect((await withEmpresa(cajero.post('/api/gastos')).send(gastoBody({ monto: 5000 }))).status).toBe(201);
+    // su caja está cerrada: no puede sacar efectivo de la caja de otro
+    expect((await withEmpresa(cajero.post('/api/caja/retiros')).send({ concepto: 'x', monto: 1 })).status).toBe(400);
+  });
+
+  it('anular un gasto pagado de una caja abierta devuelve el efectivo y lo saca de los totales', async () => {
+    const b0 = await balance();
+    const res = await conEmpresa(agent.post(`/api/gastos/${gastoCaja.id}/anular`));
+    expect(res.status).toBe(200);
+    expect(res.body.estado).toBe('ANULADO');
+    expect((await actual()).resumen.efectivo_esperado).toBe(115000); // +30.000
+    const b1 = await balance();
+    expect(b1.dinero_actual - b0.dinero_actual).toBe(30000);
+
+    const otra = await conEmpresa(agent.post(`/api/gastos/${gastoCaja.id}/anular`));
+    expect(otra.status).toBe(400);
+    expect((await conEmpresa(agent.post('/api/gastos/999999/anular'))).status).toBe(404);
+  });
+
+  it('el listado filtra por categoría y estado, y el resumen suma por categoría sin anulados', async () => {
+    const anulados = (await conEmpresa(agent.get('/api/gastos?estado=ANULADO'))).body;
+    expect(anulados.every((g) => g.estado === 'ANULADO')).toBe(true);
+    expect(anulados.some((g) => g.id === gastoCaja.id)).toBe(true);
+
+    const otros = await conEmpresa(agent.get('/api/gastos?categoria=OTROS'));
+    expect(otros.body.every((g) => g.categoria === 'OTROS')).toBe(true);
+    expect(Number(otros.headers['x-total-count'])).toBeGreaterThanOrEqual(1);
+
+    const resumen = (await conEmpresa(agent.get('/api/gastos/resumen'))).body;
+    const transporte = resumen.por_categoria.find((c) => c.categoria === 'TRANSPORTE');
+    expect(transporte).toBeUndefined(); // el gasto de transporte se anuló
+    expect(resumen.por_categoria.find((c) => c.categoria === 'ARRIENDO').total).toBe(2000000);
+    expect(resumen.total).toBeCloseTo(resumen.por_categoria.reduce((a, c) => a + c.total, 0), 2);
+  });
+
+  it('el dashboard informa los gastos del mes', async () => {
+    const res = await conEmpresa(agent.get('/api/reportes/dashboard'));
+    expect(res.status).toBe(200);
+    expect(Number(res.body.gastosMes)).toBeGreaterThanOrEqual(150000);
+  });
+
+  it('al cerrar, la foto incluye los egresos y la diferencia usa el efectivo esperado neto', async () => {
+    const res = await conEmpresa(agent.post(`/api/caja/${cajaId}/cerrar`)).send({ monto_contado: 114000 });
+    expect(res.status).toBe(200);
+    expect(Number(res.body.total_egresos)).toBe(35000); // 20.000 retiro + 5.000 compra + 10.000 gasto
+    expect(Number(res.body.efectivo_esperado)).toBe(115000);
+    expect(Number(res.body.diferencia)).toBe(-1000);
+    expect(res.body.resumen.total_egresos).toBe(35000);
+
+    const detalle = (await conEmpresa(agent.get(`/api/caja/${cajaId}`))).body;
+    expect(detalle.movimientos).toHaveLength(3);
+    expect(Number((await dbCaja(cajaId)).total_egresos)).toBe(35000);
+  });
+
+  it('tras el cierre no se puede anular un gasto pagado de esa caja ni sacar más efectivo', async () => {
+    const res = await conEmpresa(agent.post(`/api/gastos/${gastoPendiente.id}/anular`));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/ya fue cerrada/);
+    expect((await conEmpresa(agent.post('/api/caja/retiros')).send({ concepto: 'x', monto: 1 })).status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Caja opcional en cualquier tipo de empresa + sesión con módulos al día
+// ---------------------------------------------------------------------------
+describe('Caja: disponible para cualquier tipo de empresa, pero opcional', () => {
+  const ventaServicio = () => conEmpresa(agent.post('/api/ventas')).send({
+    clienteId: ctx.cliente.id,
+    detalles: [{ servicioId: ctx.servicio.id, cantidad: 1, precio_unitario: 100000, precio_base: 100000 }],
+  });
+
+  beforeAll(async () => {
+    await models.Servicio.update({ precio: 100000, porcentaje_iva: 0 }, { where: { id: ctx.servicio.id } });
+  });
+  afterAll(async () => { await activarModulos([]); });
+
+  it('sin el módulo Caja, las ventas POS NO exigen abrir caja (aunque exista una caja cerrada)', async () => {
+    await activarModulos([]);
+    const res = await ventaServicio();
+    expect(res.status).toBe(201);
+    expect(res.body.cajaId).toBeNull();
+  });
+
+  it('al habilitar Caja las ventas la exigen; al quitarla, deja de exigirse', async () => {
+    await models.Caja.update({ estado: 'CERRADA', fecha_cierre: new Date(), monto_contado: 0, total_egresos: 0 }, { where: { empresaId: ctx.empresa.id, estado: 'ABIERTA' } });
+    await activarModulos(['Caja']);
+    const sinCaja = await ventaServicio();
+    expect(sinCaja.status).toBe(400);
+    expect(sinCaja.body.error).toMatch(/abrir caja/i);
+
+    await activarModulos([]);
+    expect((await ventaServicio()).status).toBe(201);
+  });
+
+  it.each(['COMERCIO', 'RESTAURANTE', 'SERVICIOS'])('se puede contratar Caja en una empresa de tipo %s', async (tipo) => {
+    const bo = request.agent(app);
+    expect((await bo.post('/api/auth/login').send({ username: 'boadmin', contrasena: 'Clave1234' })).status).toBe(200);
+    const ids = Object.fromEntries((await models.Modulo.findAll()).map((m) => [m.nombre_codigo, m.id]));
+    const nit = { COMERCIO: '903000001', RESTAURANTE: '903000002', SERVICIOS: '903000003' }[tipo];
+    const res = await bo.post('/api/empresas').send({
+      nombre: `Con caja ${tipo}`, nit, tipo_negocio: tipo,
+      modulosIds: [ids.Inventario, ids.Clientes, ids.Ventas, ids.Caja],
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.Modulos.map((m) => m.nombre_codigo)).toContain('Caja');
+  });
+
+  it('GET /api/auth/me devuelve los módulos ACTUALES sin volver a iniciar sesión', async () => {
+    await activarModulos([]);
+    const antes = await agent.get('/api/auth/me');
+    expect(antes.status).toBe(200);
+    const emp = antes.body.usuario.empresas.find((e) => e.id === ctx.empresa.id);
+    expect(emp.modulos).not.toContain('Caja');
+    expect(emp.tipo_negocio).toBeTruthy();
+
+    await activarModulos(['Caja']);
+    const despues = await agent.get('/api/auth/me');
+    expect(despues.body.usuario.empresas.find((e) => e.id === ctx.empresa.id).modulos).toContain('Caja');
+    expect(despues.body.usuario.rol).toBe('FRONT_ADMIN');
+    await activarModulos([]);
+  });
+
+  it('GET /api/auth/me exige sesión', async () => {
+    expect((await request(app).get('/api/auth/me')).status).toBe(401);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auditoría GERENCIAL (quién, cuándo, de qué empresa, qué hizo)
+// ---------------------------------------------------------------------------
+describe('Auditoría gerencial', () => {
+  /** El logger persiste sin esperar (fire-and-forget): se reintenta hasta que aparezca. */
+  async function esperarActividad(query, predicado) {
+    for (let i = 0; i < 40; i += 1) {
+      const res = await conEmpresa(agent.get(`/api/auditoria${query}`));
+      expect(res.status).toBe(200);
+      const hallado = res.body.find(predicado);
+      if (hallado) return { hallado, todo: res.body, headers: res.headers };
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error('El evento no apareció en la auditoría');
+  }
+
+  beforeAll(async () => {
+    await models.Servicio.update({ precio: 100000, porcentaje_iva: 0 }, { where: { id: ctx.servicio.id } });
+    await activarModulos([]);
+  });
+
+  it('una venta aparece como frase: usuario, hora, empresa y qué hizo', async () => {
+    const venta = await conEmpresa(agent.post('/api/ventas')).send({
+      clienteId: ctx.cliente.id,
+      detalles: [{ servicioId: ctx.servicio.id, cantidad: 1, precio_unitario: 80000, precio_base: 100000 }],
+    });
+    expect(venta.status).toBe(201);
+
+    const { hallado } = await esperarActividad('', (a) => a.descripcion?.includes(`Venta #${venta.body.id} `));
+    expect(hallado.accion).toBe('Registró una venta');
+    expect(hallado.modulo).toBe('Ventas');
+    expect(hallado.usuario).toMatchObject({ nombre: 'Front Admin', username: 'fadmin' });
+    expect(hallado.empresa).toMatchObject({ id: ctx.empresa.id, nombre: 'TestCo' });
+    expect(hallado.descripcion).toContain('Cliente Test');
+    expect(hallado.descripcion).toMatch(/80\.000/);
+    expect(new Date(hallado.fecha).getTime()).toBeGreaterThan(Date.now() - 60_000);
+    // Vista gerencial: sin campos técnicos.
+    expect(hallado).not.toHaveProperty('nivel');
+    expect(hallado).not.toHaveProperty('detalle');
+    expect(hallado).not.toHaveProperty('ruta');
+  });
+
+  it('muestra el nombre de lo que se creó y no los eventos técnicos (errores de API, logins)', async () => {
+    await conEmpresa(agent.post('/api/productos')).send({
+      codigo: 'AUD-1', nombre_producto: 'Producto de auditoría', precio_unitario: 1000, stock_actual: 5,
+    });
+    await conEmpresa(agent.post('/api/ventas')).send({ clienteId: ctx.cliente.id, detalles: [] }); // 400 -> api_error técnico
+
+    const { hallado, todo } = await esperarActividad('', (a) => a.descripcion?.includes('Producto de auditoría'));
+    expect(hallado.accion).toBe('Creó un producto');
+    expect(hallado.modulo).toBe('Inventario');
+    const crudos = await models.LogEvento.findAll({ where: { empresaId: ctx.empresa.id, evento: 'api_error' } });
+    expect(crudos.length).toBeGreaterThan(0); // el evento técnico sí existe en el log del súper admin…
+    expect(todo.every((a) => a.accion && a.modulo)).toBe(true); // …pero no en la vista gerencial
+  });
+
+  it('filtra por módulo, por usuario y por fecha', async () => {
+    const ventas = await conEmpresa(agent.get('/api/auditoria?modulo=Ventas'));
+    expect(ventas.status).toBe(200);
+    expect(ventas.body.length).toBeGreaterThan(0);
+    expect(ventas.body.every((a) => a.modulo === 'Ventas')).toBe(true);
+
+    const otroUsuario = await conEmpresa(agent.get(`/api/auditoria?usuarioId=${ctx.usuarioSesiones.id}`));
+    expect(otroUsuario.body).toEqual([]);
+
+    const hoy = fechaLocal();
+    const hoyRes = await conEmpresa(agent.get(`/api/auditoria?desde=${hoy}&hasta=${hoy}`));
+    expect(hoyRes.body.length).toBeGreaterThan(0);
+    expect((await conEmpresa(agent.get('/api/auditoria?desde=2020-01-01&hasta=2020-01-02'))).body).toEqual([]);
+
+    expect((await conEmpresa(agent.get('/api/auditoria?modulo=Magia'))).status).toBe(400);
+  });
+
+  it('pagina y entrega el total en la cabecera', async () => {
+    const res = await conEmpresa(agent.get('/api/auditoria?limit=1'));
+    expect(res.body).toHaveLength(1);
+    expect(Number(res.headers['x-total-count'])).toBeGreaterThan(1);
+    const sig = await conEmpresa(agent.get('/api/auditoria?limit=1&offset=1'));
+    expect(sig.body[0].id).not.toBe(res.body[0].id);
+  });
+
+  it('/filtros lista los módulos y los usuarios con actividad', async () => {
+    const res = await conEmpresa(agent.get('/api/auditoria/filtros'));
+    expect(res.status).toBe(200);
+    expect(res.body.modulos).toEqual(expect.arrayContaining(['Ventas', 'Inventario', 'Caja', 'Gastos']));
+    expect(res.body.usuarios.map((u) => u.username)).toContain('fadmin');
+  });
+
+  it('solo ve la actividad de SU empresa', async () => {
+    const otra = await models.Empresa.create({ nombre: 'Ajena', tipo_empresa: 'SIMPLE' });
+    await models.LogEvento.create({
+      evento: 'venta_creada', nivel: 'info', usuarioId: ctx.usuario.id, empresaId: otra.id,
+      detalle: { ventaId: 999999, total: 1 }, creado_en: new Date(),
+    });
+    const res = await conEmpresa(agent.get('/api/auditoria?limit=200'));
+    expect(res.body.some((a) => a.descripcion?.includes('#999999'))).toBe(false);
+  });
+
+  it('un FRONT_USER no puede ver la auditoría', async () => {
+    const u = await models.Usuario.create({
+      rolId: 3, nombre: 'Operario Aud', username: 'operario_aud',
+      contrasena_hash: await bcrypt.hash('Clave1234', 10), estado: true, must_change_password: false,
+    });
+    await u.setEmpresas([ctx.empresa.id]);
+    const operario = request.agent(app);
+    expect((await operario.post('/api/auth/login').send({ username: 'operario_aud', contrasena: 'Clave1234' })).status).toBe(200);
+    expect((await withEmpresa(operario.get('/api/auditoria'))).status).toBe(403);
+    expect((await withEmpresa(operario.get('/api/auditoria/filtros'))).status).toBe(403);
+  });
+
+  it('el log técnico del súper admin sigue entero (nivel, ruta, detalle)', async () => {
+    const bo = request.agent(app);
+    expect((await bo.post('/api/auth/login').send({ username: 'boadmin', contrasena: 'Clave1234' })).status).toBe(200);
+    const res = await bo.get('/api/logs?nivel=warn&limit=5');
+    expect(res.status).toBe(200);
+    expect(res.body.length).toBeGreaterThan(0);
+    expect(res.body[0]).toHaveProperty('nivel');
+    expect(res.body[0]).toHaveProperty('evento');
+    expect(res.body.some((l) => l.ruta)).toBe(true);
   });
 });

@@ -42,7 +42,18 @@ const VentaDetalle = sequelize.define('VentaDetalle', {
   subtotal_bruto: {
     type: DataTypes.DECIMAL(14, 2),
     defaultValue: 0,
-  }
+  },
+  // Costo de lo vendido por unidad (foto al vender; base del reporte de rentabilidad).
+  costo_unitario: {
+    type: DataTypes.DECIMAL(14, 4),
+    allowNull: false,
+    defaultValue: 0,
+  },
+  // Modificadores elegidos en un plato: [{ id, nombre, precio_extra }].
+  modificadores: {
+    type: DataTypes.JSONB,
+    allowNull: true,
+  },
 }, {
   tableName: 'ventas_detalles',
   timestamps: false,

@@ -71,7 +71,7 @@ exports.createUsuario = async (req, res) => {
     include: [Role, Empresa],
     attributes: { exclude: ['contrasena_hash'] },
   });
-  auditar(req, 'usuario_creado', { usuarioId: result.id, username: result.username });
+  auditar(req, 'usuario_creado', { usuarioId: result.id, username: result.username, nombre: result.nombre });
   res.status(201).json(result);
 };
 
@@ -118,6 +118,6 @@ exports.updateUsuario = async (req, res) => {
     include: [Role, Empresa],
     attributes: { exclude: ['contrasena_hash'] },
   });
-  auditar(req, 'usuario_actualizado', { usuarioId: result.id, username: result.username });
+  auditar(req, 'usuario_actualizado', { usuarioId: result.id, username: result.username, nombre: result.nombre });
   res.json(result);
 };
