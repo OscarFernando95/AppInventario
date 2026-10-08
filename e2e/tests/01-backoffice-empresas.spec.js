@@ -18,7 +18,7 @@ test.describe('Backoffice: crear empresas con módulos amarrados y capital inici
 
     // Elegir el tipo de negocio preselecciona los módulos sugeridos…
     await page.getByLabel('Tipo de negocio').selectOption('RESTAURANTE');
-    for (const modulo of ['Recetas', 'Caja', 'Gastos', 'Ventas', 'Compras']) {
+    for (const modulo of ['Recetas', 'Caja', 'Gastos', 'Ventas', 'Compras', 'Mesas', 'Cocina']) {
       await expect(page.getByRole('checkbox', { name: new RegExp(`^${modulo}`) })).toBeChecked();
     }
     // …y los módulos "amarrados" quedan bloqueados mientras otro los necesita.
@@ -29,6 +29,10 @@ test.describe('Backoffice: crear empresas con módulos amarrados y capital inici
 
     // Ventas sigue bloqueado mientras Caja e Informes lo necesiten; al quitarlos se libera.
     await expect(page.getByRole('checkbox', { name: /^Ventas/ })).toBeDisabled();
+    // Cocina necesita Mesas y Mesas necesita Ventas: también se quitan (el 11 las habilita después).
+    await expect(page.getByRole('checkbox', { name: /^Mesas/ })).toBeDisabled(); // mientras Cocina esté marcada
+    await page.getByRole('checkbox', { name: /^Cocina/ }).uncheck();
+    await page.getByRole('checkbox', { name: /^Mesas/ }).uncheck();
     await page.getByRole('checkbox', { name: /^Caja/ }).uncheck();
     await page.getByRole('checkbox', { name: /^Informes/ }).uncheck();
     await expect(page.getByRole('checkbox', { name: /^Ventas/ })).toBeEnabled();

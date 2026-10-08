@@ -1,7 +1,8 @@
 # Pruebas de navegador (E2E)
 
 Playwright recorre la aplicación real en un navegador: login, backoffice, inventario, compras en kg,
-POS con modificadores, caja (abrir, egresos, cerrar y PDF), gastos, auditoría y caja opcional.
+POS con modificadores, caja (abrir, egresos, cerrar y PDF), gastos, auditoría y caja opcional, devoluciones,
+roles, mesas con comandas a cocina y propina, y preparaciones por lotes con desviaciones.
 
 ## Cómo correrlas
 

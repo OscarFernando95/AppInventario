@@ -1,15 +1,13 @@
 # Mejoras pendientes
 
 ## Restaurante
-1. **Mesas y cuentas abiertas.** Abrir una cuenta por mesa, agregar pedidos y cobrar al final, con división
-   de cuenta y propina.
-2. **Comanda a cocina** (pantalla o impresión del pedido).
-3. **Informe de desviaciones:** lo que debió gastarse según las recetas contra lo que falta al contar
-   (consumo teórico vs. conteo físico).
-4. **Domicilios:** solicitudes a través de la app, domiciliarios que aceptan, geolocalización y rastreo en
-   tiempo real del domicilio. *(en pausa)*
-5. **Preparaciones por lotes:** registrar "hoy preparé 2 litros" con su propio stock (hoy una preparación se
-   descuenta al vender el plato que la usa).
+1. **Mesas y cocina, siguiente nivel:** unir o dividir cuentas entre mesas, reservas, y avisar al mesero (sonido o
+   notificación) cuando cocina marque una comanda como lista.
+2. **Propinas:** reparto automático entre el personal (hoy solo se registra y se entrega el total) y propina
+   sugerida configurable por empresa (hoy 5 % / 10 % / otro valor).
+3. **Desviaciones:** alerta automática cuando el faltante de un producto supera un porcentaje, y comparar contra
+   el conteo anterior (hoy se comparan el consumo y los conteos del mismo rango de fechas).
+4. **Producción por lotes:** vencimiento del lote y sugerir cuánto producir según las ventas de los últimos días.
 
 ## Operación y seguridad
 6. **Copias de seguridad automáticas** con una restauración probada.
