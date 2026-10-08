@@ -45,4 +45,22 @@ async function elegirOpcion(page, combobox, texto) {
   await page.getByRole('option', { name: new RegExp(texto, 'i') }).first().click();
 }
 
-Object.assign(module.exports, { elegirOpcion });
+/** Habilita o quita un módulo de una empresa desde el backoffice, en otra sesión del navegador. */
+async function cambiarModulo(browser, nombreEmpresa, modulo, habilitar) {
+  const { expect } = require('@playwright/test');
+  const contexto = await browser.newContext();
+  const page = await contexto.newPage();
+  try {
+    await entrar(page, SUPER.usuario, SUPER.clave);
+    await page.goto('/backoffice/empresas');
+    await page.getByRole('button', { name: `Editar ${nombreEmpresa}` }).click();
+    const caja = page.getByRole('checkbox', { name: new RegExp(`^${modulo}`) });
+    if (habilitar) await caja.check(); else await caja.uncheck();
+    await page.getByRole('button', { name: 'Guardar Cambios' }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  } finally {
+    await contexto.close();
+  }
+}
+
+Object.assign(module.exports, { elegirOpcion, cambiarModulo });

@@ -1,24 +1,9 @@
 const { test, expect } = require('@playwright/test');
-const { SUPER, TIENDA, entrar } = require('./ayudas');
+const { TIENDA, entrar, cambiarModulo } = require('./ayudas');
 
 test.describe.configure({ mode: 'serial' });
 
-/** Marca o desmarca el módulo Caja de la empresa desde el backoffice (en otra sesión del navegador). */
-async function cambiarCaja(browser, habilitar) {
-  const contexto = await browser.newContext();
-  const page = await contexto.newPage();
-  try {
-    await entrar(page, SUPER.usuario, SUPER.clave);
-    await page.goto('/backoffice/empresas');
-    await page.getByRole('button', { name: `Editar ${TIENDA.nombre}` }).click();
-    const caja = page.getByRole('checkbox', { name: /^Caja/ });
-    if (habilitar) await caja.check(); else await caja.uncheck();
-    await page.getByRole('button', { name: 'Guardar Cambios' }).click();
-    await expect(page.getByRole('dialog')).toHaveCount(0);
-  } finally {
-    await contexto.close();
-  }
-}
+const cambiarCaja = (browser, habilitar) => cambiarModulo(browser, TIENDA.nombre, 'Caja', habilitar);
 
 test.describe('Tienda E2E (comercio): la caja es opcional y el cambio se ve sin cerrar sesión', () => {
   test('sin el módulo Caja el POS vende sin pedir abrir caja', async ({ page }) => {
