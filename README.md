@@ -1,6 +1,6 @@
 # AppInventario
 
-Aplicación web para gestión de inventario, ventas, compras, proveedores, clientes, pedidos y servicios, con soporte multiempresa (multi-tenant) y roles de usuario.
+Aplicación web para gestión de inventario, ventas, compras, proveedores, clientes, pedidos y servicios, con soporte multiempresa (multi-tenant) y roles de usuario. Incluye un modo restaurante/cafetería (insumos y recetas que descuentan ingredientes al vender) y flujo de caja (apertura/cierre con PDF). Los módulos contratables están "amarrados": p. ej. Ventas requiere Inventario y Clientes (ver `backend/src/services/modulos.js`).
 
 ## Stack tecnológico
 
