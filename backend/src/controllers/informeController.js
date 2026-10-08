@@ -109,7 +109,7 @@ exports.getInforme = async (req, res) => {
   const startDate = new Date(`${start}T00:00:00`);
   const endDate = new Date(`${end}T23:59:59.999`);
 
-  const whereVenta = { empresaId: req.empresaId, fecha: { [Op.between]: [startDate, endDate] } };
+  const whereVenta = { empresaId: req.empresaId, estado: 'ACTIVA', fecha: { [Op.between]: [startDate, endDate] } };
   const whereCompra = { empresaId: req.empresaId, fecha: { [Op.between]: [startDate, endDate] } };
 
   const data = await generar(tipo, whereVenta, whereCompra);

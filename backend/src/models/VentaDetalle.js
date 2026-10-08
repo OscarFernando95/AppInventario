@@ -49,6 +49,12 @@ const VentaDetalle = sequelize.define('VentaDetalle', {
     allowNull: false,
     defaultValue: 0,
   },
+  // Inventario que descontó esta línea: [{ productoId, cantidad }] (el producto, o los
+  // ingredientes base de un plato). Se usa para devolverlo exacto al anular la venta.
+  consumo: {
+    type: DataTypes.JSONB,
+    allowNull: true,
+  },
   // Modificadores elegidos en un plato: [{ id, nombre, precio_extra }].
   modificadores: {
     type: DataTypes.JSONB,

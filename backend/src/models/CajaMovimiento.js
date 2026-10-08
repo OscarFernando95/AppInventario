@@ -14,6 +14,7 @@ const CajaMovimiento = sequelize.define('CajaMovimiento', {
   fecha: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
   gastoId: { type: DataTypes.INTEGER, allowNull: true },
   compraId: { type: DataTypes.INTEGER, allowNull: true },
+  ventaId: { type: DataTypes.INTEGER, allowNull: true }, // DEVOLUCION de una venta anulada
 }, {
   tableName: 'caja_movimientos',
   timestamps: false,

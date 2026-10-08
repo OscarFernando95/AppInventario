@@ -35,6 +35,21 @@ const EVENTOS = {
     accion: () => 'Registró una venta',
     descripcion: (d) => `Venta #${d.ventaId} por ${cop(d.total)}${d.clienteNombre ? ` a ${d.clienteNombre}` : ''}${d.numItems ? ` (${plural(d.numItems, 'ítem', 'ítems')})` : ''}`,
   },
+  venta_anulada: {
+    modulo: 'Ventas',
+    accion: () => 'Anuló una venta',
+    descripcion: (d) => `Venta #${d.ventaId} por ${cop(d.total)}${d.clienteNombre ? ` de ${d.clienteNombre}` : ''}${d.motivo ? ` · motivo: ${d.motivo}` : ''}${d.solicitadaPor ? ` · solicitada por ${d.solicitadaPor}` : ''}${d.devolucionDeCaja ? ' · dinero devuelto de la caja' : ''}`,
+  },
+  venta_anulacion_solicitada: {
+    modulo: 'Ventas',
+    accion: () => 'Pidió anular una venta',
+    descripcion: (d) => `Venta #${d.ventaId} por ${cop(d.total)}${d.motivo ? ` · motivo: ${d.motivo}` : ''}`,
+  },
+  venta_anulacion_rechazada: {
+    modulo: 'Ventas',
+    accion: () => 'Rechazó la anulación de una venta',
+    descripcion: (d) => `Venta #${d.ventaId}${d.comentario ? ` · ${d.comentario}` : ''}`,
+  },
   // Compras y pedidos
   compra_creada: {
     modulo: 'Compras',

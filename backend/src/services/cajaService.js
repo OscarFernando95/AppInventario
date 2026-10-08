@@ -18,7 +18,7 @@ const esEfectivo = (forma, medio) => String(forma) === '1' && String(medio) === 
  */
 async function calcularResumen(caja, transaction) {
   const filas = await Venta.findAll({
-    where: { cajaId: caja.id },
+    where: { cajaId: caja.id, estado: 'ACTIVA' }, // una venta anulada ya no cuenta en el turno
     attributes: ['forma_pago', 'medio_pago', [fn('COUNT', col('id')), 'num'], [fn('SUM', col('total')), 'total']],
     group: ['forma_pago', 'medio_pago'],
     raw: true,
@@ -54,7 +54,7 @@ async function calcularResumen(caja, transaction) {
  * en efectivo). Debe llamarse dentro de una transacción `t`: bloquea la caja (el
  * mismo lock que ventas y cierre) y rechaza sacar más efectivo del que hay.
  */
-async function registrarEgreso(req, t, { tipo, concepto, monto, gastoId = null, compraId = null }) {
+async function registrarEgreso(req, t, { tipo, concepto, monto, gastoId = null, compraId = null, ventaId = null }) {
   const caja = await Caja.findOne({
     where: { empresaId: req.empresaId, usuarioId: req.userId, estado: 'ABIERTA' },
     transaction: t,
@@ -77,6 +77,7 @@ async function registrarEgreso(req, t, { tipo, concepto, monto, gastoId = null, 
     fecha: new Date(),
     gastoId,
     compraId,
+    ventaId,
   }, { transaction: t });
 }
 
@@ -92,8 +93,8 @@ async function flujos(empresaId, desde, hasta) {
   const fecha = rangoFecha(desde, hasta);
   const f = fecha ? { fecha } : {};
   const [contado, credito, compras, gastos, retiros] = await Promise.all([
-    Venta.sum('total', { where: { empresaId, forma_pago: '1', ...f } }),
-    Venta.sum('total', { where: { empresaId, forma_pago: '2', ...f } }),
+    Venta.sum('total', { where: { empresaId, estado: 'ACTIVA', forma_pago: '1', ...f } }),
+    Venta.sum('total', { where: { empresaId, estado: 'ACTIVA', forma_pago: '2', ...f } }),
     Compra.sum('total', { where: { empresaId, ...f } }),
     Gasto.sum('monto', { where: { empresaId, estado: 'ACTIVO', ...f } }),
     CajaMovimiento.sum('monto', { where: { empresaId, tipo: 'RETIRO', ...f } }),

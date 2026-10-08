@@ -44,6 +44,18 @@ describe('describirEvento (auditoría gerencial)', () => {
     expect(describirEvento('usuario_actualizado', { username: 'luis' }).descripcion).toBe('(@luis)');
   });
 
+  it('anulaciones: quién pidió, el motivo y si el dinero salió de la caja', () => {
+    const anulada = describirEvento('venta_anulada', {
+      ventaId: 12, total: 45000, clienteNombre: 'Ana Gómez', motivo: 'Cliente se arrepintió', solicitadaPor: 'Carlos Cajero', devolucionDeCaja: true,
+    });
+    expect(anulada.accion).toBe('Anuló una venta');
+    expect(anulada.modulo).toBe('Ventas');
+    expect(anulada.descripcion).toMatch(/^Venta #12 por \$\s?45\.000 de Ana Gómez · motivo: Cliente se arrepintió · solicitada por Carlos Cajero · dinero devuelto de la caja$/);
+    expect(describirEvento('venta_anulacion_solicitada', { ventaId: 3, total: 1000, motivo: 'Error' }).accion).toBe('Pidió anular una venta');
+    expect(describirEvento('venta_anulacion_rechazada', { ventaId: 3, comentario: 'Está bien' }).descripcion).toBe('Venta #3 · Está bien');
+    expect(describirEvento('venta_anulada', { ventaId: 4, total: 1 }).descripcion).toMatch(/^Venta #4 por/); // sin datos opcionales
+  });
+
   it('los eventos técnicos no son gerenciales', () => {
     for (const tecnico of ['api_error', 'unhandled_error', 'login_fail', 'login_ok', 'password_changed', 'logout_all']) {
       expect(describirEvento(tecnico, {})).toBeNull();

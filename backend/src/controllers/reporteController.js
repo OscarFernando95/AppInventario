@@ -24,7 +24,7 @@ exports.getDashboardData = async (req, res) => {
 
   const [totalProductos, ventasMes, comprasMes, gastosMes, productosBajoStock] = await Promise.all([
     Producto.count({ where }),
-    Venta.sum('total', { where: { ...where, ...enMesActual } }),
+    Venta.sum('total', { where: { ...where, estado: 'ACTIVA', ...enMesActual } }),
     Compra.sum('total', { where: { ...where, ...enMesActual } }),
     Gasto.sum('monto', { where: { ...where, estado: 'ACTIVO', ...enMesActual } }),
     // Platos y preparaciones no tienen stock propio: su disponibilidad es la de sus insumos.

@@ -1,4 +1,4 @@
-const { sequelize, Venta, VentaDetalle, Producto, Servicio, Cliente, Usuario, Empresa, Caja, Modificador, ModificadorItem } = require('../models');
+const { sequelize, Venta, VentaDetalle, Producto, Servicio, Cliente, Usuario, Empresa, Caja, Modificador, ModificadorItem, AnulacionVenta } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { buildListWhere } = require('../utils/listFilters');
@@ -25,6 +25,7 @@ async function descontarConsumo(plato, consumo, cantidad, t) {
   if (consumo.size === 0) throw new ValidationError(`El plato "${plato.nombre_producto}" no tiene receta configurada.`);
 
   let costoPorcion = 0;
+  const descontado = []; // [{ productoId, cantidad }] total de la línea, para poder devolverlo exacto
   for (const insumoId of [...consumo.keys()].sort((x, y) => x - y)) {
     const porPorcion = consumo.get(insumoId);
     const insumo = await Producto.findByPk(insumoId, { transaction: t, lock: t.LOCK.UPDATE });
@@ -34,8 +35,9 @@ async function descontarConsumo(plato, consumo, cantidad, t) {
     }
     await insumo.update({ stock_actual: redondear3(Number(insumo.stock_actual) - necesario) }, { transaction: t });
     costoPorcion += porPorcion * Number(insumo.costo_promedio);
+    descontado.push({ productoId: insumoId, cantidad: necesario });
   }
-  return costoPorcion;
+  return { costoPorcion, consumo: descontado };
 }
 
 /** Modificadores elegidos en una línea: activos, de la empresa, con sus ingredientes. */
@@ -60,7 +62,7 @@ exports.getVentas = async (req, res) => {
   const { limit, offset } = parseListQuery(req.query);
   const where = {
     empresaId: req.empresaId,
-    ...buildListWhere(req.query, { fecha: 'fecha', igualdad: ['clienteId'] }),
+    ...buildListWhere(req.query, { fecha: 'fecha', igualdad: ['clienteId', 'estado'] }),
   };
 
   const total = await Venta.count({ where });
@@ -72,6 +74,9 @@ exports.getVentas = async (req, res) => {
       { model: Usuario, attributes: ['nombre'] },
       Cliente,
       { model: VentaDetalle, include: [Producto, Servicio] },
+      { model: Usuario, as: 'anuladaPor', attributes: ['nombre'], required: false },
+      // Solicitud de anulación en espera (para mostrarla en la fila).
+      { model: AnulacionVenta, as: 'anulaciones', where: { estado: 'PENDIENTE' }, required: false, attributes: ['id', 'motivo', 'solicitada_por'] },
     ],
     order: [['fecha', 'DESC']],
     limit,
@@ -133,6 +138,7 @@ exports.createVenta = async (req, res) => {
       let nombre = '';
       let costoUnitario = 0; // costo de lo vendido por unidad (foto para rentabilidad)
       let modsLinea = [];
+      let consumoLinea = null; // inventario descontado por esta línea (para anulaciones)
 
       if (item.modificadores?.length && !item.productoId) {
         throw new ValidationError('Solo los platos admiten modificadores.');
@@ -158,11 +164,14 @@ exports.createVenta = async (req, res) => {
           modsLinea = await cargarModificadoresLinea(item.modificadores, req.empresaId, t);
           recetas ??= await cargarRecetas(req.empresaId, { transaction: t });
           precioBase += modsLinea.reduce((a, m) => a + m.precio_extra, 0);
-          costoUnitario = await descontarConsumo(prod, consumoConModificadores(prod.id, recetas, modsLinea), cantidad, t);
+          const r = await descontarConsumo(prod, consumoConModificadores(prod.id, recetas, modsLinea), cantidad, t);
+          costoUnitario = r.costoPorcion;
+          consumoLinea = r.consumo;
         } else {
           if (Number(prod.stock_actual) < cantidad) throw new ValidationError(`Stock insuficiente: ${prod.nombre_producto}`);
           await prod.update({ stock_actual: Number(prod.stock_actual) - cantidad }, { transaction: t });
           costoUnitario = Number(prod.costo_promedio);
+          consumoLinea = [{ productoId: prod.id, cantidad }];
         }
       } else {
         const serv = await Servicio.findByPk(item.servicioId, { transaction: t });
@@ -189,6 +198,7 @@ exports.createVenta = async (req, res) => {
         porcentajeIva,
         precioBase, // de la BD
         costoUnitario,
+        consumo: consumoLinea,
         modificadores: modsLinea.map((m) => ({ id: m.id, nombre: m.nombre, precio_extra: m.precio_extra })),
       });
     }

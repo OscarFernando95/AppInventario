@@ -1816,3 +1816,290 @@ describe('Auditoría gerencial', () => {
     expect(res.body.some((l) => l.ruta)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Anulación de ventas: el administrador anula directo; los demás la solicitan
+// ---------------------------------------------------------------------------
+describe('Anulación de ventas', () => {
+  let cajero; let producto; let harina; let plato; let leche;
+  const stockDe = async (id) => Number((await models.Producto.findByPk(id)).stock_actual);
+  const vender = (detalles, extra = {}) => conEmpresa(agent.post('/api/ventas')).send({ clienteId: ctx.cliente.id, detalles, ...extra });
+  const lineaProducto = (id, cantidad, precio = 1000) => ({ productoId: id, cantidad, precio_unitario: precio, precio_base: precio });
+  const servicio = (monto = 100000) => ({ servicioId: ctx.servicio.id, cantidad: 1, precio_unitario: monto, precio_base: monto });
+  const anular = (id, motivo = 'Error al digitar') => conEmpresa(agent.post(`/api/ventas/${id}/anular`)).send({ motivo });
+  const dbVenta = (id) => models.Venta.findByPk(id);
+  const dashboard = async () => Number((await conEmpresa(agent.get('/api/reportes/dashboard'))).body.ventasMes);
+  const cerrarCajasAbiertas = () => models.Caja.update(
+    { estado: 'CERRADA', fecha_cierre: new Date(), monto_contado: 0, total_egresos: 0 },
+    { where: { empresaId: ctx.empresa.id, estado: 'ABIERTA' } }
+  );
+
+  beforeAll(async () => {
+    await activarModulos(['Recetas']);
+    await models.Servicio.update({ precio: 100000, porcentaje_iva: 0 }, { where: { id: ctx.servicio.id } });
+    const nuevo = (body) => conEmpresa(agent.post('/api/productos')).send({ precio_unitario: 1000, porcentaje_iva: 0, ...body });
+    producto = (await nuevo({ codigo: 'ANU-P', nombre_producto: 'Producto anulable', stock_actual: 50 })).body;
+    harina = (await nuevo({ codigo: 'ANU-H', nombre_producto: 'Harina anulable', tipo: 'INSUMO', unidad_medida: 'GRM', stock_actual: 1000 })).body;
+    leche = (await nuevo({ codigo: 'ANU-L', nombre_producto: 'Leche anulable', tipo: 'INSUMO', unidad_medida: 'MLT', stock_actual: 1000 })).body;
+    plato = (await nuevo({
+      codigo: 'ANU-PL', nombre_producto: 'Plato anulable', tipo: 'RECETA', precio_unitario: 5000,
+      receta: [{ insumoId: harina.id, cantidad: 100 }],
+    })).body;
+
+    const u = await models.Usuario.create({
+      rolId: 3, nombre: 'Cajero Anula', username: 'cajero_anula',
+      contrasena_hash: await bcrypt.hash('Clave1234', 10), estado: true, must_change_password: false,
+    });
+    await u.setEmpresas([ctx.empresa.id]);
+    cajero = request.agent(app);
+    expect((await cajero.post('/api/auth/login').send({ username: 'cajero_anula', contrasena: 'Clave1234' })).status).toBe(200);
+  });
+  afterAll(async () => { await activarModulos([]); });
+
+  it('el administrador anula en el acto: vuelve el stock, queda ANULADA y deja de contar', async () => {
+    const venta = await vender([lineaProducto(producto.id, 5)]);
+    expect(venta.status).toBe(201);
+    expect(await stockDe(producto.id)).toBe(45);
+    const ventasMesAntes = await dashboard();
+
+    const res = await anular(venta.body.id);
+    expect(res.status).toBe(200);
+    expect(res.body.resultado).toBe('ANULADA');
+    expect(await stockDe(producto.id)).toBe(50);
+
+    const v = await dbVenta(venta.body.id);
+    expect(v.estado).toBe('ANULADA');
+    expect(v.motivo_anulacion).toBe('Error al digitar');
+    expect(v.anulada_por).toBe(ctx.usuario.id);
+    expect(v.anulada_en).toBeTruthy();
+    expect(await dashboard()).toBeCloseTo(ventasMesAntes - Number(venta.body.total), 2);
+
+    const listado = (await conEmpresa(agent.get('/api/ventas?estado=ANULADA'))).body;
+    expect(listado.find((x) => x.id === venta.body.id)).toMatchObject({ estado: 'ANULADA' });
+    expect((await conEmpresa(agent.get(`/api/ventas/${venta.body.id}`))).body.estado).toBe('ANULADA');
+  });
+
+  it('exige motivo, no anula dos veces y responde 404 si no existe', async () => {
+    const venta = await vender([lineaProducto(producto.id, 1)]);
+    expect((await conEmpresa(agent.post(`/api/ventas/${venta.body.id}/anular`)).send({})).status).toBe(400);
+    expect((await conEmpresa(agent.post(`/api/ventas/${venta.body.id}/anular`)).send({ motivo: 'x' })).status).toBe(400);
+    expect((await anular(venta.body.id)).status).toBe(200);
+    const otra = await anular(venta.body.id);
+    expect(otra.status).toBe(400);
+    expect(otra.body.error).toMatch(/ya está anulada/);
+    expect((await anular(999999)).status).toBe(404);
+    expect(await stockDe(producto.id)).toBe(50); // no se devolvió dos veces
+  });
+
+  it('un plato devuelve EXACTAMENTE lo que descontó, aunque la receta haya cambiado después', async () => {
+    const venta = await vender([lineaProducto(plato.id, 3, 5000)]);
+    expect(venta.status).toBe(201);
+    expect(await stockDe(harina.id)).toBe(700); // 3 × 100 g
+
+    // La receta cambia: ahora gasta 250 g y además leche.
+    await conEmpresa(agent.put(`/api/productos/${plato.id}`)).send({
+      receta: [{ insumoId: harina.id, cantidad: 250 }, { insumoId: leche.id, cantidad: 40 }],
+    });
+
+    expect((await anular(venta.body.id)).status).toBe(200);
+    expect(await stockDe(harina.id)).toBe(1000); // vuelven los 300 g que se descontaron, no 750
+    expect(await stockDe(leche.id)).toBe(1000); // la leche nunca se descontó: no se inventa
+  });
+
+  it('una venta anterior a la foto del consumo (consumo nulo) también devuelve su stock', async () => {
+    const venta = await vender([lineaProducto(producto.id, 4)]);
+    await models.VentaDetalle.update({ consumo: null }, { where: { ventaId: venta.body.id } });
+    expect(await stockDe(producto.id)).toBe(46);
+    expect((await anular(venta.body.id)).status).toBe(200);
+    expect(await stockDe(producto.id)).toBe(50);
+  });
+
+  it('las ventas anuladas no cuentan en informes ni en la rentabilidad', async () => {
+    const venta = await vender([lineaProducto(plato.id, 2, 5000)]);
+    const antes = (await conEmpresa(agent.get('/api/recetas/rentabilidad'))).body.filas.find((f) => f.productoId === plato.id);
+    expect((await anular(venta.body.id)).status).toBe(200);
+    const despues = (await conEmpresa(agent.get('/api/recetas/rentabilidad'))).body.filas.find((f) => f.productoId === plato.id);
+    expect(antes.unidades).toBe(2); // las ventas del plato anuladas antes no cuentan
+    expect(despues).toBeUndefined(); // y al anular esta, el plato ya no tiene ventas
+
+    const hoy = fechaLocal();
+    const informe = (await conEmpresa(agent.get('/api/informes')).query({ tipo: 'ventas_resumen', start: hoy, end: hoy })).body;
+    expect(informe.some((v) => v.id === venta.body.id)).toBe(false);
+  });
+
+  describe('con módulo Caja', () => {
+    const abrirCaja = (base) => conEmpresa(agent.post('/api/caja/abrir')).send({ monto_inicial: base });
+    const actual = async () => (await conEmpresa(agent.get('/api/caja/actual'))).body;
+    const balance = async () => (await conEmpresa(agent.get('/api/caja/balance'))).body;
+
+    beforeAll(async () => { await activarModulos(['Recetas', 'Caja']); await cerrarCajasAbiertas(); });
+    afterAll(async () => { await cerrarCajasAbiertas(); await activarModulos(['Recetas']); });
+
+    it('caja abierta: la venta sale del turno y el efectivo esperado se corrige solo', async () => {
+      const caja = (await abrirCaja(50000)).body;
+      const venta = await vender([servicio(100000)], { medio_pago: '10' });
+      expect(venta.status).toBe(201);
+      expect((await actual()).resumen.efectivo_esperado).toBe(150000);
+
+      const res = await anular(venta.body.id);
+      expect(res.status).toBe(200);
+      expect(res.body.devolucion).toBeNull(); // el dinero nunca salió del turno
+      const c = await actual();
+      expect(c.id).toBe(caja.id);
+      expect(c.resumen.efectivo_esperado).toBe(50000);
+      expect(c.resumen.num_ventas).toBe(0);
+      await cerrarCajasAbiertas();
+    });
+
+    it('caja ya cerrada: el turno no se reescribe; el dinero se devuelve como egreso de la caja abierta', async () => {
+      const cajaA = (await abrirCaja(0)).body;
+      const venta = await vender([servicio(100000)], { medio_pago: '10' });
+      const cierre = await conEmpresa(agent.post(`/api/caja/${cajaA.id}/cerrar`)).send({ monto_contado: 100000 });
+      expect(cierre.status).toBe(200);
+      const balanceAntes = await balance();
+
+      // Sin caja abierta no se puede devolver el efectivo.
+      const sinCaja = await anular(venta.body.id);
+      expect(sinCaja.status).toBe(400);
+      expect(sinCaja.body.error).toMatch(/abre tu caja/i);
+      expect((await dbVenta(venta.body.id)).estado).toBe('ACTIVA');
+
+      const cajaB = (await abrirCaja(150000)).body;
+      const res = await anular(venta.body.id);
+      expect(res.status).toBe(200);
+      expect(res.body.devolucion).toMatchObject({ tipo: 'DEVOLUCION', ventaId: venta.body.id });
+      expect(Number(res.body.devolucion.monto)).toBe(100000);
+
+      const b = await actual();
+      expect(b.id).toBe(cajaB.id);
+      expect(b.resumen.efectivo_esperado).toBe(50000); // 150.000 − devolución de 100.000
+      expect(b.movimientos.map((m) => m.tipo)).toEqual(['DEVOLUCION']);
+
+      // La caja A quedó exactamente como se cerró…
+      const a = (await conEmpresa(agent.get(`/api/caja/${cajaA.id}`))).body;
+      expect(a.resumen.total_ventas).toBe(100000);
+      expect(a.ventas.find((v) => v.id === venta.body.id).estado).toBe('ANULADA'); // …pero marca la venta como anulada
+
+      // Balance de la empresa: la venta deja de contar y la devolución NO se resta otra vez como retiro.
+      const balanceDespues = await balance();
+      expect(balanceDespues.dinero_actual - balanceAntes.dinero_actual).toBe(-100000);
+      expect(balanceDespues.acumulado.retiros).toBe(balanceAntes.acumulado.retiros);
+      await cerrarCajasAbiertas();
+    });
+
+    it('caja cerrada pero la venta NO fue en efectivo: no hay devolución desde la caja', async () => {
+      const cajaA = (await abrirCaja(0)).body;
+      const venta = await vender([servicio(100000)], { medio_pago: '48' }); // tarjeta
+      await conEmpresa(agent.post(`/api/caja/${cajaA.id}/cerrar`)).send({ monto_contado: 0 });
+      const res = await anular(venta.body.id); // ni siquiera hace falta una caja abierta
+      expect(res.status).toBe(200);
+      expect(res.body.devolucion).toBeNull();
+    });
+  });
+
+  describe('solicitud del cajero y aprobación del administrador', () => {
+    const solicitar = (id, motivo = 'El cliente se arrepintió') => withEmpresa(cajero.post(`/api/ventas/${id}/anular`)).send({ motivo });
+    const pendientes = async () => (await conEmpresa(agent.get('/api/anulaciones'))).body;
+
+    it('el cajero NO anula: deja una solicitud y la venta sigue activa', async () => {
+      const venta = await vender([lineaProducto(producto.id, 2)]);
+      const res = await solicitar(venta.body.id);
+      expect(res.status).toBe(201);
+      expect(res.body.resultado).toBe('SOLICITADA');
+      expect((await dbVenta(venta.body.id)).estado).toBe('ACTIVA');
+      expect(await stockDe(producto.id)).toBe(48);
+
+      const repetida = await solicitar(venta.body.id);
+      expect(repetida.status).toBe(400);
+      expect(repetida.body.error).toMatch(/pendiente/);
+      expect((await withEmpresa(cajero.post(`/api/ventas/${venta.body.id}/anular`)).send({})).status).toBe(400); // motivo obligatorio
+
+      // El listado de ventas marca la solicitud en espera.
+      const fila = (await conEmpresa(agent.get('/api/ventas'))).body.find((v) => v.id === venta.body.id);
+      expect(fila.anulaciones).toHaveLength(1);
+    });
+
+    it('cada quien ve lo suyo: el administrador todas las pendientes; el cajero solo las suyas; resolver es del administrador', async () => {
+      const lista = await pendientes();
+      expect(lista.length).toBeGreaterThanOrEqual(1);
+      const solicitud = lista[0];
+      expect(solicitud.solicitante.nombre).toBe('Cajero Anula');
+      expect(solicitud.venta.id).toBe(solicitud.ventaId);
+
+      const suyas = (await withEmpresa(cajero.get('/api/anulaciones'))).body;
+      expect(suyas.every((s) => s.solicitante.id === solicitud.solicitante.id)).toBe(true);
+      expect((await withEmpresa(cajero.post(`/api/anulaciones/${solicitud.id}/aprobar`))).status).toBe(403);
+      expect((await withEmpresa(cajero.post(`/api/anulaciones/${solicitud.id}/rechazar`)).send({})).status).toBe(403);
+    });
+
+    it('el administrador aprueba: se anula la venta, vuelve el stock y la solicitud queda APROBADA', async () => {
+      const solicitud = (await pendientes())[0];
+      const res = await conEmpresa(agent.post(`/api/anulaciones/${solicitud.id}/aprobar`));
+      expect(res.status).toBe(200);
+      expect(res.body.estado).toBe('APROBADA');
+      expect(res.body.resolutor.nombre).toBe('Front Admin');
+
+      const v = await dbVenta(solicitud.ventaId);
+      expect(v.estado).toBe('ANULADA');
+      expect(v.motivo_anulacion).toBe('El cliente se arrepintió');
+      expect(v.anulada_por).toBe(ctx.usuario.id); // quien aprueba es quien anula
+      expect(await stockDe(producto.id)).toBe(50);
+
+      const otra = await conEmpresa(agent.post(`/api/anulaciones/${solicitud.id}/aprobar`));
+      expect(otra.status).toBe(400);
+      expect(otra.body.error).toMatch(/ya fue resuelta/);
+    });
+
+    it('el administrador rechaza: la venta sigue activa y el cajero puede volver a pedirla', async () => {
+      const venta = await vender([lineaProducto(producto.id, 1)]);
+      await solicitar(venta.body.id);
+      const solicitud = (await pendientes()).find((s) => s.ventaId === venta.body.id);
+
+      const res = await conEmpresa(agent.post(`/api/anulaciones/${solicitud.id}/rechazar`)).send({ comentario: 'La venta es correcta' });
+      expect(res.status).toBe(200);
+      expect(res.body.estado).toBe('RECHAZADA');
+      expect(res.body.comentario).toBe('La venta es correcta');
+      expect((await dbVenta(venta.body.id)).estado).toBe('ACTIVA');
+      expect(await stockDe(producto.id)).toBe(49);
+
+      expect((await solicitar(venta.body.id, 'Insisto')).status).toBe(201); // ya no hay una pendiente
+      const historial = (await conEmpresa(agent.get('/api/anulaciones?estado=RECHAZADA'))).body;
+      expect(historial.some((s) => s.id === solicitud.id)).toBe(true);
+      expect((await conEmpresa(agent.post('/api/anulaciones/999999/aprobar'))).status).toBe(404);
+    });
+
+    it('no se puede pedir anular una venta ya anulada', async () => {
+      const venta = await vender([lineaProducto(producto.id, 1)]);
+      await anular(venta.body.id);
+      const res = await solicitar(venta.body.id);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/ya está anulada/);
+    });
+
+    it('queda en la auditoría gerencial: quién pidió, quién anuló y por qué', async () => {
+      const buscar = async (accion) => {
+        for (let i = 0; i < 40; i += 1) {
+          const res = await conEmpresa(agent.get('/api/auditoria?modulo=Ventas&limit=200'));
+          const fila = res.body.find((a) => a.accion === accion);
+          if (fila) return fila;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        throw new Error(`No apareció "${accion}" en la auditoría`);
+      };
+      const pidio = await buscar('Pidió anular una venta');
+      expect(pidio.usuario.nombre).toBe('Cajero Anula');
+      expect(pidio.descripcion).toMatch(/motivo: /);
+
+      const anulo = await buscar('Anuló una venta');
+      expect(anulo.usuario.nombre).toBe('Front Admin');
+      expect(anulo.descripcion).toMatch(/Venta #\d+ por/);
+      expect(anulo.descripcion).toMatch(/motivo: /);
+
+      const rechazo = await buscar('Rechazó la anulación de una venta');
+      expect(rechazo.descripcion).toContain('La venta es correcta');
+      const conSolicitante = (await conEmpresa(agent.get('/api/auditoria?modulo=Ventas&limit=200'))).body
+        .find((a) => a.accion === 'Anuló una venta' && a.descripcion.includes('solicitada por Cajero Anula'));
+      expect(conSolicitante).toBeTruthy();
+    });
+  });
+});

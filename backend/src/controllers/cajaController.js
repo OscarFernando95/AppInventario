@@ -84,7 +84,7 @@ exports.getCajaById = async (req, res) => {
   const json = await conResumen(caja);
   json.ventas = await Venta.findAll({
     where: { cajaId: caja.id },
-    attributes: ['id', 'fecha', 'total', 'forma_pago', 'medio_pago'],
+    attributes: ['id', 'fecha', 'total', 'forma_pago', 'medio_pago', 'estado'],
     order: [['fecha', 'ASC']],
     raw: true,
   });

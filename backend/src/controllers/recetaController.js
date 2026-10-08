@@ -25,7 +25,7 @@ exports.getRentabilidad = async (req, res) => {
        FROM "ventas_detalles" vd
        JOIN "ventas" v ON v."id" = vd."ventaId"
        JOIN "productos" p ON p."id" = vd."productoId"
-      WHERE v."empresaId" = :empresaId AND vd."productoId" IS NOT NULL ${filtros.join(' ')}
+      WHERE v."empresaId" = :empresaId AND v."estado" = 'ACTIVA' AND vd."productoId" IS NOT NULL ${filtros.join(' ')}
       GROUP BY vd."productoId", p."nombre_producto", p."codigo", p."tipo"`,
     { type: QueryTypes.SELECT, replacements }
   );
