@@ -98,6 +98,17 @@ const DashboardUser = () => {
         </p>
       </div>
 
+      {(dash?.productosBajoStock?.length ?? 0) > 0 && (activeEmpresa?.modulos || []).includes('Inventario') && (
+        <div role="status" className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
+          <AlertTriangle className="w-5 h-5 shrink-0" aria-hidden="true" />
+          <span className="flex-1 min-w-48">
+            <strong>{dash.productosBajoStock.length >= 10 ? '10 o más' : dash.productosBajoStock.length} producto(s) en o bajo su stock mínimo</strong>
+            {' '}— {dash.productosBajoStock.slice(0, 3).map((p) => p.nombre_producto).join(', ')}{dash.productosBajoStock.length > 3 ? '…' : ''}
+          </span>
+          <button type="button" className="btn-primary px-4 py-2 text-sm" onClick={() => navigate('/app/reposicion')}>Ver reposición</button>
+        </div>
+      )}
+
       <div className={`grid grid-cols-1 sm:grid-cols-2 gap-6 ${tieneGastos ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
         <StatCard
           label="Productos" icon={Boxes} tone="bg-brand-50 text-brand-700"

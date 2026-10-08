@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { PackageOpen, Users, Plus, ShoppingCart, Trash2, Search, CheckCircle, Truck, UserPlus, X, Box, Printer, FileText, Download } from 'lucide-react';
@@ -60,7 +61,11 @@ const Pedidos = () => {
     setFiltros((prev) => ({ ...prev, ...patch }));
   };
 
-  const [showModal, setShowModal] = useState(false); // Modal para Crear Pedido
+  // Desde Reposición ("Crear pedido") llegan los ítems sugeridos: la orden nace abierta y con ellos.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const sugeridosDeReposicion = location.state?.reposicion;
+  const [showModal, setShowModal] = useState(() => !!sugeridosDeReposicion?.length); // Modal para Crear Pedido
   const [viewDetalle, setViewDetalle] = useState(null); // Modal Ver PDF / Completado
   const [checkInPedido, setCheckInPedido] = useState(null); // Modal para Recibir (Check-in)
   const [formError, setFormError] = useState(null);
@@ -70,7 +75,12 @@ const Pedidos = () => {
   const [showNewProv, setShowNewProv] = useState(false);
   const [showNewProd, setShowNewProd] = useState(false);
 
-  const [formData, setFormData] = useState({ proveedorId: '', detalles: [] });
+  const [formData, setFormData] = useState(() => ({ proveedorId: '', detalles: sugeridosDeReposicion || [] }));
+
+  // El estado del router se limpia para que un refresco no vuelva a abrir la orden.
+  useEffect(() => {
+    if (location.state?.reposicion) navigate(location.pathname, { replace: true, state: null });
+  }, [location, navigate]);
   const [newProvData, setNewProvData] = useState({ nombre: '', nit: '', contacto: '', telefono: '', email: '', direccion: '' });
   const [newProdData, setNewProdData] = useState({ codigo: '', nombre_producto: '', precio_unitario: '' });
 

@@ -22,6 +22,7 @@ const EMPTY_FORM = {
   porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: '',
   tipo: 'VENTA', receta: [], costo_promedio: '', rendimiento: '',
   unidad_compra: '', factor_compra: '', presOtra: false, // presentación de compra (kg, caja…)
+  stock_minimo: '', stock_objetivo: '', // alerta de reposición
 };
 
 const TIPOS = {
@@ -41,18 +42,13 @@ const IMPORT_OPCIONES_INICIALES = { modoCantidad: 'sumar', modoPrecio: 'conserva
 // esta URL basta para descargar la plantilla sin JS ni volver a pedir empresa.
 const URL_PLANTILLA = `${import.meta.env.VITE_API_URL || '/api'}/productos/plantilla`;
 
-/** Umbral por debajo del cual el stock se marca como bajo. */
-const STOCK_BAJO = 10;
-
-const stockTone = (stock) => {
-  const n = Number(stock);
-  if (n >= STOCK_BAJO) return 'bg-emerald-100 text-emerald-800';
-  if (n > 0) return 'bg-amber-100 text-amber-800';
-  return 'bg-red-100 text-red-800';
+/** Color según el estado de stock que calcula el servidor con el MÍNIMO de cada producto. */
+const TONO_ESTADO = {
+  OK: 'bg-emerald-100 text-emerald-800',
+  BAJO: 'bg-amber-100 text-amber-800',
+  AGOTADO: 'bg-red-100 text-red-800',
 };
-
-/** Lo vendible: porciones para un plato; stock físico para el resto. */
-const disponible = (p) => Number(p.tipo === 'RECETA' ? (p.porciones_disponibles ?? 0) : p.stock_actual);
+const stockTone = (p) => TONO_ESTADO[p.estado_stock] || TONO_ESTADO.OK;
 
 const pct = (n) => `${Number(n).toLocaleString('es-CO', { maximumFractionDigits: 1 })}%`;
 
@@ -81,10 +77,8 @@ const Inventario = () => {
     return productos.filter((p) => {
       if (q && !(`${p.codigo} ${p.nombre_producto}`.toLowerCase().includes(q))) return false;
       if (filtroTipo && (p.tipo || 'VENTA') !== filtroTipo) return false;
-      if (p.tipo === 'PREPARACION') return !filtroStock; // sin stock propio: los filtros de stock no aplican
-      const stock = disponible(p);
-      if (filtroStock === 'agotado' && stock > 0) return false;
-      if (filtroStock === 'bajo' && stock >= STOCK_BAJO) return false;
+      if (filtroStock === 'agotado' && p.estado_stock !== 'AGOTADO') return false;
+      if (filtroStock === 'bajo' && !p.alerta_stock) return false; // en o bajo su mínimo (o agotado con mínimo)
       return true;
     });
   }, [productos, busqueda, filtroStock, filtroTipo]);
@@ -130,6 +124,8 @@ const Inventario = () => {
       tipo: p.tipo || 'VENTA',
       costo_promedio: CON_RECETA.includes(p.tipo) ? '' : String(Number(p.costo_promedio ?? 0) || ''),
       rendimiento: p.tipo === 'PREPARACION' ? String(Number(p.rendimiento)) : '',
+      stock_minimo: Number(p.stock_minimo) ? String(Number(p.stock_minimo)) : '',
+      stock_objetivo: p.stock_objetivo != null ? String(Number(p.stock_objetivo)) : '',
       unidad_compra: p.unidad_compra || '',
       factor_compra: p.unidad_compra ? String(Number(p.factor_compra)) : '',
       presOtra: !!p.unidad_compra && !UNIDADES.some((u) => u.value === p.unidad_compra),
@@ -168,6 +164,8 @@ const Inventario = () => {
       unidad_compra: esPlato ? undefined : (formData.unidad_compra.trim() || null),
       factor_compra: !esPlato && formData.unidad_compra.trim() ? Number(formData.factor_compra) : undefined,
       presOtra: undefined,
+      stock_minimo: Number(formData.stock_minimo) || 0,
+      stock_objetivo: formData.stock_objetivo === '' ? null : Number(formData.stock_objetivo),
       receta: undefined,
     };
     if (payload.unidad_compra && !(payload.factor_compra > 0)) {
@@ -256,7 +254,7 @@ const Inventario = () => {
         <Field label="Stock" className="w-full sm:w-44">
           <select className="input-field" value={filtroStock} onChange={(e) => setFiltroStock(e.target.value)}>
             <option value="">Todos</option>
-            <option value="bajo">Stock bajo (&lt; {STOCK_BAJO})</option>
+            <option value="bajo">En o bajo su mínimo</option>
             <option value="agotado">Agotados</option>
           </select>
         </Field>
@@ -295,19 +293,20 @@ const Inventario = () => {
                 </div>
               </Td>
               <Td align="center">
-                {p.tipo === 'PREPARACION' ? (
-                  <span className="text-xs text-slate-500">Sin stock · rinde {formatCantidad(p.rendimiento)} {unidadCorta(p.unidad_medida)}</span>
-                ) : (
-                  <>
-                    <span className={`inline-block px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide whitespace-nowrap ${stockTone(disponible(p))}`}>
-                      {p.tipo === 'RECETA'
-                        ? `${formatCantidad(p.porciones_disponibles ?? 0)} porciones`
-                        : `${formatCantidad(p.stock_actual)} ${unidadCorta(p.unidad_medida)}`}
-                    </span>
-                    {presentacionDe(p) && presentacionDe(p).factor !== 1 && Number(p.stock_actual) > 0 && (
-                      <span className="block text-[11px] text-slate-500 mt-1">≈ {formatCantidad(Number(p.stock_actual) / presentacionDe(p).factor)} {etiquetaPresentacion(p.unidad_compra)}</span>
-                    )}
-                  </>
+                <span className={`inline-block px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide whitespace-nowrap ${stockTone(p)}`}>
+                  {p.tipo === 'RECETA'
+                    ? `${formatCantidad(p.disponible)} porciones`
+                    : p.tipo === 'PREPARACION'
+                      ? `${formatCantidad(p.disponible)} ${unidadCorta(p.unidad_medida)} producibles`
+                      : `${formatCantidad(p.stock_actual)} ${unidadCorta(p.unidad_medida)}`}
+                </span>
+                {Number(p.stock_minimo) > 0 && (
+                  <span className={`block text-[11px] mt-1 ${p.alerta_stock ? 'font-semibold text-amber-700' : 'text-slate-500'}`}>
+                    {p.estado_stock === 'AGOTADO' ? 'Agotado · ' : p.alerta_stock ? 'Bajo el mínimo · ' : ''}mín. {formatCantidad(p.stock_minimo)}
+                  </span>
+                )}
+                {p.tipo !== 'PREPARACION' && p.tipo !== 'RECETA' && presentacionDe(p) && presentacionDe(p).factor !== 1 && Number(p.stock_actual) > 0 && (
+                  <span className="block text-[11px] text-slate-500 mt-1">≈ {formatCantidad(Number(p.stock_actual) / presentacionDe(p).factor)} {etiquetaPresentacion(p.unidad_compra)}</span>
                 )}
               </Td>
               {conRecetas && (
@@ -402,6 +401,22 @@ const Inventario = () => {
               />
             </Field>
           )}
+
+          <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">
+            <legend className="px-2 text-sm font-semibold text-brand-800">Alerta de reposición</legend>
+            <p className="text-xs text-slate-500">
+              Avisa cuando {formData.tipo === 'RECETA' ? 'las porciones que se pueden preparar' : formData.tipo === 'PREPARACION' ? 'las unidades que se pueden producir' : 'el stock'} lleguen
+              a este mínimo y sugiere cuánto pedir. 0 = sin alerta.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label={`Stock mínimo (${formData.tipo === 'RECETA' ? 'porciones' : unidadCorta(formData.unidad_medida)})`}>
+                <input type="number" step="any" min="0" className="input-field" placeholder="0" value={formData.stock_minimo} onChange={(e) => setFormData({ ...formData, stock_minimo: e.target.value })} />
+              </Field>
+              <Field label={`Reponer hasta (${formData.tipo === 'RECETA' ? 'porciones' : unidadCorta(formData.unidad_medida)})`} hint="Opcional. Vacío = el doble del mínimo.">
+                <input type="number" step="any" min="0" className="input-field" placeholder="Automático" value={formData.stock_objetivo} onChange={(e) => setFormData({ ...formData, stock_objetivo: e.target.value })} />
+              </Field>
+            </div>
+          </fieldset>
 
           {!CON_RECETA.includes(formData.tipo) && (
             <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">

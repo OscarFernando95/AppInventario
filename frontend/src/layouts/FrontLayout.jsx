@@ -3,7 +3,10 @@ import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../api/axios';
-import { Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins } from 'lucide-react';
+import { Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins, PackagePlus } from 'lucide-react';
+
+// Títulos con tilde para las rutas cuyo nombre se escribe sin ella.
+const TITULOS = { auditoria: 'Auditoría', reposicion: 'Reposición', admin: 'Administración' };
 
 const FrontLayout = () => {
   const { user, activeEmpresa, setActiveEmpresa, logout, syncSesion } = useAuthStore();
@@ -51,6 +54,7 @@ const FrontLayout = () => {
   const baseMenu = [
     { name: 'Dashboard', path: '/app', icon: LayoutDashboard },
     { name: 'Inventario', path: '/app/inventario', icon: Boxes },
+    { name: 'Reposición', path: '/app/reposicion', icon: PackagePlus, modulo: 'Inventario' },
     { name: 'Recetas', path: '/app/recetas', icon: ChefHat },
     { name: 'Ajustes', path: '/app/ajustes', icon: ClipboardCheck, modulo: 'Inventario' },
     { name: 'Proveedores', path: '/app/proveedores', icon: Truck },
@@ -187,7 +191,7 @@ const FrontLayout = () => {
               <Menu className="w-5 h-5" />
             </button>
             <h2 className="text-xl sm:text-2xl font-bold text-slate-800 capitalize truncate">
-              {location.pathname === '/app' ? 'Resumen General' : location.pathname.split('/').pop()}
+              {location.pathname === '/app' ? 'Resumen General' : (TITULOS[location.pathname.split('/').pop()] || location.pathname.split('/').pop())}
             </h2>
           </div>
           <div className="flex items-center gap-4">
