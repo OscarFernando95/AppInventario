@@ -168,7 +168,10 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
     : [['#', 'Descripción', 'Tipo', 'Cant.', 'P. Unitario', 'Subtotal']];
 
   const tableBody = detalles.map((d, i) => {
-    const nombre = d.Producto?.nombre_producto || d.Servicio?.nombre || d.nombre || 'Ítem';
+    const nombreBase = d.Producto?.nombre_producto || d.Servicio?.nombre || d.nombre || 'Ítem';
+    // Platos con extras / "sin ...": se listan debajo del nombre.
+    const mods = Array.isArray(d.modificadores) ? d.modificadores.map((m) => m.nombre).filter(Boolean) : [];
+    const nombre = mods.length ? `${nombreBase}\n  + ${mods.join(', ')}` : nombreBase;
     const tipo = d.Producto ? 'Producto' : 'Servicio';
     const qty = Number(d.cantidad);
     const unitPrice = Number(d.precio_unitario);

@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { Building2, Plus, Power, ShieldCheck, FileText, Boxes, ArrowLeft } from 'lucide-react';
+import { Building2, Plus, Power, ShieldCheck, FileText, Boxes, ArrowLeft, Lock, Sparkles } from 'lucide-react';
 import SearchableSelect from '../../components/SearchableSelect';
 import DaneLocationFields from '../../components/DaneLocationFields';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
 import { calcularDV } from '../../utils/nit';
 import { useCiiu, useModulos } from '../../hooks/useCatalogos';
+import { TIPOS_NEGOCIO, tipoNegocio, conDependencias, idsPorNombre, requeridoPor } from '../../utils/modulos';
 import PageHeader from '../../components/ui/PageHeader';
 import Modal, { ModalActions } from '../../components/ui/Modal';
 import Field from '../../components/ui/Field';
@@ -20,6 +21,7 @@ const EMPTY = {
   municipio_dane: '', departamento_dane: '', codigo_ciiu: '', email_facturacion: '',
   resolucion_numero: '', prefijo_facturacion: '', rango_desde: '', rango_hasta: '',
   fecha_vigencia_desde: '', fecha_vigencia_hasta: '', clave_tecnica: '', tipo_empresa: 'SIMPLE',
+  tipo_negocio: 'COMERCIO', capital_inicial: '',
 };
 
 const Chip = ({ tone = 'bg-slate-100 text-slate-700', children }) => (
@@ -57,12 +59,34 @@ const Empresas = () => {
 
   const handleNit = (value) => setField({ nit: value, dv: calcularDV(value) });
 
+  // Módulos "amarrados": al marcar uno se marcan los que requiere, y mientras
+  // alguno marcado dependa de otro, este queda bloqueado (no se puede quitar).
   const handleToggleModulo = (id) => {
+    setFormData((prev) => {
+      if (prev.modulosIds.includes(id)) {
+        return { ...prev, modulosIds: prev.modulosIds.filter((mId) => mId !== id) };
+      }
+      return { ...prev, modulosIds: conDependencias([...prev.modulosIds, id], modulos) };
+    });
+  };
+
+  const sugeridosDe = (valorTipo) => conDependencias(idsPorNombre(tipoNegocio(valorTipo).sugeridos, modulos), modulos);
+
+  const aplicarSugeridos = (valorTipo = formData.tipo_negocio) => {
     setFormData((prev) => ({
       ...prev,
-      modulosIds: prev.modulosIds.includes(id)
-        ? prev.modulosIds.filter((mId) => mId !== id)
-        : [...prev.modulosIds, id],
+      modulosIds: conDependencias([...new Set([...prev.modulosIds, ...sugeridosDe(valorTipo)])], modulos),
+    }));
+  };
+
+  // Al crear, cambiar el tipo de negocio reemplaza la selección por los módulos
+  // sugeridos. Al editar solo cambia el tipo (los módulos contratados no se tocan
+  // salvo que se pulse «Aplicar sugeridos»).
+  const handleTipoNegocio = (valor) => {
+    setFormData((prev) => ({
+      ...prev,
+      tipo_negocio: valor,
+      ...(editId ? {} : { modulosIds: sugeridosDe(valor) }),
     }));
   };
 
@@ -97,7 +121,7 @@ const Empresas = () => {
     setEditId(null);
     setTipo(null);
     setFormError(null);
-    setFormData({ ...EMPTY, modulosIds: inventarioId ? [inventarioId] : [] });
+    setFormData({ ...EMPTY, modulosIds: sugeridosDe(EMPTY.tipo_negocio) });
     setShowModal(true);
   };
 
@@ -112,7 +136,11 @@ const Empresas = () => {
     setFormError(null);
     setFormData({
       nombre: emp.nombre, nit: emp.nit || '', contacto: emp.contacto || '', activa: emp.activa,
-      modulosIds: emp.Modulos.map((m) => m.id),
+      // Si una empresa antigua tiene módulos sin sus dependencias, se completan
+      // a la vista para que el guardado no falle.
+      modulosIds: conDependencias(emp.Modulos.map((m) => m.id), modulos),
+      tipo_negocio: emp.tipo_negocio || 'COMERCIO',
+      capital_inicial: Number(emp.capital_inicial) ? String(Number(emp.capital_inicial)) : '',
       dv: emp.dv || calcularDV(emp.nit), tipo_persona: emp.tipo_persona || '1',
       regimen_fiscal: emp.regimen_fiscal || 'O-48', direccion_fisica: emp.direccion_fisica || '',
       municipio_dane: emp.municipio_dane || '', departamento_dane: emp.departamento_dane || '',
@@ -131,35 +159,73 @@ const Empresas = () => {
     guardar.mutate(formData);
   };
 
+  const sugeridosActuales = tipoNegocio(formData.tipo_negocio).sugeridos;
+  const faltanSugeridos = sugeridosActuales.some((n) => {
+    const m = modulos.find((x) => x.nombre_codigo === n);
+    return m && !formData.modulosIds.includes(m.id);
+  });
+
   const modulosBloque = (
-    <fieldset className="border-t border-slate-100 pt-4 mt-2">
-      <legend className="text-sm font-medium text-slate-700 mb-3">Módulos habilitados</legend>
-      <div className="grid grid-cols-2 gap-3 max-h-48 overflow-y-auto">
-        {modulos.map((mod) => {
-          const activo = formData.modulosIds?.includes(mod.id);
-          const esBase = mod.id === inventarioId;
-          return (
-            <label
-              key={mod.id}
-              className={`flex items-center gap-2 p-2 rounded-xl border cursor-pointer transition-all focus-within:ring-2 focus-within:ring-brand-600 ${
-                activo ? 'bg-brand-50 border-brand-200' : 'bg-white border-slate-200 hover:bg-slate-50'
-              }`}
+    <fieldset className="border-t border-slate-100 pt-4 mt-2 space-y-4">
+      <legend className="sr-only">Tipo de negocio y módulos</legend>
+
+      <Field label="Tipo de negocio" hint={tipoNegocio(formData.tipo_negocio).descripcion}>
+        <select className="input-field" value={formData.tipo_negocio} onChange={(e) => handleTipoNegocio(e.target.value)}>
+          {TIPOS_NEGOCIO.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </select>
+      </Field>
+
+      <div>
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <p className="text-sm font-medium text-slate-700">Módulos habilitados</p>
+          {faltanSugeridos && (
+            <button
+              type="button"
+              onClick={() => aplicarSugeridos()}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-brand-800 bg-brand-50 hover:bg-brand-100 rounded-lg px-2.5 py-1.5 transition-colors
+                         focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
             >
-              <input
-                type="checkbox"
-                className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"
-                checked={!!activo}
-                onChange={() => handleToggleModulo(mod.id)}
-              />
-              <span className={`text-xs font-medium ${activo ? 'text-brand-800' : 'text-slate-700'}`}>
-                {mod.nombre_codigo}
-              </span>
-              {esBase && (
-                <span className="text-[10px] font-semibold uppercase bg-brand-700 text-white px-1.5 py-0.5 rounded">base</span>
-              )}
-            </label>
-          );
-        })}
+              <Sparkles className="w-3.5 h-3.5" aria-hidden="true" /> Aplicar sugeridos
+            </button>
+          )}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
+          {modulos.map((mod) => {
+            const activo = formData.modulosIds?.includes(mod.id);
+            const esBase = mod.id === inventarioId;
+            const bloqueadoPor = activo ? requeridoPor(mod, formData.modulosIds, modulos) : [];
+            const bloqueado = bloqueadoPor.length > 0;
+            const sugerido = sugeridosActuales.includes(mod.nombre_codigo);
+            return (
+              <label
+                key={mod.id}
+                title={bloqueado ? `Lo requiere: ${bloqueadoPor.join(', ')}` : undefined}
+                className={`flex items-start gap-2 p-2 rounded-xl border transition-all focus-within:ring-2 focus-within:ring-brand-600 ${
+                  bloqueado ? 'cursor-not-allowed' : 'cursor-pointer'
+                } ${activo ? 'bg-brand-50 border-brand-200' : 'bg-white border-slate-200 hover:bg-slate-50'}`}
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5 w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"
+                  checked={!!activo}
+                  disabled={bloqueado}
+                  onChange={() => handleToggleModulo(mod.id)}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <span className={`text-xs font-medium ${activo ? 'text-brand-800' : 'text-slate-700'}`}>{mod.nombre_codigo}</span>
+                    {esBase && <span className="text-[10px] font-semibold uppercase bg-brand-700 text-white px-1.5 py-0.5 rounded">base</span>}
+                    {sugerido && !activo && <span className="text-[10px] font-semibold uppercase bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">sugerido</span>}
+                    {bloqueado && <Lock className="w-3 h-3 text-slate-500" aria-label={`Lo requiere ${bloqueadoPor.join(', ')}`} />}
+                  </span>
+                  {mod.requiere?.length > 0 && (
+                    <span className="block text-[11px] text-slate-500 mt-0.5">Requiere: {mod.requiere.join(', ')}</span>
+                  )}
+                </span>
+              </label>
+            );
+          })}
+        </div>
       </div>
     </fieldset>
   );
@@ -179,6 +245,18 @@ const Empresas = () => {
         value={formData.codigo_ciiu}
         onChange={(v) => setField({ codigo_ciiu: v })}
         placeholder="Buscar por código o descripción…"
+      />
+    </Field>
+  );
+
+  const capitalBloque = (
+    <Field
+      label="Capital inicial ($)"
+      hint="Dinero con el que la empresa empieza en el software. Sirve de referencia: Caja mostrará cuánto ha crecido o disminuido frente a esta base."
+    >
+      <input
+        type="number" min="0" step="0.01" className="input-field" placeholder="0"
+        value={formData.capital_inicial} onChange={(e) => setField({ capital_inicial: e.target.value })}
       />
     </Field>
   );
@@ -241,9 +319,12 @@ const Empresas = () => {
                 {emp.nit}{emp.dv ? `-${emp.dv}` : ''}
               </Td>
               <Td>
-                <Chip tone={emp.tipo_empresa === 'FACTURACION_ELECTRONICA' ? 'bg-brand-100 text-brand-800' : 'bg-slate-100 text-slate-700'}>
-                  {emp.tipo_empresa === 'FACTURACION_ELECTRONICA' ? 'Facturación electrónica' : 'Simple'}
-                </Chip>
+                <div className="flex flex-col items-start gap-1">
+                  <Chip tone="bg-amber-50 text-amber-800">{tipoNegocio(emp.tipo_negocio).label}</Chip>
+                  <Chip tone={emp.tipo_empresa === 'FACTURACION_ELECTRONICA' ? 'bg-brand-100 text-brand-800' : 'bg-slate-100 text-slate-700'}>
+                    {emp.tipo_empresa === 'FACTURACION_ELECTRONICA' ? 'Facturación electrónica' : 'Simple'}
+                  </Chip>
+                </div>
               </Td>
               <Td>
                 <div className="flex flex-wrap gap-1">
@@ -358,6 +439,7 @@ const Empresas = () => {
                 <div className="space-y-4">
                   {localizacionBloque}
                   {ciiuBloque}
+                  {capitalBloque}
                   {modulosBloque}
                 </div>
               </div>
@@ -445,6 +527,8 @@ const Empresas = () => {
                   <Field label="Clave Técnica DIAN">
                     <input className="input-field" placeholder="fc8eac42..." value={formData.clave_tecnica} onChange={(e) => setField({ clave_tecnica: e.target.value })} />
                   </Field>
+
+                  {capitalBloque}
 
                   {editId && <div className="pt-2">{estadoBloque}</div>}
 

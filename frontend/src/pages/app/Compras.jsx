@@ -4,6 +4,7 @@ import api from '../../api/axios';
 import { PackageOpen, Users, Plus, ShoppingCart, Trash2, Tag, Search, CheckCircle, Truck, UserPlus, X, Box, Wallet, Eye, Receipt } from 'lucide-react';
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { useAuthStore } from '../../store/authStore';
+import { unidadCorta, etiquetaPresentacion, presentacionDe, aPresentacion, aUnidadBase, lineaVista } from '../../utils/unidades';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
@@ -41,6 +42,10 @@ const Compras = () => {
   const { data: comprasRecientes = [] } = useEmpresaQuery(['compras', 'recientes'], '/compras');
   const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
   const { data: proveedores = [] } = useEmpresaQuery(['proveedores'], '/proveedores', { enabled: modulos.includes('Proveedores') });
+  // Pago en efectivo desde la caja del usuario (solo con el módulo Caja y una caja abierta).
+  const conCaja = modulos.includes('Caja');
+  const { data: cajaActual } = useEmpresaQuery(['caja', 'actual'], '/caja/actual', { enabled: conCaja });
+  const [pagarDeCaja, setPagarDeCaja] = useState(true);
   const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
 
   const actualizarFiltro = (patch) => {
@@ -52,7 +57,7 @@ const Compras = () => {
   const [viewDetalle, setViewDetalle] = useState(null);
   const [formError, setFormError] = useState(null);
 
-  const [activeTab, setActiveTab] = useState('P'); // 'P': Productos, 'G': Gastos
+  const activeTab = 'P'; // la cesta solo lleva productos: los gastos operativos viven en el módulo Gastos
   const [provSearch, setProvSearch] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [showNewProv, setShowNewProv] = useState(false);
@@ -61,7 +66,6 @@ const Compras = () => {
   const [newProdData, setNewProdData] = useState({ codigo: '', nombre_producto: '', precio_unitario: '' });
 
   const [formData, setFormData] = useState({ proveedorId: '', detalles: [] });
-  const [gastoForm, setGastoForm] = useState({ descripcion: '', cantidad: 1, costo_unitario: '' });
 
   const freq = useMemo(() => {
     const pFreq = {}; const prodFreq = {};
@@ -87,7 +91,7 @@ const Compras = () => {
   const displayList = useMemo(() => {
     const lower = itemSearch.toLowerCase();
     if (activeTab === 'P') {
-      let filtered = productos.filter(p => (p.nombre_producto || '').toLowerCase().includes(lower) || (p.codigo || '').toLowerCase().includes(lower));
+      let filtered = productos.filter(p => !['RECETA', 'PREPARACION'].includes(p.tipo) && ((p.nombre_producto || '').toLowerCase().includes(lower) || (p.codigo || '').toLowerCase().includes(lower)));
       return filtered.sort((a,b) => (freq.prodFreq[b.id] || 0) - (freq.prodFreq[a.id] || 0));
     }
     return [];
@@ -130,32 +134,27 @@ const Compras = () => {
         newDet[existingIdx].cantidad += 1;
         setFormData(prev => ({ ...prev, detalles: newDet }));
       } else {
+        // Si el producto tiene presentación de compra (kg, caja…), la línea nace en esa
+        // presentación; el costo sugerido es el costo promedio llevado a ella.
+        const pres = presentacionDe(item);
+        const costoBase = Number(item.costo_promedio) || 0;
         setFormData(prev => ({
           ...prev, detalles: [...prev.detalles, {
             productoId: item.id,
             descripcion_gasto: null,
             nombre: item.nombre_producto,
             cantidad: 1,
-            costo_unitario: Number(item.precio_unitario) || 0,
-            tipo: 'P'
+            costo_unitario: costoBase > 0
+              ? (pres ? aPresentacion(1, costoBase, pres.factor).costo : costoBase)
+              : (Number(item.precio_unitario) || 0),
+            tipo: 'P',
+            factor: pres?.factor || null,
+            etiquetaPres: pres ? etiquetaPresentacion(pres.unidad) : null,
+            etiquetaBase: unidadCorta(item.unidad_medida),
+            enPresentacion: !!pres,
           }]
         }));
       }
-    } else {
-      if (!gastoForm.descripcion.trim() || gastoForm.cantidad < 1 || Number(gastoForm.costo_unitario) <= 0) {
-        return setFormError('Datos inválidos para el registro del gasto (descripción, cantidad ≥ 1, costo > 0).');
-      }
-      setFormData(prev => ({
-        ...prev, detalles: [...prev.detalles, {
-          productoId: null,
-          descripcion_gasto: gastoForm.descripcion,
-          nombre: `(Gasto) ${gastoForm.descripcion}`,
-          cantidad: Number(gastoForm.cantidad),
-          costo_unitario: Number(gastoForm.costo_unitario),
-          tipo: 'G'
-        }]
-      }));
-      setGastoForm({ descripcion: '', cantidad: 1, costo_unitario: '' });
     }
   };
 
@@ -170,6 +169,18 @@ const Compras = () => {
   const updateCartItem = (idx, field, value) => {
     const newDet = [...formData.detalles];
     newDet[idx][field] = Number(value);
+    setFormData(prev => ({ ...prev, detalles: newDet }));
+  };
+
+  // Cambia la unidad en que se captura una línea (presentación ↔ base) sin cambiar su total.
+  const cambiarUnidad = (idx, enPresentacion) => {
+    const newDet = [...formData.detalles];
+    const d = newDet[idx];
+    if (d.enPresentacion === enPresentacion) return;
+    const conv = enPresentacion
+      ? aPresentacion(d.cantidad, d.costo_unitario, d.factor)
+      : aUnidadBase(d.cantidad, d.costo_unitario, d.factor);
+    newDet[idx] = { ...d, enPresentacion, cantidad: conv.cantidad, costo_unitario: conv.costo };
     setFormData(prev => ({ ...prev, detalles: newDet }));
   };
 
@@ -190,14 +201,16 @@ const Compras = () => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    if (!formData.proveedorId) return setFormError('Una compra siempre se hace a un proveedor: selecciónalo. (Los gastos sin proveedor van en el módulo Gastos.)');
     if (formData.detalles.length === 0) return setFormError('La cesta está vacía.');
     registrarCompra.mutate({
-      proveedorId: formData.proveedorId ? parseInt(formData.proveedorId) : null,
+      proveedorId: parseInt(formData.proveedorId),
+      pago_desde_caja: conCaja && cajaActual && pagarDeCaja ? true : undefined,
       detalles: formData.detalles.map(d => ({
-        productoId: d.productoId || null,
-        descripcion_gasto: d.descripcion_gasto || null,
+        productoId: d.productoId,
         cantidad: Number(d.cantidad),
         costo_unitario: Number(d.costo_unitario),
+        en_presentacion: d.factor ? d.enPresentacion : undefined,
       })),
     });
   };
@@ -360,12 +373,9 @@ const Compras = () => {
                {/* ZONA ITEMS */}
                <div className="flex-1 flex flex-col overflow-hidden">
                  <div className="flex border-b border-slate-200 mb-4">
-                   <button className={`flex-1 py-3 font-bold text-sm flex items-center justify-center gap-2 transition-colors ${activeTab === 'P' ? 'border-b-2 border-brand-500 text-brand-700' : 'text-slate-500 hover:bg-slate-50'}`} onClick={()=>setActiveTab('P')}>
+                   <div className="flex-1 py-3 font-bold text-sm flex items-center justify-center gap-2 border-b-2 border-brand-500 text-brand-700">
                      <Box className="w-4 h-4"/> Productos a Bodega
-                   </button>
-                   <button className={`flex-1 py-3 font-bold text-sm flex items-center justify-center gap-2 transition-colors ${activeTab === 'G' ? 'border-b-2 border-brand-500 text-brand-700' : 'text-slate-500 hover:bg-slate-50'}`} onClick={()=>setActiveTab('G')}>
-                     <Wallet className="w-4 h-4"/> Gastos / Insumos Ad-Hoc
-                   </button>
+                   </div>
                  </div>
 
                  {activeTab === 'P' && (
@@ -389,7 +399,7 @@ const Compras = () => {
                                <h5 className="font-bold text-slate-800 text-sm leading-tight z-10 relative pr-4">{item.nombre_producto}</h5>
                                <div className="flex justify-between items-end mt-2 z-10 relative">
                                  <div className="text-xs font-bold text-brand-700 bg-brand-50 px-2 py-0.5 rounded-md self-start">{formatCOP(item.precio_unitario)}</div>
-                                 <div className="text-[10px] font-bold text-slate-500 text-right">Stock: {formatCantidad(item.stock_actual)} ud</div>
+                                 <div className="text-[10px] font-bold text-slate-500 text-right">Stock: {formatCantidad(item.stock_actual)} {unidadCorta(item.unidad_medida)}</div>
                                </div>
                              </div>
                            ))}
@@ -409,23 +419,7 @@ const Compras = () => {
                          </div>
                        </form>
                      )
-                   ) : (
-                     <div className="p-4 border border-brand-100 bg-brand-50/30 rounded-2xl flex flex-col gap-4">
-                       <h4 className="font-bold text-slate-700 text-sm flex items-center gap-2">Registrar Nuevo Gasto</h4>
-                       <input type="text" placeholder="Descripción del gasto (Ej: Pago Nómina, Transporte)" className="input-field bg-white" value={gastoForm.descripcion} onChange={e => setGastoForm({...gastoForm, descripcion: e.target.value})}/>
-                       <div className="grid grid-cols-2 gap-3">
-                         <div>
-                            <label className="text-xs font-bold text-slate-500 ml-1">Cantidad</label>
-                            <input type="number" min="1" className="input-field bg-white mt-1" value={gastoForm.cantidad} onChange={e => setGastoForm({...gastoForm, cantidad: e.target.value})}/>
-                         </div>
-                         <div>
-                            <label className="text-xs font-bold text-slate-500 ml-1">Costo Unitario ($)</label>
-                            <input type="number" step="0.01" className="input-field bg-white mt-1" placeholder="$ 0.00" value={gastoForm.costo_unitario} onChange={e => setGastoForm({...gastoForm, costo_unitario: e.target.value})}/>
-                         </div>
-                       </div>
-                       <button type="button" onClick={() => addItemToCart(null, 'G')} className="btn-primary py-3 rounded-xl shadow-sm mt-2 flex justify-center items-center gap-2"><Plus className="w-5 h-5"/> Agregar a la Cesta</button>
-                     </div>
-                   )}
+                   ) : null}
                  </div>
                </div>
             </div>
@@ -453,18 +447,33 @@ const Compras = () => {
                         {d.nombre}
                       </div>
                       <div className="text-[10px] font-bold text-slate-500 mt-1 uppercase tracking-wider">{d.tipo === 'P' ? 'PRODUCTO INVENTARIABLE' : 'MOVIMIENTO OPERACIONAL'}</div>
+                      {d.factor && (
+                        <label className="mt-2 flex items-center gap-2 text-[11px] font-semibold text-slate-600">
+                          Comprado en
+                          <select
+                            aria-label={`Unidad de compra de ${d.nombre}`}
+                            className="rounded-md border border-slate-200 bg-white py-0.5 pl-2 pr-6 text-[11px] font-bold text-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+                            value={d.enPresentacion ? 'pres' : 'base'}
+                            onChange={(e) => cambiarUnidad(idx, e.target.value === 'pres')}
+                          >
+                            <option value="pres">{d.etiquetaPres}</option>
+                            <option value="base">{d.etiquetaBase}</option>
+                          </select>
+                          <span className="font-normal text-slate-500">(1 {d.etiquetaPres} = {d.factor} {d.etiquetaBase})</span>
+                        </label>
+                      )}
                     </div>
                     
                     <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
                       <div className="flex items-center bg-slate-50 rounded-lg border border-slate-200 overflow-hidden w-24 shrink-0">
                         <button type="button" aria-label={`Disminuir cantidad de ${d.nombre}`} className="px-2.5 py-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-800 font-bold" onClick={()=>updateCartItem(idx, 'cantidad', Math.max(1, d.cantidad - 1))}>−</button>
-                        <input type="number" min="1" aria-label={`Cantidad de ${d.nombre}`} className="w-full text-center font-semibold text-sm bg-transparent p-0 rounded outline-none focus-visible:ring-2 focus-visible:ring-brand-600" value={d.cantidad} onChange={e=>updateCartItem(idx, 'cantidad', e.target.value)} />
+                        <input type="number" min="0.001" step="any" aria-label={`Cantidad de ${d.nombre}`} className="w-full text-center font-semibold text-sm bg-transparent p-0 rounded outline-none focus-visible:ring-2 focus-visible:ring-brand-600" value={d.cantidad} onChange={e=>updateCartItem(idx, 'cantidad', e.target.value)} />
                         <button type="button" aria-label={`Aumentar cantidad de ${d.nombre}`} className="px-2.5 py-1.5 text-slate-500 hover:bg-slate-200 hover:text-slate-800 font-bold" onClick={()=>updateCartItem(idx, 'cantidad', d.cantidad + 1)}>+</button>
                       </div>
                       <div className="flex flex-1 items-center gap-2">
                         <div className="relative flex-1">
                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 font-bold text-xs">$</span>
-                           <input type="number" step="0.01" className="w-full pl-6 pr-2 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs text-emerald-700 focus:ring-emerald-500 focus:border-emerald-500 outline-none" value={d.costo_unitario} onChange={e=>updateCartItem(idx, 'costo_unitario', e.target.value)} title="Costo Unitario Facturado" />
+                           <input type="number" step="any" min="0" className="w-full pl-6 pr-2 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs text-emerald-700 focus:ring-emerald-500 focus:border-emerald-500 outline-none" value={d.costo_unitario} onChange={e=>updateCartItem(idx, 'costo_unitario', e.target.value)} title={d.factor ? `Costo por ${d.enPresentacion ? d.etiquetaPres : d.etiquetaBase}` : 'Costo Unitario Facturado'} />
                         </div>
                       </div>
                     </div>
@@ -473,6 +482,23 @@ const Compras = () => {
               </div>
 
               <div className="p-6 bg-white border-t border-slate-200 shadow-[0_-10px_30px_-15px_rgba(0,0,0,0.1)] z-10">
+                {conCaja && (
+                  <label className={`flex items-start gap-2 mb-4 rounded-xl border p-3 text-sm ${cajaActual ? 'border-slate-200 bg-slate-50 cursor-pointer' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>
+                    <input
+                      type="checkbox" className="mt-0.5 w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"
+                      checked={!!cajaActual && pagarDeCaja} disabled={!cajaActual}
+                      onChange={(e) => setPagarDeCaja(e.target.checked)}
+                    />
+                    <span>
+                      <span className="font-semibold">Pagar en efectivo de la caja</span>
+                      <span className="block text-xs text-slate-500">
+                        {cajaActual
+                          ? `Restará del efectivo de tu caja (hay ${formatCOP(cajaActual.resumen.efectivo_esperado)}). Si pagas por banco, desmárcalo.`
+                          : 'No tienes caja abierta: la compra se registra pagada por otro medio.'}
+                      </span>
+                    </span>
+                  </label>
+                )}
                 <div className="flex flex-col gap-1 mb-4">
                      <span className="text-sm font-bold text-slate-500 uppercase tracking-widest text-right">Egresos Totales</span>
                      <span className="text-4xl font-semibold text-emerald-700 tracking-tight leading-none drop-shadow-sm text-right">{formatCOP(getTotal())}</span>
@@ -521,7 +547,15 @@ const Compras = () => {
                             {d.descripcion_gasto ? <Wallet className="w-3.5 h-3.5 text-amber-700"/> : <Box className="w-3.5 h-3.5 text-brand-500"/>}
                             {d.Producto?.nombre_producto || `(Gasto) ${d.descripcion_gasto}`}
                           </div>
-                          <div className="text-xs font-bold text-slate-500 mt-0.5">{d.cantidad} ud x {formatCOP(d.costo_unitario)}</div>
+                          {(() => {
+                            const v = lineaVista({ cantidadBase: d.cantidad, costoBase: d.costo_unitario, unidad_presentacion: d.unidad_presentacion, factor_presentacion: d.factor_presentacion }, d.Producto?.unidad_medida);
+                            return (
+                              <div className="text-xs font-bold text-slate-500 mt-0.5">
+                                {formatCantidad(v.cantidad)} {d.descripcion_gasto ? 'ud' : v.etiqueta} x {formatCOP(v.costo)}
+                                {v.enPresentacion && <span className="font-normal"> · {formatCantidad(d.cantidad)} {unidadCorta(d.Producto?.unidad_medida)} en inventario</span>}
+                              </div>
+                            );
+                          })()}
                         </div>
                         <div className="font-semibold text-brand-700 text-sm">{formatCOP(d.cantidad * d.costo_unitario)}</div>
                      </div>

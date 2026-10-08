@@ -1,9 +1,12 @@
 import { useState, useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { PackageOpen, Plus, Upload, FileDown, CheckCircle2, AlertTriangle, Edit } from 'lucide-react';
+import { PackageOpen, Plus, Upload, FileDown, CheckCircle2, AlertTriangle, Edit, Trash2, UtensilsCrossed } from 'lucide-react';
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import { useAuthStore } from '../../store/authStore';
+import SearchableSelect from '../../components/SearchableSelect';
+import { UNIDADES, unidadCorta, factorEstandar, etiquetaPresentacion, presentacionDe } from '../../utils/unidades';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
 import PageHeader from '../../components/ui/PageHeader';
@@ -17,7 +20,20 @@ import { TableState } from '../../components/ui/DataState';
 const EMPTY_FORM = {
   codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
   porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: '',
+  tipo: 'VENTA', receta: [], costo_promedio: '', rendimiento: '',
+  unidad_compra: '', factor_compra: '', presOtra: false, // presentación de compra (kg, caja…)
 };
+
+const TIPOS = {
+  VENTA: { label: 'Producto', tone: 'bg-slate-100 text-slate-700' },
+  INSUMO: { label: 'Insumo', tone: 'bg-amber-100 text-amber-800' },
+  PREPARACION: { label: 'Preparación', tone: 'bg-violet-100 text-violet-800' },
+  RECETA: { label: 'Plato', tone: 'bg-brand-100 text-brand-800' },
+};
+
+/** Tipos con receta (sin stock propio) y tipos que no llevan precio de venta. */
+const CON_RECETA = ['RECETA', 'PREPARACION'];
+const SIN_PRECIO = ['INSUMO', 'PREPARACION'];
 
 const IMPORT_OPCIONES_INICIALES = { modoCantidad: 'sumar', modoPrecio: 'conservar' };
 
@@ -35,8 +51,14 @@ const stockTone = (stock) => {
   return 'bg-red-100 text-red-800';
 };
 
+/** Lo vendible: porciones para un plato; stock físico para el resto. */
+const disponible = (p) => Number(p.tipo === 'RECETA' ? (p.porciones_disponibles ?? 0) : p.stock_actual);
+
+const pct = (n) => `${Number(n).toLocaleString('es-CO', { maximumFractionDigits: 1 })}%`;
+
 const Inventario = () => {
   const queryClient = useQueryClient();
+  const conRecetas = useAuthStore((st) => (st.activeEmpresa?.modulos || []).includes('Recetas'));
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState(null);
@@ -50,6 +72,7 @@ const Inventario = () => {
 
   const [busqueda, setBusqueda] = useState('');
   const [filtroStock, setFiltroStock] = useState(''); // '' | 'bajo' | 'agotado'
+  const [filtroTipo, setFiltroTipo] = useState(''); // '' | 'VENTA' | 'INSUMO' | 'RECETA'
 
   const { data: productos = [], isLoading, isError, error, refetch } = useEmpresaQuery(['productos'], '/productos');
 
@@ -57,14 +80,25 @@ const Inventario = () => {
     const q = busqueda.trim().toLowerCase();
     return productos.filter((p) => {
       if (q && !(`${p.codigo} ${p.nombre_producto}`.toLowerCase().includes(q))) return false;
-      const stock = Number(p.stock_actual);
+      if (filtroTipo && (p.tipo || 'VENTA') !== filtroTipo) return false;
+      if (p.tipo === 'PREPARACION') return !filtroStock; // sin stock propio: los filtros de stock no aplican
+      const stock = disponible(p);
       if (filtroStock === 'agotado' && stock > 0) return false;
       if (filtroStock === 'bajo' && stock >= STOCK_BAJO) return false;
       return true;
     });
-  }, [productos, busqueda, filtroStock]);
+  }, [productos, busqueda, filtroStock, filtroTipo]);
 
-  const hayFiltros = !!busqueda || !!filtroStock;
+  const hayFiltros = !!busqueda || !!filtroStock || !!filtroTipo;
+
+  // Ingredientes posibles: todo lo que no sea un plato (y no el propio plato).
+  const opcionesIngrediente = useMemo(
+    () => productos
+      .filter((p) => p.tipo !== 'RECETA' && p.id !== editId)
+      .map((p) => ({ value: String(p.id), label: `${p.nombre_producto} (${unidadCorta(p.unidad_medida)})`, keywords: p.codigo })),
+    [productos, editId]
+  );
+  const productoPorId = useMemo(() => new Map(productos.map((p) => [p.id, p])), [productos]);
 
   const guardar = useMutation({
     mutationFn: (payload) => (editId ? api.put(`/productos/${editId}`, payload) : api.post('/productos', payload)),
@@ -93,19 +127,70 @@ const Inventario = () => {
       precio_unitario: p.precio_unitario ?? '', stock_actual: '',
       porcentaje_iva: p.porcentaje_iva ?? '19', unidad_medida: p.unidad_medida || '94',
       codigo_estandar: p.codigo_estandar || '',
+      tipo: p.tipo || 'VENTA',
+      costo_promedio: CON_RECETA.includes(p.tipo) ? '' : String(Number(p.costo_promedio ?? 0) || ''),
+      rendimiento: p.tipo === 'PREPARACION' ? String(Number(p.rendimiento)) : '',
+      unidad_compra: p.unidad_compra || '',
+      factor_compra: p.unidad_compra ? String(Number(p.factor_compra)) : '',
+      presOtra: !!p.unidad_compra && !UNIDADES.some((u) => u.value === p.unidad_compra),
+      receta: (p.receta || []).map((i) => ({ insumoId: String(i.insumoId), cantidad: String(Number(i.cantidad)) })),
     });
     setShowModal(true);
   };
 
+  // Presentación de compra: al elegir una unidad estándar (kg, lb, L…) el factor se sugiere solo.
+  const elegirPresentacion = (valor) => {
+    if (valor === '') return setFormData((f) => ({ ...f, unidad_compra: '', factor_compra: '', presOtra: false }));
+    if (valor === '__otra') return setFormData((f) => ({ ...f, unidad_compra: '', factor_compra: '', presOtra: true }));
+    setFormData((f) => ({ ...f, unidad_compra: valor, presOtra: false, factor_compra: String(factorEstandar(f.unidad_medida, valor) ?? '') }));
+  };
+  // Si cambia la unidad base y la presentación es estándar, el factor se recalcula.
+  const cambiarUnidadBase = (unidad) => setFormData((f) => {
+    const sugerido = !f.presOtra && f.unidad_compra ? factorEstandar(unidad, f.unidad_compra) : undefined;
+    return { ...f, unidad_medida: unidad, ...(sugerido ? { factor_compra: String(sugerido) } : {}) };
+  });
+
+  const setReceta = (receta) => setFormData((prev) => ({ ...prev, receta }));
+  const updateIngrediente = (idx, patch) => setReceta(formData.receta.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+
   const handleSubmit = (e) => {
     e.preventDefault();
     setFormError(null);
+
+    const esPlato = CON_RECETA.includes(formData.tipo);
+    const payload = {
+      ...formData,
+      // Un insumo / preparación no se vende: el precio no aplica (el backend lo exige, va en 0).
+      precio_unitario: SIN_PRECIO.includes(formData.tipo) ? (formData.precio_unitario || 0) : formData.precio_unitario,
+      costo_promedio: esPlato || formData.costo_promedio === '' ? undefined : Number(formData.costo_promedio),
+      rendimiento: formData.tipo === 'PREPARACION' ? Number(formData.rendimiento) : undefined,
+      // Presentación de compra: vacía = se compra en la unidad base (null la quita al editar).
+      unidad_compra: esPlato ? undefined : (formData.unidad_compra.trim() || null),
+      factor_compra: !esPlato && formData.unidad_compra.trim() ? Number(formData.factor_compra) : undefined,
+      presOtra: undefined,
+      receta: undefined,
+    };
+    if (payload.unidad_compra && !(payload.factor_compra > 0)) {
+      return setFormError('Indica cuántas unidades base trae la presentación de compra.');
+    }
+    if (formData.tipo === 'PREPARACION' && !(payload.rendimiento > 0)) {
+      return setFormError('Indica cuánto rinde la preparación (p. ej. 1000 ml).');
+    }
+    if (esPlato) {
+      const items = formData.receta.filter((r) => r.insumoId || r.cantidad);
+      if (items.length === 0) return setFormError('Agrega al menos un ingrediente a la receta.');
+      if (items.some((r) => !r.insumoId || !(Number(r.cantidad) > 0))) {
+        return setFormError('Cada ingrediente necesita un insumo y una cantidad mayor a 0.');
+      }
+      payload.receta = items.map((r) => ({ insumoId: Number(r.insumoId), cantidad: Number(r.cantidad) }));
+    }
+
     if (editId) {
       // El stock no se edita aquí (lo mueven compras/ventas); el schema lo omite igual.
-      const { stock_actual: _s, ...resto } = formData;
-      guardar.mutate(resto);
+      delete payload.stock_actual;
+      guardar.mutate(payload);
     } else {
-      guardar.mutate({ ...formData, stock_actual: parseInt(formData.stock_actual, 10) || 0 });
+      guardar.mutate({ ...payload, stock_actual: esPlato ? 0 : (parseFloat(formData.stock_actual) || 0) });
     }
   };
 
@@ -158,8 +243,16 @@ const Inventario = () => {
         }
       />
 
-      <FilterBar hayFiltros={hayFiltros} onLimpiar={() => { setBusqueda(''); setFiltroStock(''); }}>
+      <FilterBar hayFiltros={hayFiltros} onLimpiar={() => { setBusqueda(''); setFiltroStock(''); setFiltroTipo(''); }}>
         <SearchInput placeholder="Código o nombre…" value={busqueda} onChange={setBusqueda} className="w-full sm:w-64" />
+        {conRecetas && (
+          <Field label="Tipo" className="w-full sm:w-44">
+            <select className="input-field" value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)}>
+              <option value="">Todos</option>
+              {Object.entries(TIPOS).map(([valor, t]) => <option key={valor} value={valor}>{t.label}</option>)}
+            </select>
+          </Field>
+        )}
         <Field label="Stock" className="w-full sm:w-44">
           <select className="input-field" value={filtroStock} onChange={(e) => setFiltroStock(e.target.value)}>
             <option value="">Todos</option>
@@ -173,13 +266,14 @@ const Inventario = () => {
         <THead>
           <Th>SKU</Th>
           <Th>Producto</Th>
-          <Th align="center">Stock Físico</Th>
+          <Th align="center">Stock / Disponible</Th>
+          {conRecetas && <Th align="right">Costo / Margen</Th>}
           <Th align="right">Valor Unitario</Th>
           <Th align="center" className="w-20">Acciones</Th>
         </THead>
         <tbody>
           <TableState
-            colSpan={5}
+            colSpan={conRecetas ? 6 : 5}
             isLoading={isLoading}
             isError={isError}
             error={error}
@@ -192,13 +286,40 @@ const Inventario = () => {
           {productosFiltrados.map((p) => (
             <Tr key={p.id}>
               <Td className="font-mono text-sm text-slate-600 whitespace-nowrap">{p.codigo}</Td>
-              <Td className="font-medium text-slate-800">{p.nombre_producto}</Td>
-              <Td align="center">
-                <span className={`inline-block px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide whitespace-nowrap ${stockTone(p.stock_actual)}`}>
-                  {formatCantidad(p.stock_actual)} UD
-                </span>
+              <Td className="font-medium text-slate-800">
+                <div className="flex flex-wrap items-center gap-2">
+                  {p.nombre_producto}
+                  {conRecetas && p.tipo && p.tipo !== 'VENTA' && (
+                    <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${TIPOS[p.tipo]?.tone}`}>{TIPOS[p.tipo]?.label}</span>
+                  )}
+                </div>
               </Td>
-              <Td align="right" className="font-semibold text-slate-800 whitespace-nowrap">{formatCOP(p.precio_unitario)}</Td>
+              <Td align="center">
+                {p.tipo === 'PREPARACION' ? (
+                  <span className="text-xs text-slate-500">Sin stock · rinde {formatCantidad(p.rendimiento)} {unidadCorta(p.unidad_medida)}</span>
+                ) : (
+                  <>
+                    <span className={`inline-block px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide whitespace-nowrap ${stockTone(disponible(p))}`}>
+                      {p.tipo === 'RECETA'
+                        ? `${formatCantidad(p.porciones_disponibles ?? 0)} porciones`
+                        : `${formatCantidad(p.stock_actual)} ${unidadCorta(p.unidad_medida)}`}
+                    </span>
+                    {presentacionDe(p) && presentacionDe(p).factor !== 1 && Number(p.stock_actual) > 0 && (
+                      <span className="block text-[11px] text-slate-500 mt-1">≈ {formatCantidad(Number(p.stock_actual) / presentacionDe(p).factor)} {etiquetaPresentacion(p.unidad_compra)}</span>
+                    )}
+                  </>
+                )}
+              </Td>
+              {conRecetas && (
+                <Td align="right" className="text-xs text-slate-600 whitespace-nowrap">
+                  {p.tipo === 'INSUMO' || p.tipo === 'PREPARACION'
+                    ? `${formatCOP(p.costo)} / ${unidadCorta(p.unidad_medida)}`
+                    : Number(p.costo) > 0
+                      ? <>{formatCOP(p.costo)} · <span className={p.margen_pct >= 50 ? 'text-emerald-700 font-semibold' : p.margen_pct >= 20 ? 'text-amber-700 font-semibold' : 'text-red-700 font-semibold'}>{pct(p.margen_pct)}</span></>
+                      : <span className="text-slate-400">Sin costo</span>}
+                </Td>
+              )}
+              <Td align="right" className="font-semibold text-slate-800 whitespace-nowrap">{SIN_PRECIO.includes(p.tipo) ? '—' : formatCOP(p.precio_unitario)}</Td>
               <Td align="center">
                 <button onClick={() => startEdit(p)} aria-label={`Editar ${p.nombre_producto}`} className="btn-icon">
                   <Edit className="w-4 h-4" />
@@ -212,6 +333,25 @@ const Inventario = () => {
       <Modal open={showModal} onClose={() => setShowModal(false)} title={editId ? 'Editar Artículo' : 'Crear Artículo'} size="lg">
         <form onSubmit={handleSubmit} className="space-y-4">
           <FormError message={formError} onDismiss={() => setFormError(null)} />
+
+          {conRecetas && (
+            <Field
+              label="¿Qué vas a registrar?"
+              hint={{
+                VENTA: 'Se compra y se vende tal cual (gaseosa, snack…).',
+                INSUMO: 'Ingrediente: se compra y se gasta en recetas; no se vende solo.',
+                PREPARACION: 'Sub-receta (salsa, masa…): se prepara en lotes y la usan otros platos; no se vende ni se compra.',
+                RECETA: 'Plato o bebida preparada: al venderlo descuenta sus ingredientes.',
+              }[formData.tipo]}
+            >
+              <select className="input-field" value={formData.tipo} onChange={(e) => setFormData({ ...formData, tipo: e.target.value })}>
+                <option value="VENTA">Producto de venta</option>
+                <option value="INSUMO">Insumo (ingrediente)</option>
+                <option value="PREPARACION">Preparación (sub-receta)</option>
+                <option value="RECETA">Plato (con receta)</option>
+              </select>
+            </Field>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Código SKU" required>
@@ -227,19 +367,140 @@ const Inventario = () => {
           </Field>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label="Precio de Venta ($)" required>
-              <input type="number" step="0.01" className="input-field" placeholder="1500.00" value={formData.precio_unitario || ''} onChange={(e) => setFormData({ ...formData, precio_unitario: e.target.value })} />
-            </Field>
-            {editId ? (
+            {!SIN_PRECIO.includes(formData.tipo) && (
+              <Field label={formData.tipo === 'RECETA' ? 'Precio del plato ($)' : 'Precio de Venta ($)'} required>
+                <input type="number" step="0.01" className="input-field" placeholder="1500.00" value={formData.precio_unitario || ''} onChange={(e) => setFormData({ ...formData, precio_unitario: e.target.value })} />
+              </Field>
+            )}
+            {formData.tipo === 'PREPARACION' ? (
+              <Field label="Rendimiento de la receta" required hint="Cuánto produce esta receta, en la unidad de medida (p. ej. 1000 ml).">
+                <input type="number" step="any" min="0" className="input-field" placeholder="1000" value={formData.rendimiento} onChange={(e) => setFormData({ ...formData, rendimiento: e.target.value })} />
+              </Field>
+            ) : formData.tipo === 'RECETA' ? (
+              <Field label="Disponibilidad" hint="Sale de los ingredientes: se calcula sola.">
+                <input className="input-field bg-slate-50 text-slate-500" readOnly value={editId ? `${formatCantidad(productoPorId.get(editId)?.porciones_disponibles ?? 0)} porciones` : 'Se calcula con la receta'} />
+              </Field>
+            ) : editId ? (
               <Field label="Stock actual" hint="El stock se ajusta con Compras y Ventas, no aquí.">
-                <input className="input-field bg-slate-50 text-slate-500" value={`${formatCantidad(productos.find((p) => p.id === editId)?.stock_actual ?? 0)} UD`} readOnly />
+                <input className="input-field bg-slate-50 text-slate-500" value={`${formatCantidad(productoPorId.get(editId)?.stock_actual ?? 0)} ${unidadCorta(formData.unidad_medida)}`} readOnly />
               </Field>
             ) : (
               <Field label="Stock Físico Inicial" required>
-                <input type="number" className="input-field" placeholder="50" value={formData.stock_actual || ''} onChange={(e) => setFormData({ ...formData, stock_actual: e.target.value })} />
+                <input type="number" step="any" min="0" className="input-field" placeholder="50" value={formData.stock_actual || ''} onChange={(e) => setFormData({ ...formData, stock_actual: e.target.value })} />
               </Field>
             )}
           </div>
+
+          {conRecetas && !CON_RECETA.includes(formData.tipo) && (
+            <Field
+              label={`Costo por ${unidadCorta(formData.unidad_medida)} ($)`}
+              hint="Con cada compra se recalcula como promedio ponderado. Úsalo para fijar el costo inicial."
+            >
+              <input
+                type="number" step="any" min="0" className="input-field" placeholder="0"
+                value={formData.costo_promedio} onChange={(e) => setFormData({ ...formData, costo_promedio: e.target.value })}
+              />
+            </Field>
+          )}
+
+          {!CON_RECETA.includes(formData.tipo) && (
+            <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">
+              <legend className="px-2 text-sm font-semibold text-brand-800">Presentación de compra (opcional)</legend>
+              <p className="text-xs text-slate-500">
+                ¿Compras en una unidad y gastas en otra (compras en kg, gastas en {unidadCorta(formData.unidad_medida)})? Indícalo y podrás registrar compras y pedidos
+                en esa presentación. El stock, las recetas y el costo siguen en <strong>{unidadCorta(formData.unidad_medida)}</strong>.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <Field label="Compro en">
+                  <select className="input-field" value={formData.presOtra ? '__otra' : formData.unidad_compra} onChange={(e) => elegirPresentacion(e.target.value)}>
+                    <option value="">Igual que la unidad base</option>
+                    {UNIDADES.filter((u) => u.value !== formData.unidad_medida).map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                    <option value="__otra">Otra (caja, bulto, paquete…)</option>
+                  </select>
+                </Field>
+                {formData.presOtra && (
+                  <Field label="Nombre de la presentación">
+                    <input className="input-field" maxLength={30} placeholder="Caja x24" value={formData.unidad_compra} onChange={(e) => setFormData({ ...formData, unidad_compra: e.target.value })} />
+                  </Field>
+                )}
+                {formData.unidad_compra.trim() !== '' && (
+                  <Field
+                    label={`1 ${etiquetaPresentacion(formData.unidad_compra)} = … ${unidadCorta(formData.unidad_medida)}`}
+                    hint={factorEstandar(formData.unidad_medida, formData.unidad_compra) ? 'Equivalencia estándar; puedes ajustarla.' : 'Cuántas unidades base trae cada presentación.'}
+                  >
+                    <input type="number" step="any" min="0" className="input-field" placeholder="1000" value={formData.factor_compra} onChange={(e) => setFormData({ ...formData, factor_compra: e.target.value })} />
+                  </Field>
+                )}
+              </div>
+            </fieldset>
+          )}
+
+          {CON_RECETA.includes(formData.tipo) && (
+            <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">
+              <legend className="px-2 text-sm font-semibold text-brand-800 flex items-center gap-1.5">
+                <UtensilsCrossed className="w-4 h-4" aria-hidden="true" />
+                {formData.tipo === 'PREPARACION' ? `Ingredientes para todo el lote${formData.rendimiento ? ` (${formData.rendimiento} ${unidadCorta(formData.unidad_medida)})` : ''}` : 'Receta (ingredientes por 1 porción)'}
+              </legend>
+
+              {formData.receta.length === 0 && (
+                <p className="text-sm text-slate-500">Aún no hay ingredientes. Agrega los insumos que consume una porción.</p>
+              )}
+
+              {formData.receta.map((r, idx) => {
+                const insumo = productoPorId.get(Number(r.insumoId));
+                return (
+                  <div key={idx} className="grid grid-cols-[1fr_7rem_auto] gap-2 items-end">
+                    <Field label={idx === 0 ? 'Ingrediente' : undefined}>
+                      <SearchableSelect
+                        options={opcionesIngrediente}
+                        value={r.insumoId}
+                        onChange={(v) => updateIngrediente(idx, { insumoId: v })}
+                        placeholder="Buscar insumo…"
+                        allowClear={false}
+                      />
+                    </Field>
+                    <Field label={idx === 0 ? `Cantidad${insumo ? ` (${unidadCorta(insumo.unidad_medida)})` : ''}` : undefined}>
+                      <input
+                        type="number" step="any" min="0" className="input-field" placeholder="15"
+                        value={r.cantidad} onChange={(e) => updateIngrediente(idx, { cantidad: e.target.value })}
+                      />
+                    </Field>
+                    <button
+                      type="button" className="btn-icon mb-0.5" aria-label="Quitar ingrediente"
+                      onClick={() => setReceta(formData.receta.filter((_, i) => i !== idx))}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                );
+              })}
+
+              {opcionesIngrediente.length === 0 && (
+                <p className="text-xs text-amber-700">Primero crea los insumos (tipo «Insumo») para poder armar recetas.</p>
+              )}
+              <button
+                type="button" className="btn-secondary gap-2 text-sm"
+                onClick={() => setReceta([...formData.receta, { insumoId: '', cantidad: '' }])}
+              >
+                <Plus className="w-4 h-4" aria-hidden="true" /> Agregar ingrediente
+              </button>
+            </fieldset>
+          )}
+
+          {CON_RECETA.includes(formData.tipo) && editId && productoPorId.get(editId) && (
+            <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm flex flex-wrap gap-x-6 gap-y-1">
+              <span className="text-slate-600">
+                Costo {formData.tipo === 'RECETA' ? 'por porción' : `por ${unidadCorta(formData.unidad_medida)}`}:{' '}
+                <strong className="text-slate-800">{formatCOP(productoPorId.get(editId).costo)}</strong>
+              </span>
+              {formData.tipo === 'RECETA' && Number(productoPorId.get(editId).costo) > 0 && (
+                <span className="text-slate-600">
+                  Margen: <strong className="text-slate-800">{formatCOP(productoPorId.get(editId).margen)} ({pct(productoPorId.get(editId).margen_pct)})</strong>
+                </span>
+              )}
+              <span className="text-xs text-slate-500 w-full">Calculado con el costo actual de los ingredientes; cambia cuando compras a otro precio.</span>
+            </div>
+          )}
 
           <div className="border-t border-slate-100 pt-3 mt-3">
             <h4 className="font-semibold text-brand-800 text-sm mb-3">Datos DIAN (Facturación Electrónica)</h4>
@@ -252,12 +513,8 @@ const Inventario = () => {
                 </select>
               </Field>
               <Field label="Unidad de Medida (UBL)">
-                <select className="input-field" value={formData.unidad_medida || '94'} onChange={(e) => setFormData({ ...formData, unidad_medida: e.target.value })}>
-                  <option value="94">94 - Unidad</option>
-                  <option value="KGM">KGM - Kilogramos</option>
-                  <option value="LTR">LTR - Litros</option>
-                  <option value="MTK">MTK - Metros Cuadrados</option>
-                  <option value="HUR">HUR - Hora</option>
+                <select className="input-field" value={formData.unidad_medida || '94'} onChange={(e) => cambiarUnidadBase(e.target.value)}>
+                  {UNIDADES.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
                 </select>
               </Field>
             </div>

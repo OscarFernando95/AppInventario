@@ -18,6 +18,10 @@ import Servicios from './pages/app/Servicios';
 import Compras from './pages/app/Compras';
 import Ventas from './pages/app/Ventas';
 import Pedidos from './pages/app/Pedidos';
+import Caja from './pages/app/Caja';
+import Recetas from './pages/app/Recetas';
+import Ajustes from './pages/app/Ajustes';
+import Gastos from './pages/app/Gastos';
 import Informes from './pages/app/Informes';
 import Auditoria from './pages/app/Auditoria';
 
@@ -110,6 +114,10 @@ const App = () => {
           <Route path="servicios" element={<ModuloRoute modulo="Servicios"><Servicios /></ModuloRoute>} />
           <Route path="compras" element={<ModuloRoute modulo="Compras"><Compras /></ModuloRoute>} />
           <Route path="ventas" element={<ModuloRoute modulo="Ventas"><Ventas /></ModuloRoute>} />
+          <Route path="recetas" element={<ModuloRoute modulo="Recetas"><Recetas /></ModuloRoute>} />
+          <Route path="ajustes" element={<ModuloRoute modulo="Inventario"><Ajustes /></ModuloRoute>} />
+          <Route path="gastos" element={<ModuloRoute modulo="Gastos"><Gastos /></ModuloRoute>} />
+          <Route path="caja" element={<ModuloRoute modulo="Caja"><Caja /></ModuloRoute>} />
           <Route path="pedidos" element={<ModuloRoute modulo="Pedidos"><Pedidos /></ModuloRoute>} />
           <Route path="informes" element={<ModuloRoute modulo="Informes"><Informes /></ModuloRoute>} />
           <Route path="admin" element={<SoloFrontAdmin><AdminUsuarios /></SoloFrontAdmin>} />

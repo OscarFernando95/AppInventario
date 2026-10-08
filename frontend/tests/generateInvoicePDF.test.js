@@ -79,3 +79,21 @@ describe('generateInvoicePDF — casos límite (Fase 9)', () => {
     expect(() => generateInvoicePDF(undefined, empresa, opts)).toThrow(/venta/i);
   });
 });
+
+describe('generateInvoicePDF — platos con modificadores', () => {
+  it('lista los modificadores bajo el nombre del plato sin romper la tabla', () => {
+    const venta = {
+      ...ventaBase,
+      VentaDetalles: [
+        {
+          cantidad: 1, precio_unitario: 22000, precio_base: 22000,
+          Producto: { nombre_producto: 'Pizza' },
+          modificadores: [{ id: 1, nombre: 'Extra queso', precio_extra: 2000 }, { id: 2, nombre: 'Sin salsa', precio_extra: 0 }],
+        },
+        { cantidad: 1, precio_unitario: 5000, precio_base: 5000, Producto: { nombre_producto: 'Gaseosa' }, modificadores: null },
+      ],
+    };
+    expect(() => generateInvoicePDF(venta, empresa, opts)).not.toThrow();
+  });
+});
+

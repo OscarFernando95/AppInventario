@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { TrendingUp, TrendingDown, PackageOpen, Target, Box, CreditCard, PieChart, Printer, Calendar, FileText, Download, AlertTriangle } from 'lucide-react';
-import { formatCOP } from '../../utils/format';
+import { formatCOP, fechaLocal } from '../../utils/format';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
@@ -47,12 +47,13 @@ const Informes = () => {
     totalProductos = 0,
     ventasMes = 0,
     comprasMes = 0,
+    gastosMes = 0,
   } = data || {};
 
   // Report Generator State
   const [informeParams, setInformeParams] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0],
-    end: new Date().toISOString().split('T')[0],
+    start: fechaLocal(new Date(new Date().getFullYear(), new Date().getMonth(), 1)),
+    end: fechaLocal(),
     tipo: 'ventas_resumen'
   });
   const [informeData, setInformeData] = useState(null);
@@ -165,7 +166,9 @@ const Informes = () => {
   // El margen es derivado: si el fetch falló, no calcular sobre los ceros por
   // defecto — se marca como error igual que las otras tres tarjetas en vez de
   // mostrar "$0" con la misma cara que un mes real sin movimiento.
-  const mrg = ventasMes - comprasMes;
+  // Egresos del mes = compras de mercancía + gastos operativos (módulo Gastos).
+  const egresosMes = Number(comprasMes) + Number(gastosMes);
+  const mrg = ventasMes - egresosMes;
   const isHealthyMargin = mrg >= 0;
 
   return (
@@ -190,12 +193,13 @@ const Informes = () => {
           isLoading={isLoading} isError={isError}
         />
         <KPIBox
-          title="Gastos Mes en Curso" value={formatCOP(comprasMes)} icon={TrendingDown}
+          title="Egresos Mes en Curso" value={formatCOP(egresosMes)}
+          subtitle={`Compras ${formatCOP(comprasMes)} · Gastos ${formatCOP(gastosMes)}`} icon={TrendingDown}
           colorClass={{ bg: 'bg-amber-100', text: 'text-amber-800' }}
           isLoading={isLoading} isError={isError}
         />
         <KPIBox
-          title="Margen Operativo Bruto" value={formatCOP(mrg)} subtitle="Ingresos vs Gastos" icon={Target}
+          title="Margen Operativo Bruto" value={formatCOP(mrg)} subtitle="Ventas − compras − gastos" icon={Target}
           colorClass={{ bg: isHealthyMargin ? 'bg-emerald-100' : 'bg-red-100', text: isHealthyMargin ? 'text-emerald-700' : 'text-red-700' }}
           isLoading={isLoading} isError={isError}
         />

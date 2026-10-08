@@ -1,4 +1,4 @@
-import { Boxes, Package, ShoppingCart, TrendingUp, PlusCircle, ArrowRight, ClipboardList, AlertTriangle } from 'lucide-react';
+import { Boxes, Package, ShoppingCart, TrendingUp, PlusCircle, ArrowRight, ClipboardList, AlertTriangle, HandCoins } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import { useNavigate } from 'react-router-dom';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
@@ -70,6 +70,7 @@ const DashboardUser = () => {
 
   // Total de pedidos: solo si la empresa tiene el módulo (evita un 403).
   const tienePedidos = (activeEmpresa?.modulos || []).includes('Pedidos');
+  const tieneGastos = (activeEmpresa?.modulos || []).includes('Gastos');
   const {
     data: totalPedidos,
     isLoading: loadingPedidos,
@@ -97,7 +98,7 @@ const DashboardUser = () => {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
+      <div className={`grid grid-cols-1 sm:grid-cols-2 gap-6 ${tieneGastos ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
         <StatCard
           label="Productos" icon={Boxes} tone="bg-brand-50 text-brand-700"
           value={dash?.totalProductos ?? 0} isLoading={isLoading} isError={isError}
@@ -110,6 +111,12 @@ const DashboardUser = () => {
           label="Compras Mes" icon={Package} tone="bg-slate-100 text-slate-700"
           value={formatCOP(dash?.comprasMes)} isLoading={isLoading} isError={isError}
         />
+        {tieneGastos && (
+          <StatCard
+            label="Gastos Mes" icon={HandCoins} tone="bg-red-50 text-red-700"
+            value={formatCOP(dash?.gastosMes)} isLoading={isLoading} isError={isError}
+          />
+        )}
         <StatCard
           label="Pedidos" icon={ShoppingCart} tone="bg-amber-50 text-amber-700"
           value={tienePedidos ? (totalPedidos ?? 0) : '—'}

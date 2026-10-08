@@ -5,6 +5,7 @@ import { PackageOpen, Users, Plus, ShoppingCart, Trash2, Search, CheckCircle, Tr
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { useAuthStore } from '../../store/authStore';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import { unidadCorta, etiquetaPresentacion, presentacionDe, aPresentacion, aUnidadBase, lineaVista } from '../../utils/unidades';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
 import PageHeader from '../../components/ui/PageHeader';
@@ -48,6 +49,10 @@ const Pedidos = () => {
   const { data: pedidosRecientes = [] } = useEmpresaQuery(['pedidos', 'recientes'], '/pedidos');
   const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
   const { data: proveedores = [] } = useEmpresaQuery(['proveedores'], '/proveedores', { enabled: modulos.includes('Proveedores') });
+  // Pago en efectivo desde la caja del usuario al recibir mercancía (módulo Caja + caja abierta).
+  const conCaja = modulos.includes('Caja');
+  const { data: cajaActual } = useEmpresaQuery(['caja', 'actual'], '/caja/actual', { enabled: conCaja });
+  const [pagarDeCaja, setPagarDeCaja] = useState(false);
   const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
 
   const actualizarFiltro = (patch) => {
@@ -95,7 +100,7 @@ const Pedidos = () => {
 
   const displayList = useMemo(() => {
     const lower = itemSearch.toLowerCase();
-    let filtered = productos.filter(p => (p.nombre_producto || '').toLowerCase().includes(lower) || (p.codigo || '').toLowerCase().includes(lower));
+    let filtered = productos.filter(p => !['RECETA', 'PREPARACION'].includes(p.tipo) && ((p.nombre_producto || '').toLowerCase().includes(lower) || (p.codigo || '').toLowerCase().includes(lower)));
     return filtered.sort((a,b) => (freq.prodFreq[b.id] || 0) - (freq.prodFreq[a.id] || 0));
   }, [itemSearch, productos, freq]);
 
@@ -134,12 +139,22 @@ const Pedidos = () => {
       newDet[existingIdx].cantidad_pedida += 1;
       setFormData(prev => ({ ...prev, detalles: newDet }));
     } else {
+      // Con presentación de compra (kg, caja…) la línea nace en ella; el costo sugerido
+      // es el costo promedio llevado a esa presentación.
+      const pres = presentacionDe(item);
+      const costoBase = Number(item.costo_promedio) || 0;
       setFormData(prev => ({
         ...prev, detalles: [...prev.detalles, {
           productoId: item.id,
           nombre: item.nombre_producto,
           cantidad_pedida: 1,
-          costo_estimado: item.precio_unitario || 0
+          costo_estimado: costoBase > 0
+            ? (pres ? aPresentacion(1, costoBase, pres.factor).costo : costoBase)
+            : (item.precio_unitario || 0),
+          factor: pres?.factor || null,
+          etiquetaPres: pres ? etiquetaPresentacion(pres.unidad) : null,
+          etiquetaBase: unidadCorta(item.unidad_medida),
+          enPresentacion: !!pres,
         }]
       }));
     }
@@ -156,6 +171,18 @@ const Pedidos = () => {
   const updateCartItem = (idx, field, value) => {
     const newDet = [...formData.detalles];
     newDet[idx][field] = Number(value);
+    setFormData(prev => ({ ...prev, detalles: newDet }));
+  };
+
+  // Cambia la unidad en que se captura una línea (presentación ↔ base) sin cambiar su total.
+  const cambiarUnidad = (idx, enPresentacion) => {
+    const newDet = [...formData.detalles];
+    const d = newDet[idx];
+    if (d.enPresentacion === enPresentacion) return;
+    const conv = enPresentacion
+      ? aPresentacion(d.cantidad_pedida, d.costo_estimado, d.factor)
+      : aUnidadBase(d.cantidad_pedida, d.costo_estimado, d.factor);
+    newDet[idx] = { ...d, enPresentacion, cantidad_pedida: conv.cantidad, costo_estimado: conv.costo };
     setFormData(prev => ({ ...prev, detalles: newDet }));
   };
 
@@ -184,6 +211,7 @@ const Pedidos = () => {
         productoId: d.productoId,
         cantidad_pedida: d.cantidad_pedida,
         costo_estimado: d.costo_estimado,
+        en_presentacion: d.factor ? d.enPresentacion : undefined,
       })),
     });
   };
@@ -195,15 +223,29 @@ const Pedidos = () => {
       const pedida = Number(d.cantidad_pedida);
       const recibida = Number(d.cantidad_recibida || 0);
       const pendiente = Math.max(0, pedida - recibida);
+      // La recepción usa la presentación en que se pidió (foto de la línea) o, si se
+      // pidió en unidad base, la del producto. Cantidades guardadas siempre en base.
+      const pres = d.unidad_presentacion
+        ? { unidad: d.unidad_presentacion, factor: Number(d.factor_presentacion) }
+        : presentacionDe(d.Producto);
+      const enPresentacion = !!d.unidad_presentacion;
+      const llegadaBase = pendiente;
+      const conv = enPresentacion ? aPresentacion(llegadaBase, d.costo_estimado, pres.factor) : { cantidad: llegadaBase, costo: Number(d.costo_estimado) };
       return {
         id: d.id,
         productoId: d.productoId,
         nombre: d.Producto?.nombre_producto,
-        cantidad_pedida: pedida,
-        cantidad_ya_recibida: recibida,
-        cantidad_pendiente: pendiente,
-        cantidad_llegada: pendiente, // por defecto, recibir lo que falta
-        costo_estimado: d.costo_estimado,
+        // Valores base (no cambian al alternar la unidad de captura):
+        pedida_base: pedida,
+        ya_recibida_base: recibida,
+        pendiente_base: pendiente,
+        factor: pres?.factor || null,
+        etiquetaPres: pres ? etiquetaPresentacion(pres.unidad) : null,
+        etiquetaBase: unidadCorta(d.Producto?.unidad_medida),
+        enPresentacion,
+        // Lo que se captura, en la unidad elegida:
+        cantidad_llegada: conv.cantidad, // por defecto, recibir lo que falta
+        costo_estimado: conv.costo,
       };
     }));
     setCheckInPedido(pedido);
@@ -211,9 +253,24 @@ const Pedidos = () => {
 
   const updateCheckInItem = (idx, field, value) => {
     const newDet = [...checkInDetalles];
-    newDet[idx][field] = Number(value);
+    newDet[idx] = { ...newDet[idx], [field]: Number(value) };
     setCheckInDetalles(newDet);
   };
+
+  // Cambia la unidad de captura de una línea de recepción sin cambiar su total.
+  const cambiarUnidadCheckIn = (idx, enPresentacion) => {
+    const newDet = [...checkInDetalles];
+    const d = newDet[idx];
+    if (d.enPresentacion === enPresentacion) return;
+    const conv = enPresentacion
+      ? aPresentacion(d.cantidad_llegada, d.costo_estimado, d.factor)
+      : aUnidadBase(d.cantidad_llegada, d.costo_estimado, d.factor);
+    newDet[idx] = { ...d, enPresentacion, cantidad_llegada: conv.cantidad, costo_estimado: conv.costo };
+    setCheckInDetalles(newDet);
+  };
+
+  // Cantidad base -> como se muestra en la unidad de captura de la línea.
+  const verCant = (d, base) => (d.enPresentacion ? aPresentacion(base, 0, d.factor).cantidad : base);
 
   const recepcionar = useMutation({
     mutationFn: (payload) => api.post(`/pedidos/${checkInPedido.id}/checkin`, payload),
@@ -227,10 +284,12 @@ const Pedidos = () => {
 
   const submitCheckIn = () => {
     recepcionar.mutate({
+      pago_desde_caja: conCaja && cajaActual && pagarDeCaja ? true : undefined,
       detalles_recibidos: checkInDetalles.map(d => ({
         productoId: d.productoId,
         cantidad: d.cantidad_llegada,
         costo_unitario: d.costo_estimado,
+        en_presentacion: d.factor ? d.enPresentacion : undefined,
       })),
     });
   };
@@ -448,9 +507,24 @@ const Pedidos = () => {
                       <div className="absolute left-0 top-0 bottom-0 w-1 bg-brand-500"></div>
                       <div className="flex-1">
                         <p className="font-semibold text-slate-800 line-clamp-1 text-sm">{d.nombre}</p>
+                        {d.factor && (
+                          <label className="mt-1 flex items-center gap-2 text-[11px] font-semibold text-slate-600">
+                            Pedir en
+                            <select
+                              aria-label={`Unidad del pedido de ${d.nombre}`}
+                              className="rounded-md border border-slate-200 bg-white py-0.5 pl-2 pr-6 text-[11px] font-bold text-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+                              value={d.enPresentacion ? 'pres' : 'base'}
+                              onChange={(e) => cambiarUnidad(idx, e.target.value === 'pres')}
+                            >
+                              <option value="pres">{d.etiquetaPres}</option>
+                              <option value="base">{d.etiquetaBase}</option>
+                            </select>
+                            <span className="font-normal text-slate-500">(1 {d.etiquetaPres} = {d.factor} {d.etiquetaBase})</span>
+                          </label>
+                        )}
                         <div className="flex gap-4 mt-2">
-                           <div><span className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 block mb-0.5">Cant Pedida</span><input type="number" min="1" value={d.cantidad_pedida} onChange={(e) => updateCartItem(idx, 'cantidad_pedida', e.target.value)} className="w-16 px-2 py-1 text-sm font-bold border-2 border-slate-100 rounded-lg text-center focus:border-brand-500 outline-none"/></div>
-                           <div><span className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 block mb-0.5">Costo Ud.</span><input type="number" min="0" value={d.costo_estimado} onChange={(e) => updateCartItem(idx, 'costo_estimado', e.target.value)} className="w-24 px-2 py-1 text-sm font-bold border-2 border-slate-100 rounded-lg focus:border-brand-500 outline-none"/></div>
+                           <div><span className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 block mb-0.5">Cant Pedida</span><input type="number" min="0.001" step="any" value={d.cantidad_pedida} onChange={(e) => updateCartItem(idx, 'cantidad_pedida', e.target.value)} className="w-20 px-2 py-1 text-sm font-bold border-2 border-slate-100 rounded-lg text-center focus:border-brand-500 outline-none"/></div>
+                           <div><span className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 block mb-0.5">Costo {d.factor ? (d.enPresentacion ? d.etiquetaPres : d.etiquetaBase) : 'Ud.'}</span><input type="number" min="0" step="any" value={d.costo_estimado} onChange={(e) => updateCartItem(idx, 'costo_estimado', e.target.value)} className="w-24 px-2 py-1 text-sm font-bold border-2 border-slate-100 rounded-lg focus:border-brand-500 outline-none"/></div>
                         </div>
                       </div>
                       <div className="text-right">
@@ -510,25 +584,56 @@ const Pedidos = () => {
                     <tbody>
                         {checkInDetalles.map((d, idx) => (
                            <tr key={d.id} className="border-b border-slate-100 last:border-0 hover:bg-slate-50">
-                              <td className="py-4 font-bold text-slate-800">{d.nombre}</td>
-                              <td className="py-4 text-center font-bold text-slate-500">{formatCantidad(d.cantidad_pedida)}</td>
+                              <td className="py-4 font-bold text-slate-800">
+                                {d.nombre}
+                                {d.factor && (
+                                  <select
+                                    aria-label={`Unidad de recepción de ${d.nombre}`}
+                                    className="mt-1 block rounded-md border border-slate-200 bg-white py-0.5 pl-2 pr-6 text-[11px] font-bold text-brand-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600"
+                                    value={d.enPresentacion ? 'pres' : 'base'}
+                                    onChange={(e) => cambiarUnidadCheckIn(idx, e.target.value === 'pres')}
+                                  >
+                                    <option value="pres">en {d.etiquetaPres}</option>
+                                    <option value="base">en {d.etiquetaBase}</option>
+                                  </select>
+                                )}
+                              </td>
+                              <td className="py-4 text-center font-bold text-slate-500">{formatCantidad(verCant(d, d.pedida_base))} {d.enPresentacion ? d.etiquetaPres : d.etiquetaBase}</td>
                               <td className="py-4 text-center font-medium text-slate-500">
-                                {formatCantidad(d.cantidad_ya_recibida)}
-                                {d.cantidad_pendiente > 0 && (
-                                  <span className="block text-xs text-amber-700">faltan {formatCantidad(d.cantidad_pendiente)}</span>
+                                {formatCantidad(verCant(d, d.ya_recibida_base))}
+                                {d.pendiente_base > 0 && (
+                                  <span className="block text-xs text-amber-700">faltan {formatCantidad(verCant(d, d.pendiente_base))}</span>
                                 )}
                               </td>
                               <td className="py-4 text-center">
-                                <input type="number" min="0" value={d.cantidad_llegada} onChange={(e) => updateCheckInItem(idx, 'cantidad_llegada', e.target.value)} className="w-full max-w-[100px] text-center px-3 py-2 border-2 border-brand-200 focus:border-brand-500 rounded-xl font-semibold text-brand-700 bg-brand-50 outline-none transition-all"/>
+                                <input type="number" min="0" step="any" value={d.cantidad_llegada} onChange={(e) => updateCheckInItem(idx, 'cantidad_llegada', e.target.value)} className="w-full max-w-[100px] text-center px-3 py-2 border-2 border-brand-200 focus:border-brand-500 rounded-xl font-semibold text-brand-700 bg-brand-50 outline-none transition-all"/>
                               </td>
                               <td className="py-4 text-right">
-                                <input type="number" min="0" value={d.costo_estimado} onChange={(e) => updateCheckInItem(idx, 'costo_estimado', e.target.value)} className="w-full text-right px-2 py-1 border border-slate-200 rounded-lg text-sm font-bold text-slate-600"/>
+                                <input type="number" min="0" step="any" value={d.costo_estimado} onChange={(e) => updateCheckInItem(idx, 'costo_estimado', e.target.value)} className="w-full text-right px-2 py-1 border border-slate-200 rounded-lg text-sm font-bold text-slate-600"/>
                               </td>
                            </tr>
                         ))}
                     </tbody>
                  </table>
                </div>
+
+               {conCaja && (
+                 <label className={`flex items-start gap-2 mb-4 rounded-xl border p-3 text-sm ${cajaActual ? 'border-slate-200 bg-slate-50 cursor-pointer' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>
+                   <input
+                     type="checkbox" className="mt-0.5 w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"
+                     checked={!!cajaActual && pagarDeCaja} disabled={!cajaActual}
+                     onChange={(e) => setPagarDeCaja(e.target.checked)}
+                   />
+                   <span>
+                     <span className="font-semibold">Pagar esta recepción en efectivo de la caja</span>
+                     <span className="block text-xs text-slate-500">
+                       {cajaActual
+                         ? `Restará del efectivo de tu caja (hay ${formatCOP(cajaActual.resumen.efectivo_esperado)}). Si se paga luego o por banco, déjalo sin marcar.`
+                         : 'No tienes caja abierta: la recepción se registra pagada por otro medio.'}
+                     </span>
+                   </span>
+                 </label>
+               )}
 
                <div className="flex justify-end pt-4 border-t border-slate-200">
                   <button onClick={submitCheckIn} disabled={recepcionar.isPending} className="px-8 py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl shadow-[0_8px_20px_-8px_rgba(5,150,105,0.6)] flex items-center gap-2 transition-transform active:scale-95 disabled:opacity-50">
@@ -598,15 +703,19 @@ const Pedidos = () => {
                         </tr>
                      </thead>
                      <tbody>
-                        {viewDetalle.PedidoDetalles?.map((d, index) => (
+                        {viewDetalle.PedidoDetalles?.map((d, index) => {
+                           // El proveedor lee la orden en la presentación en que se pidió (3 kg, no 3.000 g).
+                           const v = lineaVista({ cantidadBase: d.cantidad_pedida, costoBase: d.costo_estimado, unidad_presentacion: d.unidad_presentacion, factor_presentacion: d.factor_presentacion }, d.Producto?.unidad_medida);
+                           return (
                            <tr key={index} className="border-b border-slate-200">
                              <td className="py-4 px-4 text-center font-mono text-sm text-slate-500">{index + 1}</td>
                              <td className="py-4 px-4 font-bold text-slate-700">{d.Producto?.nombre_producto || 'Producto Desconocido'}</td>
-                             <td className="py-4 px-4 text-center font-bold text-slate-600">{formatCantidad(d.cantidad_pedida)}</td>
-                             <td className="py-4 px-4 text-right font-mono text-sm text-slate-600">{formatCOP(d.costo_estimado)}</td>
+                             <td className="py-4 px-4 text-center font-bold text-slate-600 whitespace-nowrap">{formatCantidad(v.cantidad)} {v.etiqueta}</td>
+                             <td className="py-4 px-4 text-right font-mono text-sm text-slate-600">{formatCOP(v.costo)}</td>
                              <td className="py-4 px-4 text-right font-mono text-sm font-bold text-slate-800">{formatCOP(Number(d.cantidad_pedida) * Number(d.costo_estimado))}</td>
                            </tr>
-                        ))}
+                           );
+                        })}
                      </tbody>
                   </table>
 

@@ -2,10 +2,12 @@ import { useState, useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import JSZip from 'jszip';
 import api from '../../api/axios';
-import { ShoppingCart, Trash2, Search, CheckCircle, Tag, Users, UserPlus, X, Percent, Eye, Receipt, Box, Briefcase, Minus, Plus, PackageOpen, FileDown, FileArchive } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Wallet, ShoppingCart, Trash2, Search, CheckCircle, Tag, Users, UserPlus, X, Percent, Eye, Receipt, Box, Briefcase, Minus, Plus, PackageOpen, FileDown, FileArchive } from 'lucide-react';
 import { formatCOP, formatDocumento, formatCantidad } from '../../utils/format';
 import { generateInvoicePDF } from '../../utils/generateInvoicePDF';
 import { useAuthStore } from '../../store/authStore';
+import { unidadCorta } from '../../utils/unidades';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
@@ -20,6 +22,9 @@ import { TableState } from '../../components/ui/DataState';
 const LIMIT = 20;
 const MAX_LOTE = 100;
 const FILTROS_VACIOS = { desde: '', hasta: '', clienteId: '' };
+
+/** Lo vendible de un producto: porciones para un plato; stock físico para el resto. */
+const disponible = (p) => Number(p.tipo === 'RECETA' ? (p.porciones_disponibles ?? 0) : p.stock_actual);
 
 const Ventas = () => {
   const { activeEmpresa } = useAuthStore();
@@ -51,6 +56,11 @@ const Ventas = () => {
   const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
   const { data: clientes = [] } = useEmpresaQuery(['clientes'], '/clientes', { enabled: modulos.includes('Clientes') });
   const { data: servicios = [] } = useEmpresaQuery(['servicios'], '/servicios', { enabled: modulos.includes('Servicios') });
+  const { data: modificadores = [] } = useEmpresaQuery(['modificadores'], '/modificadores', { enabled: modulos.includes('Recetas') });
+  // Con el módulo Caja solo se vende con una caja abierta (el backend también lo exige).
+  const conCaja = modulos.includes('Caja');
+  const { data: cajaActual, isLoading: cargandoCaja } = useEmpresaQuery(['caja', 'actual'], '/caja/actual', { enabled: conCaja });
+  const sinCaja = conCaja && !cargandoCaja && !cajaActual;
   const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
 
   const actualizarFiltro = (patch) => {
@@ -148,7 +158,7 @@ const Ventas = () => {
   const displayList = useMemo(() => {
     const lower = itemSearch.toLowerCase();
     if (activeTab === 'P') {
-      let filtered = productos.filter(p => Number(p.stock_actual) > 0 && ((p.nombre_producto || '').toLowerCase().includes(lower) || (p.codigo || '').toLowerCase().includes(lower)));
+      let filtered = productos.filter(p => !['INSUMO', 'PREPARACION'].includes(p.tipo) && disponible(p) > 0 && ((p.nombre_producto || '').toLowerCase().includes(lower) || (p.codigo || '').toLowerCase().includes(lower)));
       return filtered.sort((a,b) => (freq.pFreq[b.id] || 0) - (freq.pFreq[a.id] || 0));
     } else {
       let filtered = servicios.filter(s => (s.nombre || '').toLowerCase().includes(lower));
@@ -177,33 +187,58 @@ const Ventas = () => {
     crearCliente.mutate(newClientData);
   };
 
-  const addItemToCart = (item, type) => {
+  // Un plato con modificadores disponibles abre primero el selector; el resto
+  // (productos, servicios, platos sin modificadores) entra directo al carrito.
+  const [personalizar, setPersonalizar] = useState(null); // plato que se está personalizando
+  const [modsSel, setModsSel] = useState([]); // ids de modificadores marcados
+
+  const seleccionarItem = (item, type) => {
+    if (type === 'P' && item.tipo === 'RECETA' && modificadores.length > 0) {
+      setModsSel([]);
+      setPersonalizar(item);
+      return;
+    }
+    addItemToCart(item, type);
+  };
+
+  const confirmarPersonalizado = () => {
+    addItemToCart(personalizar, 'P', modificadores.filter((m) => modsSel.includes(m.id)));
+    setPersonalizar(null);
+  };
+
+  // `mods`: modificadores elegidos (solo platos). Cada combinación distinta es una línea aparte.
+  const addItemToCart = (item, type, mods = []) => {
     const isP = type === 'P';
-    
+    const modKey = mods.map((m) => m.id).sort((a, b) => a - b).join(',');
+    const extras = mods.reduce((acc, m) => acc + Number(m.precio_extra || 0), 0);
+
     // Check if already in cart
-    const existingIdx = formData.detalles.findIndex(d => isP ? d.productoId === item.id : d.servicioId === item.id);
-    
-    const stock = Number(item.stock_actual);
-    const precio = Number(isP ? item.precio_unitario : item.precio);
+    const existingIdx = formData.detalles.findIndex(d => (isP ? d.productoId === item.id : d.servicioId === item.id) && (d.modKey || '') === modKey);
+
+    const stock = isP ? disponible(item) : 0;
+    const precio = Number(isP ? item.precio_unitario : item.precio) + extras;
     if (existingIdx >= 0) {
       if (isP && formData.detalles[existingIdx].cantidad + 1 > stock) {
-        return setFormError(`Stock insuficiente de ${item.nombre_producto}. Solo quedan ${formatCantidad(stock)} ud.`);
+        return setFormError(`Stock insuficiente de ${item.nombre_producto}. Solo quedan ${formatCantidad(stock)} ${item.tipo === 'RECETA' ? 'porciones' : 'ud'}.`);
       }
       const newDet = [...formData.detalles];
       newDet[existingIdx].cantidad += 1;
       setFormData(prev => ({ ...prev, detalles: newDet }));
     } else {
+      const sufijo = mods.length ? ` (${mods.map((m) => m.nombre).join(', ')})` : '';
       setFormData(prev => ({
         ...prev,
         detalles: [...prev.detalles, {
           productoId: isP ? item.id : null,
           servicioId: !isP ? item.id : null,
-          nombre: isP ? item.nombre_producto : `(Serv.) ${item.nombre}`,
+          nombre: isP ? `${item.nombre_producto}${sufijo}` : `(Serv.) ${item.nombre}`,
           cantidad: 1,
-          precio_base: precio, // precio de lista
+          precio_base: precio, // precio de lista (+ extras)
           precio_unitario: precio,
           tipo: type,
-          maxStock: isP ? stock : null
+          maxStock: isP ? stock : null,
+          modificadores: mods.map((m) => m.id),
+          modKey,
         }]
       }));
     }
@@ -298,6 +333,7 @@ const Ventas = () => {
       detalles: formData.detalles.map(d => ({
         productoId: d.productoId,
         servicioId: d.servicioId,
+        modificadores: d.modificadores?.length ? d.modificadores : undefined,
         cantidad: Number(d.cantidad),
         precio_unitario: Number(d.precio_unitario),
         precio_base: Number(d.precio_base || d.precio_unitario),
@@ -322,12 +358,20 @@ const Ventas = () => {
                   : `Descargar ${seleccionadas.size} factura(s)`}
               </button>
             )}
-            <button className="btn-primary gap-2" onClick={() => { setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' }); setGlobalDiscount(0); setShowNewClient(false); setClientSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); }}>
+            <button className="btn-primary gap-2" disabled={sinCaja} title={sinCaja ? 'Abre caja para poder vender' : undefined} onClick={() => { setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' }); setGlobalDiscount(0); setShowNewClient(false); setClientSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); }}>
               <Tag className="w-5 h-5" aria-hidden="true" /> Iniciar POS (Caja)
             </button>
           </div>
         }
       />
+
+      {sinCaja && (
+        <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <Wallet className="w-5 h-5 shrink-0" aria-hidden="true" />
+          <span className="flex-1 min-w-48">No tienes una caja abierta. Abre caja para empezar a vender.</span>
+          <Link to="/app/caja" className="btn-primary px-4 py-2 text-sm">Ir a Caja</Link>
+        </div>
+      )}
 
       {descargaLote?.error && (
         <FormError message={descargaLote.error} onDismiss={() => setDescargaLote(null)} />
@@ -513,14 +557,14 @@ const Ventas = () => {
                    {displayList.length === 0 ? (
                      <div className="col-span-full py-8 text-center text-slate-500 font-bold text-sm">Sin coincidencias o stock agotado.</div>
                    ) : displayList.map(item => (
-                     <div key={item.id} onClick={() => addItemToCart(item, activeTab)} className="bg-white border border-slate-200 rounded-xl p-3 cursor-pointer hover:border-brand-400 hover:shadow-md transition-all active:scale-95 group flex flex-col justify-between">
+                     <div key={item.id} onClick={() => seleccionarItem(item, activeTab)} className="bg-white border border-slate-200 rounded-xl p-3 cursor-pointer hover:border-brand-400 hover:shadow-md transition-all active:scale-95 group flex flex-col justify-between">
                        <div>
                          <div className="text-xs font-semibold text-slate-500 mb-1">{activeTab==='P'?item.codigo:'SVC'}</div>
                          <div className="font-bold text-slate-800 text-sm leading-tight mb-2 group-hover:text-brand-700">{activeTab==='P'?item.nombre_producto:item.nombre}</div>
                        </div>
                        <div>
                          <div className="font-semibold text-brand-700">{formatCOP(activeTab==='P'?item.precio_unitario:item.precio)}</div>
-                         {activeTab === 'P' && <div className="text-[10px] font-bold text-slate-500 mt-1">Disp: {formatCantidad(item.stock_actual)} ud</div>}
+                         {activeTab === 'P' && <div className="text-[10px] font-bold text-slate-500 mt-1">Disp: {item.tipo === 'RECETA' ? `${formatCantidad(disponible(item))} porciones` : `${formatCantidad(item.stock_actual)} ${unidadCorta(item.unidad_medida)}`}</div>}
                        </div>
                      </div>
                    ))}
@@ -751,6 +795,35 @@ const Ventas = () => {
           </div>
         </Modal>
       )}
+
+      {/* ── Personalizar un plato (modificadores) ── */}
+      <Modal open={!!personalizar} onClose={() => setPersonalizar(null)} elevated title={personalizar ? `Personalizar ${personalizar.nombre_producto}` : ''} size="md">
+        <div className="space-y-3">
+          <p className="text-sm text-slate-500">Marca los extras o lo que se quita. Cada combinación queda como una línea aparte.</p>
+          <ul className="space-y-2 max-h-72 overflow-y-auto">
+            {modificadores.map((m) => {
+              const marcado = modsSel.includes(m.id);
+              return (
+                <li key={m.id}>
+                  <label className={`flex items-center gap-3 rounded-xl border p-3 cursor-pointer transition-colors focus-within:ring-2 focus-within:ring-brand-600 ${marcado ? 'bg-brand-50 border-brand-200' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
+                    <input
+                      type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"
+                      checked={marcado}
+                      onChange={() => setModsSel((prev) => (marcado ? prev.filter((id) => id !== m.id) : [...prev, m.id]))}
+                    />
+                    <span className="flex-1 text-sm font-medium text-slate-800">{m.nombre}</span>
+                    <span className="text-xs font-semibold text-slate-600">{Number(m.precio_extra) > 0 ? `+${formatCOP(m.precio_extra)}` : 'Sin costo'}</span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" className="btn-secondary" onClick={() => setPersonalizar(null)}>Cancelar</button>
+            <button type="button" className="btn-primary px-6" onClick={confirmarPersonalizado}>Agregar al carrito</button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

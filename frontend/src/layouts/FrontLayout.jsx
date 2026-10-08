@@ -1,15 +1,27 @@
 import { useEffect, useState } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import { useQueryClient } from '@tanstack/react-query';
-import { Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import api from '../api/axios';
+import { Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins } from 'lucide-react';
 
 const FrontLayout = () => {
-  const { user, activeEmpresa, setActiveEmpresa, logout } = useAuthStore();
+  const { user, activeEmpresa, setActiveEmpresa, logout, syncSesion } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
   const [menuOpen, setMenuOpen] = useState(false);
+
+  // Los módulos habilitados viajan en la sesión; si el administrador los cambia
+  // (p. ej. activa o quita Caja) se refrescan al volver a la pestaña, sin cerrar sesión.
+  const { data: sesion } = useQuery({
+    queryKey: ['sesion'],
+    queryFn: async () => (await api.get('/auth/me')).data.usuario,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 5 * 60_000,
+  });
+  useEffect(() => { if (sesion) syncSesion(sesion); }, [sesion, syncSesion]);
 
 
   useEffect(() => {
@@ -39,17 +51,21 @@ const FrontLayout = () => {
   const baseMenu = [
     { name: 'Dashboard', path: '/app', icon: LayoutDashboard },
     { name: 'Inventario', path: '/app/inventario', icon: Boxes },
+    { name: 'Recetas', path: '/app/recetas', icon: ChefHat },
+    { name: 'Ajustes', path: '/app/ajustes', icon: ClipboardCheck, modulo: 'Inventario' },
     { name: 'Proveedores', path: '/app/proveedores', icon: Truck },
     { name: 'Clientes', path: '/app/clientes', icon: Users },
     { name: 'Servicios', path: '/app/servicios', icon: Briefcase },
     { name: 'Pedidos', path: '/app/pedidos', icon: ClipboardList },
     { name: 'Compras', path: '/app/compras', icon: Package },
     { name: 'Ventas', path: '/app/ventas', icon: ShoppingCart },
+    { name: 'Caja', path: '/app/caja', icon: Wallet },
+    { name: 'Gastos', path: '/app/gastos', icon: HandCoins },
     { name: 'Informes', path: '/app/informes', icon: FileText },
   ];
 
   const menu = baseMenu.filter(
-    (item) => item.name === 'Dashboard' || (activeEmpresa?.modulos || []).includes(item.name)
+    (item) => item.name === 'Dashboard' || (activeEmpresa?.modulos || []).includes(item.modulo || item.name)
   );
 
   if (user?.rol === 'FRONT_ADMIN') {
