@@ -10,6 +10,7 @@ import { apiError } from '../../utils/apiError';
 import SearchableSelect from '../../components/SearchableSelect';
 import PageHeader from '../../components/ui/PageHeader';
 import Tabs from '../../components/ui/Tabs';
+import { usePermisos } from '../../hooks/usePermisos';
 import Modal, { ModalActions } from '../../components/ui/Modal';
 import Field from '../../components/ui/Field';
 import FilterBar from '../../components/ui/FilterBar';
@@ -292,7 +293,8 @@ const Modificadores = () => {
 
 /* ───────────────────────── Página ───────────────────────── */
 const Recetas = () => {
-  const [tab, setTab] = useState('rentabilidad');
+  const verCostos = usePermisos().can('costos.ver'); // la rentabilidad muestra costos y márgenes
+  const [tab, setTab] = useState(verCostos ? 'rentabilidad' : 'modificadores');
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
@@ -300,11 +302,11 @@ const Recetas = () => {
         description="Cuánto cuesta y cuánto deja cada plato, y los modificadores que se ofrecen al vender."
       />
       <Tabs
-        tabs={[{ id: 'rentabilidad', label: 'Rentabilidad' }, { id: 'modificadores', label: 'Modificadores' }]}
-        value={tab}
+        tabs={[...(verCostos ? [{ id: 'rentabilidad', label: 'Rentabilidad' }] : []), { id: 'modificadores', label: 'Modificadores' }]}
+        value={verCostos ? tab : 'modificadores'}
         onChange={setTab}
       />
-      {tab === 'rentabilidad' ? <Rentabilidad /> : <Modificadores />}
+      {verCostos && tab === 'rentabilidad' ? <Rentabilidad /> : <Modificadores />}
     </div>
   );
 };

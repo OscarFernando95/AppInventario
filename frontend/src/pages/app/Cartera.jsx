@@ -6,6 +6,7 @@ import { formatCOP } from '../../utils/format';
 import { MEDIOS_PAGO } from '../../utils/mediosPago';
 import { generateEstadoCuentaPDF } from '../../utils/generateEstadoCuentaPDF';
 import { useAuthStore } from '../../store/authStore';
+import { usePermisos } from '../../hooks/usePermisos';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
@@ -85,7 +86,7 @@ const Cartera = ({ tipo }) => {
   const cfg = CONFIG[tipo];
   const cobrar = tipo === 'COBRAR';
   const queryClient = useQueryClient();
-  const esAdmin = useAuthStore((s) => s.user?.rol === 'FRONT_ADMIN');
+  const esAdmin = usePermisos().can('cartera.anular_abonos');
   const activeEmpresa = useAuthStore((s) => s.activeEmpresa);
   const modulos = activeEmpresa?.modulos || [];
   const conCaja = modulos.includes('Caja');

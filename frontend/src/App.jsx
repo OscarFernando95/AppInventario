@@ -26,6 +26,7 @@ import Reposicion from './pages/app/Reposicion';
 import { CuentasCobrar, CuentasPagar } from './pages/app/Cartera';
 import Informes from './pages/app/Informes';
 import Auditoria from './pages/app/Auditoria';
+import Roles from './pages/app/Roles';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { isAuthenticated, user } = useAuthStore();
@@ -37,21 +38,21 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
   return children;
 };
 
-// Bloquea la ruta si la empresa activa no tiene contratado el módulo
+// Bloquea la ruta si la empresa no tiene contratado el módulo o el rol del usuario no entra a él
 // (el backend también lo valida — esto solo evita la pantalla rota).
 const ModuloRoute = ({ modulo, children }) => {
   const activeEmpresa = useAuthStore((s) => s.activeEmpresa);
   const rol = useAuthStore((s) => s.user?.rol);
   if (rol === 'BACKOFFICE_ADMIN') return children;
-  const modulos = activeEmpresa?.modulos || [];
-  if (!modulos.includes(modulo)) return <Navigate to="/app" replace />;
+  const acceso = activeEmpresa?.acceso ?? activeEmpresa?.modulos ?? [];
+  if (!acceso.includes(modulo)) return <Navigate to="/app" replace />;
   return children;
 };
 
-// Solo FRONT_ADMIN (gestión de personal). Un FRONT_USER se manda al dashboard.
-const SoloFrontAdmin = ({ children }) => {
-  const rol = useAuthStore((s) => s.user?.rol);
-  return rol === 'FRONT_ADMIN' ? children : <Navigate to="/app" replace />;
+// Pantallas que exigen un permiso (personal, auditoría, cuentas por pagar…). Sin él se vuelve al dashboard.
+const ConPermiso = ({ permiso, children }) => {
+  const permisos = useAuthStore((s) => s.activeEmpresa?.permisos);
+  return (permisos || []).includes(permiso) ? children : <Navigate to="/app" replace />;
 };
 
 // La pantalla de cambio de contraseña solo requiere sesión iniciada (se usa
@@ -120,13 +121,14 @@ const App = () => {
           <Route path="reposicion" element={<ModuloRoute modulo="Inventario"><Reposicion /></ModuloRoute>} />
           <Route path="ajustes" element={<ModuloRoute modulo="Inventario"><Ajustes /></ModuloRoute>} />
           <Route path="cuentas-por-cobrar" element={<ModuloRoute modulo="Cuentas por cobrar"><CuentasCobrar /></ModuloRoute>} />
-          <Route path="cuentas-por-pagar" element={<ModuloRoute modulo="Cuentas por pagar"><SoloFrontAdmin><CuentasPagar /></SoloFrontAdmin></ModuloRoute>} />
+          <Route path="cuentas-por-pagar" element={<ModuloRoute modulo="Cuentas por pagar"><ConPermiso permiso="cartera.pagar"><CuentasPagar /></ConPermiso></ModuloRoute>} />
           <Route path="gastos" element={<ModuloRoute modulo="Gastos"><Gastos /></ModuloRoute>} />
           <Route path="caja" element={<ModuloRoute modulo="Caja"><Caja /></ModuloRoute>} />
           <Route path="pedidos" element={<ModuloRoute modulo="Pedidos"><Pedidos /></ModuloRoute>} />
           <Route path="informes" element={<ModuloRoute modulo="Informes"><Informes /></ModuloRoute>} />
-          <Route path="admin" element={<SoloFrontAdmin><AdminUsuarios /></SoloFrontAdmin>} />
-          <Route path="auditoria" element={<SoloFrontAdmin><Auditoria /></SoloFrontAdmin>} />
+          <Route path="admin" element={<ConPermiso permiso="usuarios.gestionar"><AdminUsuarios /></ConPermiso>} />
+          <Route path="roles" element={<ModuloRoute modulo="Roles y permisos"><ConPermiso permiso="roles.gestionar"><Roles /></ConPermiso></ModuloRoute>} />
+          <Route path="auditoria" element={<ConPermiso permiso="auditoria.ver"><Auditoria /></ConPermiso>} />
         </Route>
 
         <Route path="/" element={<Navigate to="/login" replace />} />

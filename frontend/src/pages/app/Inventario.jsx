@@ -5,6 +5,7 @@ import { PackageOpen, Plus, Upload, FileDown, CheckCircle2, AlertTriangle, Edit,
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import { useAuthStore } from '../../store/authStore';
+import { usePermisos } from '../../hooks/usePermisos';
 import SearchableSelect from '../../components/SearchableSelect';
 import { UNIDADES, unidadCorta, factorEstandar, etiquetaPresentacion, presentacionDe } from '../../utils/unidades';
 import FormError from '../../components/FormError';
@@ -55,6 +56,8 @@ const pct = (n) => `${Number(n).toLocaleString('es-CO', { maximumFractionDigits:
 const Inventario = () => {
   const queryClient = useQueryClient();
   const conRecetas = useAuthStore((st) => (st.activeEmpresa?.modulos || []).includes('Recetas'));
+  const verCostos = usePermisos().can('costos.ver'); // sin él no se muestran ni se editan costos ni márgenes
+  const columnaCosto = conRecetas && verCostos;
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState(null);
@@ -265,13 +268,13 @@ const Inventario = () => {
           <Th>SKU</Th>
           <Th>Producto</Th>
           <Th align="center">Stock / Disponible</Th>
-          {conRecetas && <Th align="right">Costo / Margen</Th>}
+          {columnaCosto && <Th align="right">Costo / Margen</Th>}
           <Th align="right">Valor Unitario</Th>
           <Th align="center" className="w-20">Acciones</Th>
         </THead>
         <tbody>
           <TableState
-            colSpan={conRecetas ? 6 : 5}
+            colSpan={columnaCosto ? 6 : 5}
             isLoading={isLoading}
             isError={isError}
             error={error}
@@ -309,7 +312,7 @@ const Inventario = () => {
                   <span className="block text-[11px] text-slate-500 mt-1">≈ {formatCantidad(Number(p.stock_actual) / presentacionDe(p).factor)} {etiquetaPresentacion(p.unidad_compra)}</span>
                 )}
               </Td>
-              {conRecetas && (
+              {columnaCosto && (
                 <Td align="right" className="text-xs text-slate-600 whitespace-nowrap">
                   {p.tipo === 'INSUMO' || p.tipo === 'PREPARACION'
                     ? `${formatCOP(p.costo)} / ${unidadCorta(p.unidad_medida)}`
@@ -390,7 +393,7 @@ const Inventario = () => {
             )}
           </div>
 
-          {conRecetas && !CON_RECETA.includes(formData.tipo) && (
+          {columnaCosto && !CON_RECETA.includes(formData.tipo) && (
             <Field
               label={`Costo por ${unidadCorta(formData.unidad_medida)} ($)`}
               hint="Con cada compra se recalcula como promedio ponderado. Úsalo para fijar el costo inicial."
@@ -502,7 +505,7 @@ const Inventario = () => {
             </fieldset>
           )}
 
-          {CON_RECETA.includes(formData.tipo) && editId && productoPorId.get(editId) && (
+          {verCostos && CON_RECETA.includes(formData.tipo) && editId && productoPorId.get(editId) && (
             <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-sm flex flex-wrap gap-x-6 gap-y-1">
               <span className="text-slate-600">
                 Costo {formData.tipo === 'RECETA' ? 'por porción' : `por ${unidadCorta(formData.unidad_medida)}`}:{' '}

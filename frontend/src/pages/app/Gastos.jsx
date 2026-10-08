@@ -4,6 +4,7 @@ import api from '../../api/axios';
 import { HandCoins, Plus, Ban } from 'lucide-react';
 import { formatCOP, fechaLocal } from '../../utils/format';
 import { useAuthStore } from '../../store/authStore';
+import { usePermisos } from '../../hooks/usePermisos';
 import { CATEGORIAS_GASTO } from '../../utils/gastos';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
@@ -26,7 +27,7 @@ const fmtFecha = (v) => new Date(v).toLocaleDateString('es-CO', { day: '2-digit'
 
 const Gastos = () => {
   const queryClient = useQueryClient();
-  const esAdmin = useAuthStore((s) => s.user?.rol === 'FRONT_ADMIN');
+  const esAdmin = usePermisos().can('gastos.anular');
   const modulos = useAuthStore((s) => s.activeEmpresa?.modulos) || [];
   const conCaja = modulos.includes('Caja');
 

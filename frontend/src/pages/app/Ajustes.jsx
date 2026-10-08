@@ -4,7 +4,7 @@ import api from '../../api/axios';
 import { ClipboardCheck, CheckCircle2, MinusCircle } from 'lucide-react';
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { unidadCorta } from '../../utils/unidades';
-import { useAuthStore } from '../../store/authStore';
+import { usePermisos } from '../../hooks/usePermisos';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
@@ -357,7 +357,7 @@ const Conteo = () => {
 
 /* ───────────────────────── Página ───────────────────────── */
 const Ajustes = () => {
-  const esAdmin = useAuthStore((s) => s.user?.rol === 'FRONT_ADMIN');
+  const esAdmin = usePermisos().can('inventario.conteo');
   const [tab, setTab] = useState('mermas');
   const tabs = [{ id: 'mermas', label: 'Mermas y ajustes' }, ...(esAdmin ? [{ id: 'conteo', label: 'Conteo físico' }] : [])];
 

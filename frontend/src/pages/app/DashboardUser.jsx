@@ -1,5 +1,6 @@
 import { Boxes, Package, ShoppingCart, TrendingUp, PlusCircle, ArrowRight, ClipboardList, AlertTriangle, HandCoins } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
+import { usePermisos } from '../../hooks/usePermisos';
 import { useNavigate } from 'react-router-dom';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import api from '../../api/axios';
@@ -63,14 +64,17 @@ const ACCESOS = [
 
 const DashboardUser = () => {
   const { user, activeEmpresa } = useAuthStore();
+  const { can, puedeEntrar, tieneModulo } = usePermisos();
+  // Si la empresa tiene el módulo pero el rol no entra a él, la tarjeta no se muestra.
+  const oculta = (modulo) => tieneModulo(modulo) && !puedeEntrar(modulo);
   const navigate = useNavigate();
 
   // Endpoint agregado y cacheado en el backend (1 consulta en vez de 4).
   const { data: dash, isLoading, isError } = useEmpresaQuery(['dashboard'], '/reportes/dashboard');
 
   // Total de pedidos: solo si la empresa tiene el módulo (evita un 403).
-  const tienePedidos = (activeEmpresa?.modulos || []).includes('Pedidos');
-  const tieneGastos = (activeEmpresa?.modulos || []).includes('Gastos');
+  const tienePedidos = puedeEntrar('Pedidos');
+  const tieneGastos = puedeEntrar('Gastos');
   const {
     data: totalPedidos,
     isLoading: loadingPedidos,
@@ -100,7 +104,7 @@ const DashboardUser = () => {
 
       {dash?.cartera && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-          {(activeEmpresa?.modulos || []).includes('Cuentas por cobrar') && (
+          {puedeEntrar('Cuentas por cobrar') && (
             <button type="button" onClick={() => navigate('/app/cuentas-por-cobrar')} className="card-container p-5 text-left hover:shadow-md transition-shadow">
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Te deben</p>
               <p className="text-3xl font-bold text-slate-800 mt-1">{formatCOP(dash.cartera.por_cobrar)}</p>
@@ -109,7 +113,7 @@ const DashboardUser = () => {
               </p>
             </button>
           )}
-          {(activeEmpresa?.modulos || []).includes('Cuentas por pagar') && user?.rol === 'FRONT_ADMIN' && (
+          {puedeEntrar('Cuentas por pagar') && can('cartera.pagar') && (
             <button type="button" onClick={() => navigate('/app/cuentas-por-pagar')} className="card-container p-5 text-left hover:shadow-md transition-shadow">
               <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Debes</p>
               <p className="text-3xl font-bold text-slate-800 mt-1">{formatCOP(dash.cartera.por_pagar)}</p>
@@ -121,7 +125,7 @@ const DashboardUser = () => {
         </div>
       )}
 
-      {(dash?.productosBajoStock?.length ?? 0) > 0 && (activeEmpresa?.modulos || []).includes('Inventario') && (
+      {(dash?.productosBajoStock?.length ?? 0) > 0 && puedeEntrar('Inventario') && (
         <div role="status" className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
           <AlertTriangle className="w-5 h-5 shrink-0" aria-hidden="true" />
           <span className="flex-1 min-w-48">
@@ -137,14 +141,18 @@ const DashboardUser = () => {
           label="Productos" icon={Boxes} tone="bg-brand-50 text-brand-700"
           value={dash?.totalProductos ?? 0} isLoading={isLoading} isError={isError}
         />
-        <StatCard
-          label="Ventas Mes" icon={TrendingUp} tone="bg-emerald-50 text-emerald-700"
-          value={formatCOP(dash?.ventasMes)} isLoading={isLoading} isError={isError}
-        />
-        <StatCard
-          label="Compras Mes" icon={Package} tone="bg-slate-100 text-slate-700"
-          value={formatCOP(dash?.comprasMes)} isLoading={isLoading} isError={isError}
-        />
+        {!oculta('Ventas') && (
+          <StatCard
+            label="Ventas Mes" icon={TrendingUp} tone="bg-emerald-50 text-emerald-700"
+            value={formatCOP(dash?.ventasMes)} isLoading={isLoading} isError={isError}
+          />
+        )}
+        {!oculta('Compras') && (
+          <StatCard
+            label="Compras Mes" icon={Package} tone="bg-slate-100 text-slate-700"
+            value={formatCOP(dash?.comprasMes)} isLoading={isLoading} isError={isError}
+          />
+        )}
         {tieneGastos && (
           <StatCard
             label="Gastos Mes" icon={HandCoins} tone="bg-red-50 text-red-700"

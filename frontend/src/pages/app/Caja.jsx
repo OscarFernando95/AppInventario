@@ -8,6 +8,7 @@ import { etiquetaPago } from '../../utils/mediosPago';
 import { CATEGORIAS_GASTO } from '../../utils/gastos';
 import { generateCajaPDF } from '../../utils/generateCajaPDF';
 import { useAuthStore } from '../../store/authStore';
+import { usePermisos } from '../../hooks/usePermisos';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
@@ -43,7 +44,9 @@ const Stat = ({ icon, label, value, tone = 'bg-brand-50 text-brand-700' }) => {
 
 const Caja = () => {
   const queryClient = useQueryClient();
-  const esAdmin = useAuthStore((s) => s.user?.rol === 'FRONT_ADMIN');
+  const { can } = usePermisos();
+  const veBalance = can('caja.balance');
+  const veTodas = can('caja.todas');
   const activeEmpresa = useAuthStore((s) => s.activeEmpresa);
 
   const [filtros, setFiltros] = useState(FILTROS_VACIOS);
@@ -70,7 +73,7 @@ const Caja = () => {
     const params = {};
     Object.entries(periodo).forEach(([k, v]) => { if (v) params[k] = v; });
     return (await api.get('/caja/balance', { params })).data;
-  }, { enabled: esAdmin });
+  }, { enabled: veBalance });
 
   // Sacar dinero de la caja: retiro, o pago de un gasto en efectivo.
   const [showEgreso, setShowEgreso] = useState(false);
@@ -272,7 +275,7 @@ const Caja = () => {
         </div>
       )}
 
-      {esAdmin && balance && (
+      {veBalance && balance && (
         <section aria-label="Dinero de la empresa" className="card-container p-5 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-slate-800 flex items-center gap-2"><Scale className="w-5 h-5 text-slate-500" aria-hidden="true" /> Dinero de la empresa</h3>
@@ -352,7 +355,7 @@ const Caja = () => {
       <div className="flex items-center gap-2 pt-2">
         <History className="w-5 h-5 text-slate-500" aria-hidden="true" />
         <h3 className="text-lg font-semibold text-slate-800">Historial de cajas</h3>
-        {!esAdmin && <span className="text-xs text-slate-500">(solo las tuyas)</span>}
+        {!veTodas && <span className="text-xs text-slate-500">(solo las tuyas)</span>}
       </div>
 
       <FilterBar hayFiltros={hayFiltros} onLimpiar={() => actualizarFiltro(FILTROS_VACIOS)}>
@@ -418,7 +421,7 @@ const Caja = () => {
                       <button className="btn-icon" aria-label={`Descargar PDF de la caja ${c.id}`} title="Descargar PDF" onClick={() => descargarPDF(c.id)}>
                         <FileDown className="w-4 h-4" />
                       </button>
-                    ) : (esAdmin || c.id === cajaActual?.id) && (
+                    ) : (veTodas || c.id === cajaActual?.id) && (
                       <button className="btn-secondary gap-1.5 text-xs" onClick={() => iniciarCierre(c.id)}>
                         <LockKeyhole className="w-3.5 h-3.5" aria-hidden="true" /> Cerrar
                       </button>

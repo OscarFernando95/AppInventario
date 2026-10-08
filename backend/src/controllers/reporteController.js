@@ -4,6 +4,7 @@ const TtlCache = require('../utils/ttlCache');
 const { cargarProductosConReceta } = require('../services/inventarioDb');
 const { analizarProductos } = require('../services/reposicion');
 const { resumenCartera } = require('../services/cajaService');
+const { tiene } = require('../middlewares/auth');
 
 // El dashboard agrega SUM/COUNT sobre ventas y compras; cambia poco entre
 // visitas seguidas. Se cachea 60 s por empresa.
@@ -11,10 +12,34 @@ const dashboardCache = new TtlCache(Number(process.env.DASHBOARD_CACHE_TTL_MS ||
 
 exports.invalidateDashboard = (empresaId) => dashboardCache.delete(String(empresaId));
 
+/**
+ * El resumen se calcula una vez por empresa (caché), pero cada usuario solo recibe lo de los módulos a los
+ * que su rol entra: sin Compras no ve lo comprado; lo que se debe a proveedores exige además cartera.pagar.
+ */
+function paraUsuario(req, p) {
+  const bloqueado = (modulo) => req.empresaModulos.has(modulo) && !req.accesoModulos.has(modulo);
+  const salida = { ...p };
+  if (bloqueado('Ventas')) salida.ventasMes = null;
+  if (bloqueado('Compras')) salida.comprasMes = null;
+  if (bloqueado('Gastos')) salida.gastosMes = null;
+  if (bloqueado('Inventario')) salida.productosBajoStock = [];
+  if (p.cartera) {
+    const cobrar = req.accesoModulos.has('Cuentas por cobrar');
+    const pagar = req.accesoModulos.has('Cuentas por pagar') && tiene(req, 'cartera.pagar');
+    salida.cartera = (cobrar || pagar)
+      ? {
+        por_cobrar: cobrar ? p.cartera.por_cobrar : null, vencido_cobrar: cobrar ? p.cartera.vencido_cobrar : null,
+        por_pagar: pagar ? p.cartera.por_pagar : null, vencido_pagar: pagar ? p.cartera.vencido_pagar : null,
+      }
+      : null;
+  }
+  return salida;
+}
+
 exports.getDashboardData = async (req, res) => {
   const key = String(req.empresaId);
   const cached = dashboardCache.get(key);
-  if (cached) return res.json(cached);
+  if (cached) return res.json(paraUsuario(req, cached));
 
   const where = { empresaId: req.empresaId };
 
@@ -62,5 +87,5 @@ exports.getDashboardData = async (req, res) => {
       ? await resumenCartera(req.empresaId) : null,
   };
   dashboardCache.set(key, payload);
-  res.json(payload);
+  res.json(paraUsuario(req, payload));
 };

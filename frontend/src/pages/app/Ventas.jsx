@@ -7,6 +7,7 @@ import { Undo2, Ban, Wallet, ShoppingCart, Trash2, Search, CheckCircle, Tag, Use
 import { formatCOP, formatDocumento, formatCantidad, vencimientoEn } from '../../utils/format';
 import { generateInvoicePDF } from '../../utils/generateInvoicePDF';
 import { useAuthStore } from '../../store/authStore';
+import { usePermisos } from '../../hooks/usePermisos';
 import { unidadCorta } from '../../utils/unidades';
 import { generateDevolucionPDF } from '../../utils/generateDevolucionPDF';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
@@ -28,8 +29,11 @@ const FILTROS_VACIOS = { desde: '', hasta: '', clienteId: '', estado: '' };
 const disponible = (p) => Number(p.tipo === 'RECETA' ? (p.porciones_disponibles ?? 0) : p.stock_actual);
 
 const Ventas = () => {
-  const { activeEmpresa, user } = useAuthStore();
-  const esAdmin = user?.rol === 'FRONT_ADMIN';
+  const { activeEmpresa } = useAuthStore();
+  const { can } = usePermisos();
+  const puedeAnular = can('ventas.anular'); // sin él, solo solicita la anulación
+  const puedeResolver = can('ventas.resolver_anulaciones');
+  const puedeDevolver = can('ventas.devolver');
   const queryClient = useQueryClient();
   const modulos = activeEmpresa?.modulos || [];
 
@@ -484,7 +488,7 @@ const Ventas = () => {
         <section aria-label="Solicitudes de anulación" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 space-y-3">
           <h3 className="text-sm font-semibold text-amber-900 flex items-center gap-2">
             <Ban className="w-4 h-4" aria-hidden="true" />
-            {esAdmin ? `${pendientes.length} solicitud(es) de anulación por resolver` : `Tienes ${pendientes.length} solicitud(es) de anulación esperando al administrador`}
+            {puedeResolver ? `${pendientes.length} solicitud(es) de anulación por resolver` : `Tienes ${pendientes.length} solicitud(es) de anulación esperando al administrador`}
           </h3>
           <ul className="divide-y divide-amber-100 text-sm">
             {pendientes.map((s) => (
@@ -494,7 +498,7 @@ const Ventas = () => {
                   {s.venta?.Cliente?.nombre ? ` · ${s.venta.Cliente.nombre}` : ''}
                   <span className="block text-xs text-slate-500">Pide: {s.solicitante?.nombre} — «{s.motivo}»</span>
                 </span>
-                {esAdmin && (
+                {puedeResolver && (
                   <span className="flex gap-2">
                     <button type="button" className="btn-secondary text-xs" onClick={() => { setErrorAnulacion(null); setRechazando(s); }}>Rechazar</button>
                     <button
@@ -588,7 +592,7 @@ const Ventas = () => {
                   <button onClick={() => setViewDetalle(v)} className="btn-icon" aria-label={`Ver detalle de la factura ${v.id}`}>
                     <Eye className="w-5 h-5"/>
                   </button>
-                  {esAdmin && !anulada && !conSolicitud && !devTotal && (
+                  {puedeDevolver && !anulada && !conSolicitud && !devTotal && (
                     <button
                       onClick={() => abrirDevolucion(v)}
                       className="btn-icon text-amber-700"
@@ -602,8 +606,8 @@ const Ventas = () => {
                     <button
                       onClick={() => { setErrorAnulacion(null); setMotivoAnulacion(''); setAnulando(v); }}
                       className="btn-icon text-red-700"
-                      aria-label={esAdmin ? `Anular la factura ${v.id}` : `Solicitar anulación de la factura ${v.id}`}
-                      title={esAdmin ? 'Anular venta' : 'Solicitar anulación'}
+                      aria-label={puedeAnular ? `Anular la factura ${v.id}` : `Solicitar anulación de la factura ${v.id}`}
+                      title={puedeAnular ? 'Anular venta' : 'Solicitar anulación'}
                     >
                       <Ban className="w-5 h-5"/>
                     </button>
@@ -1132,7 +1136,7 @@ const Ventas = () => {
       <Modal
         open={!!anulando}
         onClose={() => setAnulando(null)}
-        title={esAdmin ? 'Anular venta' : 'Solicitar anulación'}
+        title={puedeAnular ? 'Anular venta' : 'Solicitar anulación'}
         description={anulando ? `Factura #FACT-${String(anulando.id).padStart(4, '0')} · ${formatCOP(anulando.total)}` : undefined}
         size="md"
       >
@@ -1147,7 +1151,7 @@ const Ventas = () => {
           >
             <FormError message={errorAnulacion} onDismiss={() => setErrorAnulacion(null)} />
             <p className="text-sm text-slate-600">
-              {esAdmin
+              {puedeAnular
                 ? 'La venta queda en el historial como ANULADA, el inventario vuelve a su lugar y deja de contar en totales, informes y caja. Si se cobró en efectivo en una caja que ya cerró, la devolución sale de tu caja abierta.'
                 : 'No se anula en el acto: el administrador revisa tu solicitud y la aprueba o la rechaza.'}
             </p>
@@ -1160,7 +1164,7 @@ const Ventas = () => {
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" className="btn-secondary" onClick={() => setAnulando(null)}>Volver</button>
               <button type="submit" className="btn-primary px-6" disabled={anularVenta.isPending}>
-                {anularVenta.isPending ? 'Enviando…' : esAdmin ? 'Anular venta' : 'Enviar solicitud'}
+                {anularVenta.isPending ? 'Enviando…' : puedeAnular ? 'Anular venta' : 'Enviar solicitud'}
               </button>
             </div>
           </form>

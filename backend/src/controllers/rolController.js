@@ -1,6 +1,7 @@
 'use strict';
 
 const { sequelize, RolEmpresa, UsuarioEmpresa } = require('../models');
+const { REQUIERE } = require('../services/modulos');
 const { ValidationError, ForbiddenError } = require('../utils/errors');
 const { invalidateAllProfiles } = require('../middlewares/auth');
 const { auditar } = require('../utils/audit');
@@ -31,6 +32,7 @@ exports.getRoles = async (req, res) => {
   res.json({
     catalogo: CATALOGO,
     modulos: modulosAsignables(req),
+    dependencias: REQUIERE,
     mis_permisos: misPermisos(req),
     base: ROLES_BASE.map((r) => ({ ...r, permisos: PERMISOS_BASE[r.clave], modulos: null })),
     propios: roles.map((r) => aJson(r, conteo.get(r.id) || 0)),

@@ -3,11 +3,12 @@ import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../api/axios';
-import { Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins, PackagePlus, ReceiptText, WalletCards } from 'lucide-react';
+import { usePermisos } from '../hooks/usePermisos';
+import { KeyRound, Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins, PackagePlus, ReceiptText, WalletCards } from 'lucide-react';
 
 // Títulos con tilde para las rutas cuyo nombre se escribe sin ella.
 const TITULOS = {
-  auditoria: 'Auditoría', reposicion: 'Reposición', admin: 'Administración',
+  auditoria: 'Auditoría', reposicion: 'Reposición', admin: 'Administración', roles: 'Roles y permisos',
   'cuentas-por-cobrar': 'Cuentas por cobrar', 'cuentas-por-pagar': 'Cuentas por pagar',
 };
 
@@ -17,6 +18,7 @@ const FrontLayout = () => {
   const location = useLocation();
   const queryClient = useQueryClient();
   const [menuOpen, setMenuOpen] = useState(false);
+  const { can, puedeEntrar } = usePermisos();
 
   // Los módulos habilitados viajan en la sesión; si el administrador los cambia
   // (p. ej. activa o quita Caja) se refrescan al volver a la pestaña, sin cerrar sesión.
@@ -68,19 +70,19 @@ const FrontLayout = () => {
     { name: 'Ventas', path: '/app/ventas', icon: ShoppingCart },
     { name: 'Caja', path: '/app/caja', icon: Wallet },
     { name: 'Cuentas por cobrar', path: '/app/cuentas-por-cobrar', icon: ReceiptText },
-    { name: 'Cuentas por pagar', path: '/app/cuentas-por-pagar', icon: WalletCards, soloAdmin: true },
+    { name: 'Cuentas por pagar', path: '/app/cuentas-por-pagar', icon: WalletCards, permiso: 'cartera.pagar' },
     { name: 'Gastos', path: '/app/gastos', icon: HandCoins },
     { name: 'Informes', path: '/app/informes', icon: FileText },
   ];
 
+  // El menú muestra lo que la empresa contrató Y el rol del usuario deja usar (módulos y permisos).
   const menu = baseMenu.filter(
-    (item) => item.name === 'Dashboard' || ((activeEmpresa?.modulos || []).includes(item.modulo || item.name) && (!item.soloAdmin || user?.rol === 'FRONT_ADMIN'))
+    (item) => item.name === 'Dashboard' || (puedeEntrar(item.modulo || item.name) && (!item.permiso || can(item.permiso)))
   );
 
-  if (user?.rol === 'FRONT_ADMIN') {
-    menu.push({ name: 'Administración', path: '/app/admin', icon: Settings });
-    menu.push({ name: 'Auditoría', path: '/app/auditoria', icon: ScrollText });
-  }
+  if (can('usuarios.gestionar')) menu.push({ name: 'Administración', path: '/app/admin', icon: Settings });
+  if (can('roles.gestionar') && puedeEntrar('Roles y permisos')) menu.push({ name: 'Roles y permisos', path: '/app/roles', icon: KeyRound });
+  if (can('auditoria.ver')) menu.push({ name: 'Auditoría', path: '/app/auditoria', icon: ScrollText });
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans">
@@ -165,7 +167,7 @@ const FrontLayout = () => {
           <div className="flex flex-col mb-4 px-2">
             <span className="text-sm font-semibold text-slate-800 truncate">{user?.nombre}</span>
             <span className="text-xs font-medium text-brand-700 tracking-wide mt-0.5">
-              {user?.rol === 'FRONT_ADMIN' ? 'ADMINISTRADOR' : 'USUARIO'}
+              {activeEmpresa?.rol_propio ? activeEmpresa.rol_propio.nombre.toUpperCase() : user?.rol === 'FRONT_ADMIN' ? 'ADMINISTRADOR' : 'USUARIO'}
             </span>
           </div>
           <Link
