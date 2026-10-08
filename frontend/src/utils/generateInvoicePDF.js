@@ -386,6 +386,20 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
     }
   }
 
+  // Venta anulada: sello diagonal en cada página (el PDF sigue sirviendo como constancia).
+  if (venta.estado === 'ANULADA') {
+    for (let i = 1; i <= doc.internal.getNumberOfPages(); i += 1) {
+      doc.setPage(i);
+      doc.saveGraphicsState();
+      try { doc.setGState(new doc.GState({ opacity: 0.18 })); } catch { /* sin opacidad: se pinta suave igual */ }
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(92);
+      doc.setTextColor(...discountColor);
+      doc.text('ANULADA', pageW / 2, pageH / 2, { align: 'center', angle: 35 });
+      doc.restoreGraphicsState();
+    }
+  }
+
   // ═══════════════════════════════════════════════
   // OUTPUT
   // ═══════════════════════════════════════════════

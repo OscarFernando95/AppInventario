@@ -238,7 +238,7 @@ const Caja = () => {
                 {cajaActual.movimientos.map((m) => (
                   <li key={m.id} className="flex justify-between gap-3 py-2">
                     <span className="text-slate-600 min-w-0 truncate">
-                      <span className="text-[10px] font-semibold uppercase tracking-wide bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 mr-2">{{ RETIRO: 'Retiro', GASTO: 'Gasto', COMPRA: 'Compra' }[m.tipo]}</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-wide bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 mr-2">{{ RETIRO: 'Retiro', GASTO: 'Gasto', COMPRA: 'Compra', DEVOLUCION: 'Devolución' }[m.tipo]}</span>
                       {m.concepto}
                     </span>
                     <span className="font-semibold text-red-700 whitespace-nowrap">−{formatCOP(m.monto)}</span>

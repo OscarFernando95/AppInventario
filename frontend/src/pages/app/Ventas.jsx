@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import JSZip from 'jszip';
 import api from '../../api/axios';
 import { Link } from 'react-router-dom';
-import { Wallet, ShoppingCart, Trash2, Search, CheckCircle, Tag, Users, UserPlus, X, Percent, Eye, Receipt, Box, Briefcase, Minus, Plus, PackageOpen, FileDown, FileArchive } from 'lucide-react';
+import { Ban, Wallet, ShoppingCart, Trash2, Search, CheckCircle, Tag, Users, UserPlus, X, Percent, Eye, Receipt, Box, Briefcase, Minus, Plus, PackageOpen, FileDown, FileArchive } from 'lucide-react';
 import { formatCOP, formatDocumento, formatCantidad } from '../../utils/format';
 import { generateInvoicePDF } from '../../utils/generateInvoicePDF';
 import { useAuthStore } from '../../store/authStore';
@@ -21,13 +21,14 @@ import { TableState } from '../../components/ui/DataState';
 
 const LIMIT = 20;
 const MAX_LOTE = 100;
-const FILTROS_VACIOS = { desde: '', hasta: '', clienteId: '' };
+const FILTROS_VACIOS = { desde: '', hasta: '', clienteId: '', estado: '' };
 
 /** Lo vendible de un producto: porciones para un plato; stock físico para el resto. */
 const disponible = (p) => Number(p.tipo === 'RECETA' ? (p.porciones_disponibles ?? 0) : p.stock_actual);
 
 const Ventas = () => {
-  const { activeEmpresa } = useAuthStore();
+  const { activeEmpresa, user } = useAuthStore();
+  const esAdmin = user?.rol === 'FRONT_ADMIN';
   const queryClient = useQueryClient();
   const modulos = activeEmpresa?.modulos || [];
 
@@ -62,6 +63,41 @@ const Ventas = () => {
   const { data: cajaActual, isLoading: cargandoCaja } = useEmpresaQuery(['caja', 'actual'], '/caja/actual', { enabled: conCaja });
   const sinCaja = conCaja && !cargandoCaja && !cajaActual;
   const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
+
+  // ── Anulación: el administrador anula en el acto; los demás envían una solicitud que él resuelve ──
+  const { data: pendientes = [] } = useEmpresaQuery(['anulaciones', 'pendientes'], '/anulaciones');
+  const [anulando, setAnulando] = useState(null); // venta que se va a anular / solicitar
+  const [motivoAnulacion, setMotivoAnulacion] = useState('');
+  const [rechazando, setRechazando] = useState(null); // solicitud que se va a rechazar
+  const [comentarioRechazo, setComentarioRechazo] = useState('');
+  const [avisoAnulacion, setAvisoAnulacion] = useState(null);
+  const [errorAnulacion, setErrorAnulacion] = useState(null);
+
+  const anularVenta = useMutation({
+    mutationFn: ({ id, motivo }) => api.post(`/ventas/${id}/anular`, { motivo }),
+    onSuccess: (res) => {
+      invalidar();
+      setAnulando(null);
+      setMotivoAnulacion('');
+      setErrorAnulacion(null);
+      setAvisoAnulacion(res.data.resultado === 'ANULADA'
+        ? 'Venta anulada: el inventario volvió a su lugar y dejó de contar en los totales.'
+        : 'Solicitud enviada: el administrador debe aprobarla para que la venta se anule.');
+    },
+    onError: (err) => setErrorAnulacion(apiError(err, 'No se pudo anular la venta')),
+  });
+
+  const resolverSolicitud = useMutation({
+    mutationFn: ({ id, accion, comentario }) => api.post(`/anulaciones/${id}/${accion}`, accion === 'rechazar' ? { comentario } : undefined),
+    onSuccess: (_res, vars) => {
+      invalidar();
+      setRechazando(null);
+      setComentarioRechazo('');
+      setErrorAnulacion(null);
+      setAvisoAnulacion(vars.accion === 'aprobar' ? 'Solicitud aprobada: la venta quedó anulada.' : 'Solicitud rechazada: la venta sigue activa.');
+    },
+    onError: (err) => setErrorAnulacion(apiError(err, 'No se pudo resolver la solicitud')),
+  });
 
   const actualizarFiltro = (patch) => {
     setOffset(0);
@@ -384,6 +420,13 @@ const Ventas = () => {
         <Field label="Hasta" className="w-full sm:w-44">
           <input type="date" className="input-field" value={filtros.hasta} onChange={(e) => actualizarFiltro({ hasta: e.target.value })} />
         </Field>
+        <Field label="Estado" className="w-full sm:w-40">
+          <select className="input-field" value={filtros.estado} onChange={(e) => actualizarFiltro({ estado: e.target.value })}>
+            <option value="">Todas</option>
+            <option value="ACTIVA">Activas</option>
+            <option value="ANULADA">Anuladas</option>
+          </select>
+        </Field>
         {modulos.includes('Clientes') && (
           <Field label="Cliente" className="w-full sm:w-56">
             <select className="input-field" value={filtros.clienteId} onChange={(e) => actualizarFiltro({ clienteId: e.target.value })}>
@@ -393,6 +436,46 @@ const Ventas = () => {
           </Field>
         )}
       </FilterBar>
+
+      {avisoAnulacion && (
+        <div role="status" className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          <span>{avisoAnulacion}</span>
+          <button type="button" className="btn-icon" aria-label="Cerrar aviso" onClick={() => setAvisoAnulacion(null)}><X className="w-4 h-4" /></button>
+        </div>
+      )}
+      {errorAnulacion && !anulando && !rechazando && <FormError message={errorAnulacion} onDismiss={() => setErrorAnulacion(null)} />}
+
+      {pendientes.length > 0 && (
+        <section aria-label="Solicitudes de anulación" className="rounded-2xl border border-amber-200 bg-amber-50 p-4 space-y-3">
+          <h3 className="text-sm font-semibold text-amber-900 flex items-center gap-2">
+            <Ban className="w-4 h-4" aria-hidden="true" />
+            {esAdmin ? `${pendientes.length} solicitud(es) de anulación por resolver` : `Tienes ${pendientes.length} solicitud(es) de anulación esperando al administrador`}
+          </h3>
+          <ul className="divide-y divide-amber-100 text-sm">
+            {pendientes.map((s) => (
+              <li key={s.id} className="flex flex-wrap items-center justify-between gap-3 py-2">
+                <span className="text-slate-700 min-w-0">
+                  <strong>#FACT-{String(s.ventaId).padStart(4, '0')}</strong> · {formatCOP(s.venta?.total)}
+                  {s.venta?.Cliente?.nombre ? ` · ${s.venta.Cliente.nombre}` : ''}
+                  <span className="block text-xs text-slate-500">Pide: {s.solicitante?.nombre} — «{s.motivo}»</span>
+                </span>
+                {esAdmin && (
+                  <span className="flex gap-2">
+                    <button type="button" className="btn-secondary text-xs" onClick={() => { setErrorAnulacion(null); setRechazando(s); }}>Rechazar</button>
+                    <button
+                      type="button" className="btn-primary text-xs" disabled={resolverSolicitud.isPending}
+                      aria-label={`Aprobar anulación de la factura ${s.ventaId}`}
+                      onClick={() => resolverSolicitud.mutate({ id: s.id, accion: 'aprobar' })}
+                    >
+                      Aprobar y anular
+                    </button>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <TableCard>
         <THead>
@@ -410,11 +493,12 @@ const Ventas = () => {
           <Th align="center">Items (Qty)</Th>
           <Th>Fecha Emisión</Th>
           <Th align="right">Monto Facturado</Th>
+          <Th align="center">Estado</Th>
           <Th align="center">Acción</Th>
         </THead>
         <tbody>
           <TableState
-            colSpan={7}
+            colSpan={8}
             isLoading={cargandoVentas}
             isError={errorVentas}
             error={errVentas}
@@ -424,8 +508,11 @@ const Ventas = () => {
             emptyTitle={hayFiltros ? 'Sin facturas para estos filtros' : 'Sin transacciones en caja'}
             emptyHint={hayFiltros ? 'Ajusta el rango de fechas o el cliente.' : 'Abre la caja con «Iniciar POS».'}
           />
-          {ventas.map(v => (
-            <Tr key={v.id}>
+          {ventas.map(v => {
+            const anulada = v.estado === 'ANULADA';
+            const conSolicitud = !anulada && v.anulaciones?.length > 0;
+            return (
+            <Tr key={v.id} className={anulada ? 'opacity-60' : ''}>
               <Td align="center">
                 <input
                   type="checkbox"
@@ -444,14 +531,36 @@ const Ventas = () => {
               </Td>
               <Td align="center" className="text-slate-600">{v.VentaDetalles?.length || 0}</Td>
               <Td className="text-slate-500 whitespace-nowrap">{new Date(v.fecha).toLocaleString('es-CO')}</Td>
-              <Td align="right" className="font-semibold text-slate-800 whitespace-nowrap">{formatCOP(v.total)}</Td>
+              <Td align="right" className={`font-semibold text-slate-800 whitespace-nowrap ${anulada ? 'line-through' : ''}`}>{formatCOP(v.total)}</Td>
               <Td align="center">
-                <button onClick={() => setViewDetalle(v)} className="btn-icon" aria-label={`Ver detalle de la factura ${v.id}`}>
-                  <Eye className="w-5 h-5"/>
-                </button>
+                {anulada ? (
+                  <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800" title={v.motivo_anulacion || undefined}>ANULADA</span>
+                ) : conSolicitud ? (
+                  <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 whitespace-nowrap">Anulación pedida</span>
+                ) : (
+                  <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">ACTIVA</span>
+                )}
+              </Td>
+              <Td align="center">
+                <div className="flex items-center justify-center gap-1">
+                  <button onClick={() => setViewDetalle(v)} className="btn-icon" aria-label={`Ver detalle de la factura ${v.id}`}>
+                    <Eye className="w-5 h-5"/>
+                  </button>
+                  {!anulada && !conSolicitud && (
+                    <button
+                      onClick={() => { setErrorAnulacion(null); setMotivoAnulacion(''); setAnulando(v); }}
+                      className="btn-icon text-red-700"
+                      aria-label={esAdmin ? `Anular la factura ${v.id}` : `Solicitar anulación de la factura ${v.id}`}
+                      title={esAdmin ? 'Anular venta' : 'Solicitar anulación'}
+                    >
+                      <Ban className="w-5 h-5"/>
+                    </button>
+                  )}
+                </div>
               </Td>
             </Tr>
-          ))}
+            );
+          })}
         </tbody>
       </TableCard>
 
@@ -747,6 +856,14 @@ const Ventas = () => {
                    )}
                 </div>
               </div>
+              {viewDetalle.estado === 'ANULADA' && (
+                <div className="mx-6 mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+                  <strong>Venta anulada</strong>
+                  {viewDetalle.anuladaPor?.nombre ? ` por ${viewDetalle.anuladaPor.nombre}` : ''}
+                  {viewDetalle.anulada_en ? ` · ${new Date(viewDetalle.anulada_en).toLocaleString('es-CO')}` : ''}
+                  {viewDetalle.motivo_anulacion && <span className="block">Motivo: {viewDetalle.motivo_anulacion}</span>}
+                </div>
+              )}
               <div className="p-6 bg-slate-50 border-t border-slate-200 flex justify-between items-center">
                 <div className="flex flex-col">
                   <span className="font-semibold text-slate-500 uppercase tracking-widest text-sm">Total Cobrado</span>
@@ -795,6 +912,65 @@ const Ventas = () => {
           </div>
         </Modal>
       )}
+
+
+      {/* ── Anular venta / solicitar anulación ── */}
+      <Modal
+        open={!!anulando}
+        onClose={() => setAnulando(null)}
+        title={esAdmin ? 'Anular venta' : 'Solicitar anulación'}
+        description={anulando ? `Factura #FACT-${String(anulando.id).padStart(4, '0')} · ${formatCOP(anulando.total)}` : undefined}
+        size="md"
+      >
+        {anulando && (
+          <form
+            className="space-y-4"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (motivoAnulacion.trim().length < 3) return setErrorAnulacion('Indica el motivo de la anulación.');
+              anularVenta.mutate({ id: anulando.id, motivo: motivoAnulacion.trim() });
+            }}
+          >
+            <FormError message={errorAnulacion} onDismiss={() => setErrorAnulacion(null)} />
+            <p className="text-sm text-slate-600">
+              {esAdmin
+                ? 'La venta queda en el historial como ANULADA, el inventario vuelve a su lugar y deja de contar en totales, informes y caja. Si se cobró en efectivo en una caja que ya cerró, la devolución sale de tu caja abierta.'
+                : 'No se anula en el acto: el administrador revisa tu solicitud y la aprueba o la rechaza.'}
+            </p>
+            <Field label="Motivo" required>
+              <input
+                className="input-field" maxLength={500} autoFocus placeholder="Error al digitar, el cliente se arrepintió…"
+                value={motivoAnulacion} onChange={(e) => setMotivoAnulacion(e.target.value)}
+              />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" className="btn-secondary" onClick={() => setAnulando(null)}>Volver</button>
+              <button type="submit" className="btn-primary px-6" disabled={anularVenta.isPending}>
+                {anularVenta.isPending ? 'Enviando…' : esAdmin ? 'Anular venta' : 'Enviar solicitud'}
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      <Modal open={!!rechazando} onClose={() => setRechazando(null)} title="Rechazar solicitud" size="md">
+        {rechazando && (
+          <form
+            className="space-y-4"
+            onSubmit={(e) => { e.preventDefault(); resolverSolicitud.mutate({ id: rechazando.id, accion: 'rechazar', comentario: comentarioRechazo.trim() || undefined }); }}
+          >
+            <FormError message={errorAnulacion} onDismiss={() => setErrorAnulacion(null)} />
+            <p className="text-sm text-slate-600">La venta #FACT-{String(rechazando.ventaId).padStart(4, '0')} sigue activa. {rechazando.solicitante?.nombre} podrá volver a pedirla.</p>
+            <Field label="Comentario (opcional)">
+              <input className="input-field" maxLength={500} autoFocus placeholder="La venta es correcta" value={comentarioRechazo} onChange={(e) => setComentarioRechazo(e.target.value)} />
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" className="btn-secondary" onClick={() => setRechazando(null)}>Volver</button>
+              <button type="submit" className="btn-primary px-6" disabled={resolverSolicitud.isPending}>Rechazar solicitud</button>
+            </div>
+          </form>
+        )}
+      </Modal>
 
       {/* ── Personalizar un plato (modificadores) ── */}
       <Modal open={!!personalizar} onClose={() => setPersonalizar(null)} elevated title={personalizar ? `Personalizar ${personalizar.nombre_producto}` : ''} size="md">

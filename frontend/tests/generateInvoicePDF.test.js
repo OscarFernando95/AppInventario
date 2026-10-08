@@ -97,3 +97,11 @@ describe('generateInvoicePDF — platos con modificadores', () => {
   });
 });
 
+describe('generateInvoicePDF — venta anulada', () => {
+  it('genera el PDF con el sello ANULADA sin romperse (una y varias páginas)', () => {
+    expect(() => generateInvoicePDF({ ...ventaBase, estado: 'ANULADA', motivo_anulacion: 'Error' }, empresa, opts)).not.toThrow();
+    const muchas = Array.from({ length: 80 }, (_, i) => ({ cantidad: 1, precio_unitario: 100, precio_base: 100, Producto: { nombre_producto: `Producto ${i}` } }));
+    expect(() => generateInvoicePDF({ ...ventaBase, estado: 'ANULADA', VentaDetalles: muchas }, empresa, opts)).not.toThrow();
+  });
+});
+

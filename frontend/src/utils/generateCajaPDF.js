@@ -205,7 +205,7 @@ export const generateCajaPDF = (caja, options = {}) => {
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...primary);
     doc.text('EGRESOS DE CAJA', margin, y);
-    const tipos = { RETIRO: 'Retiro', GASTO: 'Gasto', COMPRA: 'Compra' };
+    const tipos = { RETIRO: 'Retiro', GASTO: 'Gasto', COMPRA: 'Compra', DEVOLUCION: 'Devolución' };
     autoTable(doc, {
       startY: y + 3,
       margin: { left: margin, right: margin },
@@ -231,7 +231,7 @@ export const generateCajaPDF = (caja, options = {}) => {
       startY: y + 3,
       margin: { left: margin, right: margin },
       head: [['Factura', 'Hora', 'Medio de pago', { content: 'Total', styles: { halign: 'right' } }]],
-      body: ventas.map((v) => [`FACT-${String(v.id).padStart(4, '0')}`, fmtHora(v.fecha), etiquetaPago(v.forma_pago, v.medio_pago), formatCOP(v.total)]),
+      body: ventas.map((v) => [`FACT-${String(v.id).padStart(4, '0')}`, fmtHora(v.fecha), etiquetaPago(v.forma_pago, v.medio_pago) + (v.estado === 'ANULADA' ? ' · ANULADA' : ''), formatCOP(v.total)]),
       theme: 'striped',
       styles: { fontSize: 8.5, textColor: textDark, cellPadding: 2 },
       headStyles: { fillColor: primary, textColor: white },
