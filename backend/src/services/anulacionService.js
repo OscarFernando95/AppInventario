@@ -41,6 +41,11 @@ async function anularVenta(req, t, ventaId, motivo) {
   if (!venta) return null;
   if (venta.estado === 'ANULADA') throw new ValidationError('Esta venta ya está anulada.');
 
+  // Con devoluciones parciales el inventario y el dinero ya se movieron en parte: no se anula completa.
+  if (Number(venta.total_devuelto) > 0) {
+    throw new ValidationError('Esta venta tiene devoluciones registradas: no se puede anular completa. Devuelve lo que falta.');
+  }
+
   // Una venta a crédito con abonos tiene dinero cobrado: primero se anulan esos abonos.
   if (venta.forma_pago === '2') {
     const abonos = await AbonoVenta.count({ where: { ventaId: venta.id, estado: 'ACTIVO' }, transaction: t });
@@ -87,4 +92,4 @@ async function anularVenta(req, t, ventaId, motivo) {
   return { venta, devolucion };
 }
 
-module.exports = { anularVenta };
+module.exports = { anularVenta, consumoDeLineaAntigua };

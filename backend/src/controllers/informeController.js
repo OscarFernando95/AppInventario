@@ -49,9 +49,10 @@ async function generar(tipo, whereVenta, whereCompra) {
         attributes: [
           'productoId',
           [sequelize.col('Producto.nombre_producto'), 'nombre_producto'],
-          [sequelize.fn('SUM', sequelize.col('cantidad')), 'total_vendido'],
+          // Neto de devoluciones: lo devuelto no cuenta como vendido.
+          [sequelize.fn('SUM', sequelize.literal(`${qcol('VentaDetalle', 'cantidad')} - ${qcol('VentaDetalle', 'cantidad_devuelta')}`)), 'total_vendido'],
           [sequelize.fn('SUM', sequelize.literal(
-            `${qcol('VentaDetalle', 'cantidad')} * ${qcol('VentaDetalle', 'precio_unitario')}`
+            `(${qcol('VentaDetalle', 'cantidad')} - ${qcol('VentaDetalle', 'cantidad_devuelta')}) * ${qcol('VentaDetalle', 'precio_unitario')}`
           )), 'ingreso_total'],
         ],
         include: [{ model: Venta, attributes: [], where: whereVenta }, { model: Producto, attributes: [] }],
@@ -67,7 +68,7 @@ async function generar(tipo, whereVenta, whereCompra) {
           'clienteId',
           [sequelize.col('Cliente.nombre'), 'nombre_cliente'],
           [sequelize.fn('COUNT', sequelize.col('Venta.id')), 'total_compras'],
-          [sequelize.fn('SUM', sequelize.col('total')), 'dinero_gastado'],
+          [sequelize.fn('SUM', sequelize.literal(`${qcol('Venta', 'total')} - ${qcol('Venta', 'total_devuelto')}`)), 'dinero_gastado'],
         ],
         include: [{ model: Cliente, attributes: [] }],
         group: ['clienteId', 'Cliente.nombre'],

@@ -27,6 +27,8 @@ const Venta = sequelize.define('Venta', {
   motivo_anulacion: { type: DataTypes.TEXT, allowNull: true },
   // Ventas a crédito: lo que el cliente aún debe y a cuántos días se concedió (fecha_vencimiento = fecha + días).
   saldo_pendiente: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0 },
+  // Acumulado de lo devuelto por el cliente (devoluciones parciales); la venta original no cambia.
+  total_devuelto: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0 },
   dias_credito: { type: DataTypes.INTEGER, allowNull: true },
   cajaId: {
     type: DataTypes.INTEGER,

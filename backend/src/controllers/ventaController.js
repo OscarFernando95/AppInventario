@@ -1,4 +1,4 @@
-const { sequelize, Venta, VentaDetalle, Producto, Servicio, Cliente, Usuario, Empresa, Caja, Modificador, ModificadorItem, AnulacionVenta } = require('../models');
+const { sequelize, Venta, VentaDetalle, Producto, Servicio, Cliente, Usuario, Empresa, Caja, Modificador, ModificadorItem, AnulacionVenta, DevolucionVenta } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { buildListWhere } = require('../utils/listFilters');
@@ -96,7 +96,9 @@ exports.getVentaById = async (req, res) => {
       Cliente,
       { model: VentaDetalle, include: [Producto, Servicio] },
       { model: Empresa, attributes: ['nombre', 'nit', 'contacto'] },
+      { model: DevolucionVenta, as: 'devoluciones', attributes: ['id', 'fecha', 'total', 'motivo'], required: false },
     ],
+    order: [[{ model: DevolucionVenta, as: 'devoluciones' }, 'fecha', 'ASC']],
   });
   if (!venta) return res.status(404).json({ error: 'Venta no encontrada' });
   res.json(venta);

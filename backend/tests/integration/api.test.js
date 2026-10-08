@@ -2737,3 +2737,280 @@ describe('Cuentas por pagar', () => {
     expect(fila.descripcion).toMatch(/por la compra #\d+/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Devolución parcial de ventas
+// ---------------------------------------------------------------------------
+describe('Devolución parcial de ventas', () => {
+  let producto; let harina; let plato; let cajero;
+  const stockDe = async (id) => Number((await models.Producto.findByPk(id)).stock_actual);
+  const dbVenta = (id) => models.Venta.findByPk(id);
+  const detallesDe = (ventaId) => models.VentaDetalle.findAll({ where: { ventaId }, order: [['id', 'ASC']] });
+  const vender = (detalles, extra = {}) => conEmpresa(agent.post('/api/ventas')).send({ clienteId: ctx.cliente.id, detalles, ...extra });
+  const linea = (productoId, cantidad, precio = 1000) => ({ productoId, cantidad, precio_unitario: precio, precio_base: precio });
+  const servicio = (cantidad, precio = 100000) => ({ servicioId: ctx.servicio.id, cantidad, precio_unitario: precio, precio_base: precio });
+  const devolver = (ventaId, items, extra = {}) => conEmpresa(agent.post(`/api/ventas/${ventaId}/devoluciones`)).send({ motivo: 'Producto defectuoso', items, ...extra });
+  const balance = async () => (await conEmpresa(agent.get('/api/caja/balance'))).body;
+  const cerrarCajas = () => models.Caja.update(
+    { estado: 'CERRADA', fecha_cierre: new Date(), monto_contado: 0, total_egresos: 0 },
+    { where: { empresaId: ctx.empresa.id, estado: 'ABIERTA' } }
+  );
+
+  beforeAll(async () => {
+    await activarModulos(['Recetas']);
+    await models.Servicio.update({ precio: 100000, porcentaje_iva: 0 }, { where: { id: ctx.servicio.id } });
+    const nuevo = (body) => conEmpresa(agent.post('/api/productos')).send({ precio_unitario: 1000, porcentaje_iva: 0, ...body });
+    producto = (await nuevo({ codigo: 'DEV-P', nombre_producto: 'Producto devolvible', stock_actual: 100 })).body;
+    harina = (await nuevo({ codigo: 'DEV-H', nombre_producto: 'Harina devolvible', tipo: 'INSUMO', unidad_medida: 'GRM', stock_actual: 10000, costo_promedio: 3 })).body;
+    plato = (await nuevo({
+      codigo: 'DEV-PL', nombre_producto: 'Plato devolvible', tipo: 'RECETA', precio_unitario: 5000, receta: [{ insumoId: harina.id, cantidad: 100 }],
+    })).body;
+    const u = await models.Usuario.create({
+      rolId: 3, nombre: 'Cajero Devuelve', username: 'cajero_dev',
+      contrasena_hash: await bcrypt.hash('Clave1234', 10), estado: true, must_change_password: false,
+    });
+    await u.setEmpresas([ctx.empresa.id]);
+    cajero = request.agent(app);
+    expect((await cajero.post('/api/auth/login').send({ username: 'cajero_dev', contrasena: 'Clave1234' })).status).toBe(200);
+  });
+  afterAll(async () => { await cerrarCajas(); await activarModulos([]); });
+
+  it('devuelve parte de una línea: baja lo devuelto, vuelve el stock si se reingresa y la venta no cambia', async () => {
+    const venta = await vender([linea(producto.id, 5)]);
+    expect(await stockDe(producto.id)).toBe(95);
+    const [det] = await detallesDe(venta.body.id);
+
+    const res = await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 2, reingresar: true }]);
+    expect(res.status).toBe(201);
+    expect(Number(res.body.devolucion.total)).toBe(2000);
+    expect(Number(res.body.devolucion.dinero_devuelto)).toBe(2000);
+    expect(res.body.devolucion.reembolso).toBe('OTRO'); // sin módulo Caja el dinero no sale de una caja
+    expect(res.body.venta).toMatchObject({ total: 5000, total_devuelto: 2000 });
+    expect(await stockDe(producto.id)).toBe(97);
+
+    const v = await dbVenta(venta.body.id);
+    expect(Number(v.total)).toBe(5000); // la venta original queda intacta
+    expect(v.estado).toBe('ACTIVA');
+    const [d2] = await detallesDe(venta.body.id);
+    expect(Number(d2.cantidad_devuelta)).toBe(2);
+    expect(Number(d2.cantidad_reingresada)).toBe(2);
+
+    const lista = (await conEmpresa(agent.get(`/api/ventas/${venta.body.id}/devoluciones`))).body;
+    expect(lista).toHaveLength(1);
+    expect(lista[0].detalles[0].linea.Producto.nombre_producto).toBe('Producto devolvible');
+    expect(lista[0].usuario.nombre).toBe('Front Admin');
+    const detalle = (await conEmpresa(agent.get(`/api/ventas/${venta.body.id}`))).body;
+    expect(detalle.devoluciones).toHaveLength(1);
+    expect(Number(detalle.total_devuelto)).toBe(2000);
+  });
+
+  it('sin reingresar, el inventario no se toca (producto dañado)', async () => {
+    const venta = await vender([linea(producto.id, 3)]);
+    const antes = await stockDe(producto.id);
+    const [det] = await detallesDe(venta.body.id);
+    const res = await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1 }]);
+    expect(res.status).toBe(201);
+    expect(await stockDe(producto.id)).toBe(antes);
+    expect(Number((await detallesDe(venta.body.id))[0].cantidad_reingresada)).toBe(0);
+  });
+
+  it('un plato reingresado devuelve sus ingredientes en proporción; sin reingresar no', async () => {
+    const venta = await vender([linea(plato.id, 3, 5000)]);
+    expect(await stockDe(harina.id)).toBe(9700); // 10.000 − 3×100
+    const [det] = await detallesDe(venta.body.id);
+
+    await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1 }]); // se desecha: no vuelve
+    expect(await stockDe(harina.id)).toBe(9700);
+    await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1, reingresar: true }]); // se reutiliza
+    expect(await stockDe(harina.id)).toBe(9800);
+    expect(Number((await detallesDe(venta.body.id))[0].cantidad_reingresada)).toBe(1);
+  });
+
+  it('valida cantidades, líneas, motivo y venta anulada', async () => {
+    const venta = await vender([linea(producto.id, 2)]);
+    const otra = await vender([linea(producto.id, 1)]);
+    const [det] = await detallesDe(venta.body.id);
+    const [detOtra] = await detallesDe(otra.body.id);
+
+    const mucho = await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 3 }]);
+    expect(mucho.status).toBe(400);
+    expect(mucho.body.error).toMatch(/Solo se pueden devolver 2/);
+    await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1.5 }]);
+    const yaDevuelto = await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1 }]);
+    expect(yaDevuelto.body.error).toMatch(/Solo se pueden devolver 0\.5/);
+
+    expect((await devolver(venta.body.id, [{ ventaDetalleId: detOtra.id, cantidad: 1 }])).status).toBe(400); // línea de otra venta
+    expect((await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 0.1 }, { ventaDetalleId: det.id, cantidad: 0.1 }])).body.error).toMatch(/repetidas/);
+    expect((await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 0 }])).status).toBe(400);
+    expect((await devolver(venta.body.id, [])).status).toBe(400);
+    expect((await conEmpresa(agent.post(`/api/ventas/${venta.body.id}/devoluciones`)).send({ items: [{ ventaDetalleId: det.id, cantidad: 0.1 }] })).status).toBe(400); // sin motivo
+    expect((await devolver(999999, [{ ventaDetalleId: det.id, cantidad: 0.1 }])).status).toBe(404);
+
+    await conEmpresa(agent.post(`/api/ventas/${otra.body.id}/anular`)).send({ motivo: 'Error' });
+    const anulada = await devolver(otra.body.id, [{ ventaDetalleId: detOtra.id, cantidad: 1 }]);
+    expect(anulada.status).toBe(400);
+    expect(anulada.body.error).toMatch(/anulada/);
+  });
+
+  it('el descuento global se prorratea y devolver todo por partes suma exactamente el total de la venta', async () => {
+    const caro = await models.Producto.create({ empresaId: ctx.empresa.id, codigo: 'DEV-C', nombre_producto: 'Producto de $3.333', precio_unitario: 3333, porcentaje_iva: 0, stock_actual: 50 });
+    const venta = await vender([linea(caro.id, 3, 3333)], { descuento_global: 10 });
+    const total = Number(venta.body.total);
+    expect(total).toBeCloseTo(8999.1, 2); // 3 × 3.333 − 10 %
+    const [det] = await detallesDe(venta.body.id);
+
+    const una = await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1 }]);
+    expect(Number(una.body.devolucion.total)).toBe(2999.7); // 3.333 − 10 %
+    await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1 }]);
+    const ultima = await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1 }]);
+    expect(ultima.status).toBe(201);
+    expect(Number((await dbVenta(venta.body.id)).total_devuelto)).toBe(total); // sin centavos de diferencia
+    const sobrante = await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 0.001 }]);
+    expect(sobrante.status).toBe(400);
+  });
+
+  it('una venta con devoluciones no se puede anular completa', async () => {
+    const venta = await vender([linea(producto.id, 2)]);
+    const [det] = await detallesDe(venta.body.id);
+    await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1, reingresar: true }]);
+    const anular = await conEmpresa(agent.post(`/api/ventas/${venta.body.id}/anular`)).send({ motivo: 'Error' });
+    expect(anular.status).toBe(400);
+    expect(anular.body.error).toMatch(/tiene devoluciones/);
+  });
+
+  it('dashboard, informes y rentabilidad cuentan lo vendido NETO de devoluciones', async () => {
+    const dash = async () => Number((await conEmpresa(agent.get('/api/reportes/dashboard'))).body.ventasMes);
+    const rent = async () => (await conEmpresa(agent.get('/api/recetas/rentabilidad'))).body.filas.find((f) => f.productoId === plato.id) || { unidades: 0, ingresos: 0, costo: 0 };
+    const antesDash = await dash();
+    const antesRent = await rent();
+
+    const venta = await vender([linea(plato.id, 3, 5000)]); // ingresos 15.000; costo 3 × 300
+    const [det] = await detallesDe(venta.body.id);
+    await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1 }]); // 5.000 devueltos y el plato se desecha
+    expect(await dash()).toBeCloseTo(antesDash + 15000 - 5000, 2);
+
+    let r = await rent();
+    expect(r.unidades - antesRent.unidades).toBe(2);
+    expect(r.ingresos - antesRent.ingresos).toBe(10000);
+    expect(r.costo - antesRent.costo).toBe(900); // el plato desechado sigue siendo costo
+
+    await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1, reingresar: true }]); // este vuelve a la cocina
+    r = await rent();
+    expect(r.unidades - antesRent.unidades).toBe(1);
+    expect(r.costo - antesRent.costo).toBe(600); // 3 − 1 reingresado = 2 platos de costo
+
+    const hoy = fechaLocal();
+    const top = (await conEmpresa(agent.get('/api/informes')).query({ tipo: 'top_productos', start: hoy, end: hoy })).body;
+    expect(Number(top.find((p) => p.productoId === plato.id).total_vendido)).toBeGreaterThanOrEqual(1);
+    const clientes = (await conEmpresa(agent.get('/api/informes')).query({ tipo: 'top_clientes', start: hoy, end: hoy })).body;
+    expect(Number(clientes[0].dinero_gastado)).toBeGreaterThan(0);
+  });
+
+  it('el cajero puede ver las devoluciones pero no registrarlas (por ahora: solo administrador)', async () => {
+    const venta = await vender([linea(producto.id, 2)]);
+    const [det] = await detallesDe(venta.body.id);
+    const res = await withEmpresa(cajero.post(`/api/ventas/${venta.body.id}/devoluciones`)).send({ motivo: 'x1', items: [{ ventaDetalleId: det.id, cantidad: 1 }] });
+    expect(res.status).toBe(403);
+    expect((await withEmpresa(cajero.get(`/api/ventas/${venta.body.id}/devoluciones`))).status).toBe(200);
+  });
+
+  describe('venta a crédito', () => {
+    const credito = (cantidad) => vender([servicio(cantidad)], { forma_pago: '2' });
+    const abonar = (id, monto, medio = '47') => conEmpresa(agent.post(`/api/cuentas-por-cobrar/${id}/abonos`)).send({ monto, medio_pago: medio });
+
+    it('primero baja lo que el cliente debe; lo que sobra (ya pagado) vuelve en dinero', async () => {
+      const venta = (await credito(3)).body; // 300.000
+      await abonar(venta.id, 100000); // debe 200.000
+      const [det] = await detallesDe(venta.id);
+
+      const una = await devolver(venta.id, [{ ventaDetalleId: det.id, cantidad: 1 }]); // 100.000
+      expect(Number(una.body.devolucion.credito_reducido)).toBe(100000);
+      expect(Number(una.body.devolucion.dinero_devuelto)).toBe(0);
+      expect(una.body.devolucion.reembolso).toBeNull();
+      expect(una.body.venta.saldo_pendiente).toBe(100000);
+
+      const dos = await devolver(venta.id, [{ ventaDetalleId: det.id, cantidad: 2 }]); // 200.000: 100.000 de deuda + 100.000 ya pagados
+      expect(Number(dos.body.devolucion.credito_reducido)).toBe(100000);
+      expect(Number(dos.body.devolucion.dinero_devuelto)).toBe(100000);
+      expect(dos.body.devolucion.reembolso).toBe('OTRO'); // el abono fue por transferencia
+      expect(dos.body.venta).toMatchObject({ saldo_pendiente: 0, total_devuelto: 300000 });
+      const cartera = (await conEmpresa(agent.get('/api/cuentas-por-cobrar?estado=PAGADAS'))).body;
+      expect(cartera.find((c) => c.id === venta.id)).toBeTruthy(); // ya no se debe nada
+    });
+  });
+
+  describe('con módulo Caja', () => {
+    const actual = async () => (await conEmpresa(agent.get('/api/caja/actual'))).body;
+    beforeAll(async () => { await activarModulos(['Recetas', 'Caja']); await cerrarCajas(); });
+    afterAll(async () => { await cerrarCajas(); await activarModulos(['Recetas']); });
+
+    it('devuelve efectivo de la caja abierta: egreso DEVOLUCION y baja el dinero de la empresa', async () => {
+      await conEmpresa(agent.post('/api/caja/abrir')).send({ monto_inicial: 50000 });
+      const venta = await vender([servicio(1)], { medio_pago: '10' }); // 100.000 en efectivo
+      expect((await actual()).resumen.efectivo_esperado).toBe(150000);
+      const [det] = await detallesDe(venta.body.id);
+      const b0 = await balance();
+
+      const res = await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 0.4 }]); // 40.000
+      expect(res.status).toBe(201);
+      expect(res.body.devolucion.reembolso).toBe('CAJA'); // por defecto: se cobró en efectivo
+      const c = await actual();
+      expect(c.resumen.efectivo_esperado).toBe(110000);
+      expect(c.movimientos.map((m) => m.tipo)).toEqual(['DEVOLUCION']);
+      const mov = await models.CajaMovimiento.findOne({ where: { cajaId: c.id } });
+      expect(mov.devolucionId).toBe(res.body.devolucion.id);
+
+      const b1 = await balance();
+      expect(b1.dinero_actual - b0.dinero_actual).toBe(-40000);
+      expect(b1.acumulado.devoluciones - b0.acumulado.devoluciones).toBe(40000);
+      expect(b1.acumulado.retiros).toBe(b0.acumulado.retiros); // no se cuenta además como retiro
+
+      // Por otro medio (tarjeta): el dinero baja, pero la caja no se toca.
+      const otro = await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 0.1 }], { reembolso: 'OTRO' });
+      expect(otro.body.devolucion.reembolso).toBe('OTRO');
+      expect((await actual()).resumen.efectivo_esperado).toBe(110000);
+      await cerrarCajas();
+    });
+
+    it('sin caja abierta no se puede devolver efectivo y no queda nada a medias', async () => {
+      await conEmpresa(agent.post('/api/caja/abrir')).send({ monto_inicial: 0 });
+      const venta = await vender([linea(producto.id, 2)], { medio_pago: '10' });
+      await cerrarCajas(); // el turno de la venta ya cerró y nadie tiene caja abierta
+      const [det] = await detallesDe(venta.body.id);
+      const stock = await stockDe(producto.id);
+
+      const res = await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1, reingresar: true }]);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/caja abierta/);
+      expect(await stockDe(producto.id)).toBe(stock); // se deshizo todo, también el inventario
+      expect(Number((await detallesDe(venta.body.id))[0].cantidad_devuelta)).toBe(0);
+      expect(Number((await dbVenta(venta.body.id)).total_devuelto)).toBe(0);
+
+      // Pero sí se puede devolver por otro medio (la venta ya no está en una caja abierta).
+      expect((await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1 }], { reembolso: 'OTRO' })).status).toBe(201);
+    });
+
+    it('no puede sacar más efectivo del que hay en la caja', async () => {
+      await conEmpresa(agent.post('/api/caja/abrir')).send({ monto_inicial: 0 });
+      const venta = await vender([servicio(2)], { forma_pago: '1', medio_pago: '10' }); // 200.000
+      await models.CajaMovimiento.create({ empresaId: ctx.empresa.id, cajaId: (await actual()).id, usuarioId: ctx.usuario.id, tipo: 'RETIRO', concepto: 'Saca casi todo', monto: 190000, fecha: new Date() });
+      const [det] = await detallesDe(venta.body.id);
+      const res = await devolver(venta.body.id, [{ ventaDetalleId: det.id, cantidad: 1 }]); // 100.000 > 10.000 en caja
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/no alcanza/);
+      await cerrarCajas();
+    });
+  });
+
+  it('queda en la auditoría gerencial', async () => {
+    let fila;
+    for (let i = 0; i < 40 && !fila; i += 1) {
+      const a = (await conEmpresa(agent.get('/api/auditoria?modulo=Ventas&limit=200'))).body;
+      fila = a.find((x) => x.accion === 'Registró una devolución' && x.descripcion.includes('Producto defectuoso'));
+      if (!fila) await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(fila).toBeTruthy();
+    expect(fila.descripcion).toMatch(/de la venta #\d+/);
+    expect(fila.usuario.nombre).toBe('Front Admin');
+  });
+});

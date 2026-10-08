@@ -26,7 +26,9 @@ exports.getDashboardData = async (req, res) => {
   const enMesActual = { fecha: { [Op.gte]: monthStart, [Op.lt]: monthEnd } };
 
   const [ventasMes, comprasMes, gastosMes, productos] = await Promise.all([
-    Venta.sum('total', { where: { ...where, estado: 'ACTIVA', ...enMesActual } }),
+    // Ventas netas: lo vendido menos lo que los clientes devolvieron de esas ventas.
+    Venta.findAll({ where: { ...where, estado: 'ACTIVA', ...enMesActual }, attributes: ['total', 'total_devuelto'], raw: true })
+      .then((vs) => vs.reduce((a, v) => a + Number(v.total) - Number(v.total_devuelto), 0)),
     Compra.sum('total', { where: { ...where, ...enMesActual } }),
     Gasto.sum('monto', { where: { ...where, estado: 'ACTIVO', ...enMesActual } }),
     cargarProductosConReceta(req.empresaId),

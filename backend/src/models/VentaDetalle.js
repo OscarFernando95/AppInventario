@@ -49,6 +49,9 @@ const VentaDetalle = sequelize.define('VentaDetalle', {
     allowNull: false,
     defaultValue: 0,
   },
+  // Devoluciones: unidades devueltas y, de ellas, las que volvieron al inventario.
+  cantidad_devuelta: { type: DataTypes.DECIMAL(12, 3), allowNull: false, defaultValue: 0 },
+  cantidad_reingresada: { type: DataTypes.DECIMAL(12, 3), allowNull: false, defaultValue: 0 },
   // Inventario que descontó esta línea: [{ productoId, cantidad }] (el producto, o los
   // ingredientes base de un plato). Se usa para devolverlo exacto al anular la venta.
   consumo: {

@@ -25,6 +25,8 @@ const AjusteInventario = require('./AjusteInventario');
 const Gasto = require('./Gasto');
 const AnulacionVenta = require('./AnulacionVenta');
 const AbonoVenta = require('./AbonoVenta');
+const DevolucionVenta = require('./DevolucionVenta');
+const DevolucionVentaDetalle = require('./DevolucionVentaDetalle');
 const PagoCompra = require('./PagoCompra');
 const CajaMovimiento = require('./CajaMovimiento');
 const Modificador = require('./Modificador');
@@ -142,6 +144,14 @@ Compra.hasMany(PagoCompra, { foreignKey: 'compraId', as: 'pagos' });
 PagoCompra.belongsTo(Compra, { foreignKey: 'compraId', as: 'compra' });
 PagoCompra.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
 
+// Devoluciones parciales de ventas.
+Venta.hasMany(DevolucionVenta, { foreignKey: 'ventaId', as: 'devoluciones' });
+DevolucionVenta.belongsTo(Venta, { foreignKey: 'ventaId', as: 'venta' });
+DevolucionVenta.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+DevolucionVenta.hasMany(DevolucionVentaDetalle, { foreignKey: 'devolucionId', as: 'detalles' });
+DevolucionVentaDetalle.belongsTo(DevolucionVenta, { foreignKey: 'devolucionId' });
+DevolucionVentaDetalle.belongsTo(VentaDetalle, { foreignKey: 'ventaDetalleId', as: 'linea' });
+
 // Modificadores de platos.
 Empresa.hasMany(Modificador, { foreignKey: 'empresaId' });
 Modificador.belongsTo(Empresa, { foreignKey: 'empresaId' });
@@ -159,5 +169,5 @@ LogEvento.belongsTo(Empresa, { foreignKey: 'empresaId' });
 module.exports = {
   sequelize, Empresa, Role, Usuario, Modulo, Departamento, Municipio, ActividadCiiu, Sesion,
   Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle,
-  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra,
+  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle,
 };

@@ -1,7 +1,7 @@
 'use strict';
 
 const { Op, fn, col } = require('sequelize');
-const { Caja, CajaMovimiento, Venta, Compra, Gasto, Empresa, AbonoVenta, PagoCompra } = require('../models');
+const { Caja, CajaMovimiento, Venta, Compra, Gasto, Empresa, AbonoVenta, PagoCompra, DevolucionVenta } = require('../models');
 const { envejecimiento, aFechaLocal } = require('./cartera');
 const { ValidationError } = require('../utils/errors');
 
@@ -60,7 +60,7 @@ async function calcularResumen(caja, transaction) {
  * en efectivo). Debe llamarse dentro de una transacción `t`: bloquea la caja (el
  * mismo lock que ventas y cierre) y rechaza sacar más efectivo del que hay.
  */
-async function registrarEgreso(req, t, { tipo, concepto, monto, gastoId = null, compraId = null, ventaId = null, pagoId = null }) {
+async function registrarEgreso(req, t, { tipo, concepto, monto, gastoId = null, compraId = null, ventaId = null, pagoId = null, devolucionId = null }) {
   const caja = await Caja.findOne({
     where: { empresaId: req.empresaId, usuarioId: req.userId, estado: 'ABIERTA' },
     transaction: t,
@@ -85,6 +85,7 @@ async function registrarEgreso(req, t, { tipo, concepto, monto, gastoId = null, 
     compraId,
     ventaId,
     pagoId,
+    devolucionId,
   }, { transaction: t });
 }
 
@@ -99,7 +100,7 @@ const rangoFecha = (desde, hasta) => {
 async function flujos(empresaId, desde, hasta) {
   const fecha = rangoFecha(desde, hasta);
   const f = fecha ? { fecha } : {};
-  const [contado, credito, abonos, comprasContado, pagosProv, gastos, retiros] = await Promise.all([
+  const [contado, credito, abonos, comprasContado, pagosProv, gastos, retiros, devoluciones] = await Promise.all([
     Venta.sum('total', { where: { empresaId, estado: 'ACTIVA', forma_pago: '1', ...f } }),
     Venta.sum('total', { where: { empresaId, estado: 'ACTIVA', forma_pago: '2', ...f } }),
     AbonoVenta.sum('monto', { where: { empresaId, estado: 'ACTIVO', ...f } }),
@@ -108,6 +109,8 @@ async function flujos(empresaId, desde, hasta) {
     PagoCompra.sum('monto', { where: { empresaId, estado: 'ACTIVO', ...f } }),
     Gasto.sum('monto', { where: { empresaId, estado: 'ACTIVO', ...f } }),
     CajaMovimiento.sum('monto', { where: { empresaId, tipo: 'RETIRO', ...f } }),
+    // Dinero que salió hacia clientes por devoluciones (por la fecha de la devolución).
+    DevolucionVenta.sum('dinero_devuelto', { where: { empresaId, ...f } }),
   ]);
   const r = {
     ventas: redondear2(contado || 0),
@@ -117,8 +120,9 @@ async function flujos(empresaId, desde, hasta) {
     pagos_proveedores: redondear2(pagosProv || 0),
     gastos: redondear2(gastos || 0),
     retiros: redondear2(retiros || 0),
+    devoluciones: redondear2(devoluciones || 0),
   };
-  r.neto = redondear2(r.ventas + r.abonos - r.compras - r.pagos_proveedores - r.gastos - r.retiros);
+  r.neto = redondear2(r.ventas + r.abonos - r.compras - r.pagos_proveedores - r.gastos - r.retiros - r.devoluciones);
   return r;
 }
 
@@ -138,7 +142,7 @@ async function resumenCartera(empresaId, hoy = aFechaLocal()) {
 
 /**
  * Dinero de la empresa frente a su capital inicial.
- *   dinero_actual = capital inicial + ventas de contado + abonos − compras de contado − pagos a proveedores − gastos − retiros
+ *   dinero_actual = capital inicial + ventas de contado + abonos − compras de contado − pagos a proveedores − gastos − retiros − devoluciones
  * Entra dinero por ventas de contado y por abonos de clientes a ventas a crédito; las ventas a crédito
  * sin cobrar no cuentan (son "por cobrar"). Sale por compras de contado, pagos a proveedores, gastos y
  * retiros; una compra a crédito sin pagar no cuenta (es "por pagar"). Un gasto o compra pagado desde la

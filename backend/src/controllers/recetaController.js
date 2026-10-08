@@ -8,7 +8,9 @@ const redondear2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 /**
  * Rentabilidad REAL de lo vendido en el rango: por producto/plato, unidades,
  * ingresos netos (sin IVA, con el descuento de línea; sin el descuento global),
- * costo de lo vendido (foto guardada en cada venta) y margen.
+ * costo de lo vendido (foto guardada en cada venta) y margen. Neto de devoluciones: lo devuelto
+ * no cuenta como vendido, y su costo solo se descuenta si volvió al inventario (un plato devuelto
+ * y desechado sigue siendo costo).
  */
 exports.getRentabilidad = async (req, res) => {
   const { desde, hasta } = req.query;
@@ -19,9 +21,9 @@ exports.getRentabilidad = async (req, res) => {
 
   const filas = await sequelize.query(
     `SELECT vd."productoId" AS "productoId", p."nombre_producto", p."codigo", p."tipo",
-            SUM(vd."cantidad") AS unidades,
-            SUM(vd."subtotal_bruto") AS ingresos,
-            SUM(vd."cantidad" * vd."costo_unitario") AS costo
+            SUM(vd."cantidad" - vd."cantidad_devuelta") AS unidades,
+            SUM(vd."subtotal_bruto" * (vd."cantidad" - vd."cantidad_devuelta") / vd."cantidad") AS ingresos,
+            SUM((vd."cantidad" - vd."cantidad_reingresada") * vd."costo_unitario") AS costo
        FROM "ventas_detalles" vd
        JOIN "ventas" v ON v."id" = vd."ventaId"
        JOIN "productos" p ON p."id" = vd."productoId"
