@@ -15,6 +15,7 @@ const CajaMovimiento = sequelize.define('CajaMovimiento', {
   gastoId: { type: DataTypes.INTEGER, allowNull: true },
   compraId: { type: DataTypes.INTEGER, allowNull: true },
   ventaId: { type: DataTypes.INTEGER, allowNull: true }, // DEVOLUCION de una venta anulada
+  pagoId: { type: DataTypes.INTEGER, allowNull: true }, // PAGO_PROV: pago a un proveedor desde la caja
 }, {
   tableName: 'caja_movimientos',
   timestamps: false,

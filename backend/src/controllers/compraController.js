@@ -10,6 +10,7 @@ const { invalidateInforme } = require('./informeController');
 const { calcularTotalCompra } = require('../services/calculo');
 const { auditar } = require('../utils/audit');
 const { registrarEgreso } = require('../services/cajaService');
+const { condicionesDeCompra } = require('../services/cartera');
 
 exports.getCompras = async (req, res) => {
   const { limit, offset } = parseListQuery(req.query);
@@ -35,6 +36,7 @@ exports.createCompra = async (req, res) => {
   const t = await sequelize.transaction();
   try {
     const { proveedorId, detalles, pago_desde_caja: desdeCaja } = req.body;
+    const tieneCartera = !!req.empresaModulos?.has('Cuentas por pagar');
     if (desdeCaja && !req.empresaModulos?.has('Caja')) {
       throw new ValidationError('El módulo "Caja" no está activo: no se puede pagar desde la caja.');
     }
@@ -78,11 +80,15 @@ exports.createCompra = async (req, res) => {
       detalles.map((d) => ({ cantidad: d.cantidad, costoUnitario: d.costo_unitario }))
     );
 
+    // Contado, o a crédito: queda una deuda con el proveedor que se paga en Cuentas por pagar.
+    const condiciones = condicionesDeCompra(req.body, total, tieneCartera);
+
     const compra = await Compra.create({
       empresaId: req.empresaId,
       proveedorId,
       usuarioId: req.userId,
       total,
+      ...condiciones,
     }, { transaction: t });
 
     await CompraDetalle.bulkCreate(
@@ -120,7 +126,7 @@ exports.createCompra = async (req, res) => {
     await t.commit();
     invalidateDashboard(req.empresaId);
     invalidateInforme(req.empresaId);
-    auditar(req, 'compra_creada', { compraId: compra.id, total, proveedorId: compra.proveedorId, proveedorNombre: proveedor.nombre, pagoDesdeCaja: !!desdeCaja });
+    auditar(req, 'compra_creada', { compraId: compra.id, total, proveedorId: compra.proveedorId, proveedorNombre: proveedor.nombre, pagoDesdeCaja: !!desdeCaja, aCredito: compra.forma_pago === 'CREDITO', diasCredito: compra.dias_credito });
     res.status(201).json(compra);
   } catch (error) {
     await t.rollback();

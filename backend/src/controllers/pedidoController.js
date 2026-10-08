@@ -10,6 +10,7 @@ const { invalidateInforme } = require('./informeController');
 const { calcularTotalCompra } = require('../services/calculo');
 const { auditar } = require('../utils/audit');
 const { registrarEgreso } = require('../services/cajaService');
+const { condicionesDeCompra } = require('../services/cartera');
 
 exports.getPedidos = async (req, res) => {
   const { limit, offset } = parseListQuery(req.query);
@@ -111,6 +112,7 @@ exports.checkInPedido = async (req, res) => {
   try {
     const { id } = req.params;
     const { detalles_recibidos, pago_desde_caja: desdeCaja } = req.body;
+    const tieneCartera = !!req.empresaModulos?.has('Cuentas por pagar');
     if (desdeCaja && !req.empresaModulos?.has('Caja')) {
       throw new ValidationError('El módulo "Caja" no está activo: no se puede pagar desde la caja.');
     }
@@ -169,6 +171,7 @@ exports.checkInPedido = async (req, res) => {
       usuarioId: req.userId,
       pedidoId: pedido.id, // trazabilidad
       total: totalReal,
+      ...condicionesDeCompra(req.body, totalReal, tieneCartera), // contado o a crédito (deuda con el proveedor)
     }, { transaction: t });
 
     await CompraDetalle.bulkCreate(

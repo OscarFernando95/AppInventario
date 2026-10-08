@@ -416,7 +416,7 @@ describe('Fase 9 — NIT de empresa único', () => {
 /** Deja la empresa base con los módulos base + los extra indicados. */
 async function activarModulos(extra = []) {
   const todos = await models.Modulo.findAll();
-  const base = ['Inventario', 'Ventas', 'Compras', 'Proveedores', 'Informes', 'Clientes', 'Servicios', 'Pedidos', 'Gastos'];
+  const base = ['Inventario', 'Ventas', 'Compras', 'Proveedores', 'Informes', 'Clientes', 'Servicios', 'Pedidos', 'Gastos', 'Cuentas por cobrar', 'Cuentas por pagar'];
   const nombres = new Set([...base, ...extra]);
   await ctx.empresa.setModulos(todos.filter((m) => nombres.has(m.nombre_codigo)).map((m) => m.id));
   invalidateAllProfiles(); // el cambio directo no pasa por el controlador
@@ -2227,5 +2227,513 @@ describe('Stock mínimo y reposición', () => {
     expect((await conEmpresa(agent.get('/api/reposicion'))).status).toBe(403);
     await ctx.empresa.setModulos(todos);
     invalidateAllProfiles();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cuentas por cobrar (ventas a crédito, abonos, cupo, cartera vencida)
+// ---------------------------------------------------------------------------
+describe('Cuentas por cobrar', () => {
+  const { calcularVencimiento } = require('../../src/services/cartera');
+  let cliente; let cajero;
+  const dbVenta = (id) => models.Venta.findByPk(id);
+  // El servicio vale $100.000: `cantidad` fracciona para obtener otros montos.
+  const credito = (monto, extra = {}) => conEmpresa(agent.post('/api/ventas')).send({
+    clienteId: cliente.id, forma_pago: '2', ...extra,
+    detalles: [{ servicioId: ctx.servicio.id, cantidad: monto / 100000, precio_unitario: 100000, precio_base: 100000 }],
+  });
+  const abonar = (ventaId, monto, extra = {}) => conEmpresa(agent.post(`/api/cuentas-por-cobrar/${ventaId}/abonos`)).send({ monto, ...extra });
+  const cuentas = async (q = '') => (await conEmpresa(agent.get(`/api/cuentas-por-cobrar${q}`))).body;
+  const balance = async () => (await conEmpresa(agent.get('/api/caja/balance'))).body;
+  const cerrarCajas = () => models.Caja.update(
+    { estado: 'CERRADA', fecha_cierre: new Date(), monto_contado: 0, total_egresos: 0 },
+    { where: { empresaId: ctx.empresa.id, estado: 'ABIERTA' } }
+  );
+
+  beforeAll(async () => {
+    await models.Servicio.update({ precio: 100000, porcentaje_iva: 0 }, { where: { id: ctx.servicio.id } });
+    await activarModulos([]);
+    cliente = await models.Cliente.create({ empresaId: ctx.empresa.id, nombre: 'Cliente de crédito', documento: '777888999' });
+    const u = await models.Usuario.create({
+      rolId: 3, nombre: 'Cobrador', username: 'cobrador',
+      contrasena_hash: await bcrypt.hash('Clave1234', 10), estado: true, must_change_password: false,
+    });
+    await u.setEmpresas([ctx.empresa.id]);
+    cajero = request.agent(app);
+    expect((await cajero.post('/api/auth/login').send({ username: 'cobrador', contrasena: 'Clave1234' })).status).toBe(200);
+  });
+  afterAll(async () => { await cerrarCajas(); await activarModulos([]); });
+
+  it('vender a crédito exige el módulo y un cliente', async () => {
+    const todos = await ctx.empresa.getModulos();
+    await ctx.empresa.setModulos(todos.filter((m) => m.nombre_codigo !== 'Cuentas por cobrar'));
+    invalidateAllProfiles();
+    const sinModulo = await credito(100000);
+    expect(sinModulo.status).toBe(400);
+    expect(sinModulo.body.error).toMatch(/Cuentas por cobrar/);
+    await ctx.empresa.setModulos(todos);
+    invalidateAllProfiles();
+
+    const sinCliente = await conEmpresa(agent.post('/api/ventas')).send({
+      forma_pago: '2', detalles: [{ servicioId: ctx.servicio.id, cantidad: 1, precio_unitario: 100000, precio_base: 100000 }],
+    });
+    expect(sinCliente.status).toBe(400);
+    expect(sinCliente.body.error).toMatch(/necesita un cliente/);
+  });
+
+  it('una venta a crédito queda por cobrar con su plazo; una de contado no', async () => {
+    const v = await credito(300000, { dias_credito: 15 });
+    expect(v.status).toBe(201);
+    expect(Number(v.body.saldo_pendiente)).toBe(300000);
+    expect(v.body.dias_credito).toBe(15);
+    expect(v.body.fecha_vencimiento).toBe(calcularVencimiento(15));
+
+    const porDefecto = await credito(100000);
+    expect(porDefecto.body.dias_credito).toBe(30); // plazo por defecto
+
+    const contado = await conEmpresa(agent.post('/api/ventas')).send({
+      clienteId: cliente.id, detalles: [{ servicioId: ctx.servicio.id, cantidad: 1, precio_unitario: 100000, precio_base: 100000 }],
+    });
+    expect(Number(contado.body.saldo_pendiente)).toBe(0);
+    expect((await cuentas()).map((c) => c.id)).not.toContain(contado.body.id);
+    await abonar(porDefecto.body.id, 100000); // se deja pagada para el resto de pruebas
+  });
+
+  it('abonos: parcial, total, mayor al saldo y sobre una venta ya pagada', async () => {
+    const v = (await credito(200000)).body;
+    const parcial = await abonar(v.id, 50000, { nota: 'Primer abono' });
+    expect(parcial.status).toBe(201);
+    expect(parcial.body.saldo_pendiente).toBe(150000);
+    expect(Number((await dbVenta(v.id)).saldo_pendiente)).toBe(150000);
+
+    const demasiado = await abonar(v.id, 150001);
+    expect(demasiado.status).toBe(400);
+    expect(demasiado.body.error).toMatch(/supera el saldo/);
+    expect((await abonar(v.id, 0)).status).toBe(400);
+    expect((await abonar(v.id, 1000, { medio_pago: '99' })).status).toBe(400);
+
+    expect((await abonar(v.id, 150000)).body.saldo_pendiente).toBe(0);
+    const yaPagada = await abonar(v.id, 1);
+    expect(yaPagada.status).toBe(400);
+    expect(yaPagada.body.error).toMatch(/ya está pagada/);
+    expect((await abonar(999999, 1)).status).toBe(404);
+
+    expect((await cuentas()).map((c) => c.id)).not.toContain(v.id); // pagada: sale de pendientes
+    const pagadas = await cuentas('?estado=PAGADAS');
+    expect(pagadas.find((c) => c.id === v.id)).toMatchObject({ saldo_pendiente: 0, abonado: 200000 });
+    const historial = (await conEmpresa(agent.get(`/api/cuentas-por-cobrar/${v.id}/abonos`))).body;
+    expect(historial.map((a) => Number(a.monto))).toEqual([50000, 150000]);
+    expect(historial[0].nota).toBe('Primer abono');
+  });
+
+  it('cartera vencida: filtros y envejecimiento por tramos', async () => {
+    const ya = (await cuentas()).map((c) => c.id);
+    const nuevas = [];
+    for (const [monto, dias] of [[100000, 20], [200000, -10], [300000, -45], [400000, -100]]) {
+      const v = (await credito(monto)).body;
+      await models.Venta.update({ fecha_vencimiento: calcularVencimiento(dias) }, { where: { id: v.id } });
+      nuevas.push(v.id);
+    }
+    const lista = await cuentas();
+    const mias = lista.filter((c) => nuevas.includes(c.id));
+    expect(mias).toHaveLength(4);
+    expect(mias.find((c) => c.id === nuevas[0])).toMatchObject({ vencida: false, dias_mora: -20 });
+    expect(mias.find((c) => c.id === nuevas[1])).toMatchObject({ vencida: true, dias_mora: 10 });
+    expect(lista[0].dias_mora).toBeGreaterThanOrEqual(lista[lista.length - 1].dias_mora); // las más vencidas arriba
+
+    const vencidas = (await cuentas('?estado=VENCIDAS')).map((c) => c.id);
+    expect(vencidas).toEqual(expect.arrayContaining(nuevas.slice(1)));
+    expect(vencidas).not.toContain(nuevas[0]);
+    expect((await cuentas(`?clienteId=${cliente.id}`)).every((c) => c.cliente.id === cliente.id)).toBe(true);
+
+    const r = (await conEmpresa(agent.get('/api/cuentas-por-cobrar/resumen'))).body;
+    expect(r.D1_30).toBeGreaterThanOrEqual(200000);
+    expect(r.D31_60).toBeGreaterThanOrEqual(300000);
+    expect(r.MAS_90).toBeGreaterThanOrEqual(400000);
+    expect(r.vencido).toBeCloseTo(r.D1_30 + r.D31_60 + r.D61_90 + r.MAS_90, 2);
+    expect(r.total).toBeCloseTo(r.vencido + r.POR_VENCER, 2);
+    expect(r.por_cliente[0]).toMatchObject({ clienteId: cliente.id });
+    expect(ya.length).toBeGreaterThanOrEqual(0);
+
+    // se saldan para no contaminar las demás pruebas
+    for (const id of nuevas) await abonar(id, Number((await dbVenta(id)).saldo_pendiente));
+  });
+
+  it('cupo de crédito: no deja pasarse y se libera al abonar', async () => {
+    // Cliente aparte: el de las otras pruebas ya tiene deudas pendientes.
+    const c = await models.Cliente.create({ empresaId: ctx.empresa.id, nombre: 'Cliente con cupo', documento: '123123123', cupo_credito: 200000 });
+    const primera = await credito(150000, { clienteId: c.id });
+    expect(primera.status).toBe(201);
+    const segunda = await credito(100000, { clienteId: c.id });
+    expect(segunda.status).toBe(400);
+    expect(segunda.body.error).toMatch(/Supera el cupo de crédito/);
+
+    expect((await abonar(primera.body.id, 100000)).status).toBe(201); // debe 50.000 → caben 100.000 más
+    expect((await credito(100000, { clienteId: c.id })).status).toBe(201);
+    const estado = (await conEmpresa(agent.get(`/api/cuentas-por-cobrar/clientes/${c.id}/estado-cuenta`))).body;
+    expect(estado.cupo_credito).toBe(200000);
+    expect(estado.saldo).toBe(150000);
+    expect(estado.cupo_disponible).toBe(50000);
+
+    await models.Cliente.update({ cupo_credito: null }, { where: { id: c.id } }); // sin tope
+    expect((await credito(5000000, { clienteId: c.id })).status).toBe(201);
+  });
+
+  it('estado de cuenta del cliente: cada venta con sus abonos y totales', async () => {
+    const estado = (await conEmpresa(agent.get(`/api/cuentas-por-cobrar/clientes/${cliente.id}/estado-cuenta`))).body;
+    expect(estado.cliente).toMatchObject({ id: cliente.id, nombre: 'Cliente de crédito' });
+    expect(estado.ventas.length).toBeGreaterThan(3);
+    expect(estado.saldo).toBeCloseTo(estado.total_credito - estado.total_abonado, 2);
+    const conAbonos = estado.ventas.find((v) => v.abonos.length > 0);
+    expect(conAbonos.abonos[0]).toMatchObject({ usuario: 'Front Admin' });
+    expect((await conEmpresa(agent.get('/api/cuentas-por-cobrar/clientes/999999/estado-cuenta'))).status).toBe(404);
+  });
+
+  it('anular una venta a crédito: con abonos no se puede; sin abonos sale de la cartera', async () => {
+    const conAbono = (await credito(100000)).body;
+    await abonar(conAbono.id, 10000);
+    const bloqueada = await conEmpresa(agent.post(`/api/ventas/${conAbono.id}/anular`)).send({ motivo: 'Error' });
+    expect(bloqueada.status).toBe(400);
+    expect(bloqueada.body.error).toMatch(/abonos registrados/);
+
+    const abono = (await conEmpresa(agent.get(`/api/cuentas-por-cobrar/${conAbono.id}/abonos`))).body[0];
+    expect((await conEmpresa(agent.post(`/api/cuentas-por-cobrar/abonos/${abono.id}/anular`))).status).toBe(200);
+    expect(Number((await dbVenta(conAbono.id)).saldo_pendiente)).toBe(100000); // el saldo vuelve a subir
+    const ok = await conEmpresa(agent.post(`/api/ventas/${conAbono.id}/anular`)).send({ motivo: 'Error' });
+    expect(ok.status).toBe(200);
+    expect(Number((await dbVenta(conAbono.id)).saldo_pendiente)).toBe(0);
+    expect((await cuentas()).map((c) => c.id)).not.toContain(conAbono.id);
+    expect((await abonar(conAbono.id, 1)).status).toBe(400); // venta anulada
+
+    const dosVeces = await conEmpresa(agent.post(`/api/cuentas-por-cobrar/abonos/${abono.id}/anular`));
+    expect(dosVeces.status).toBe(400);
+    expect(dosVeces.body.error).toMatch(/ya está anulado/);
+  });
+
+  it('en el balance, el crédito sin cobrar no es dinero y cada abono sí lo es', async () => {
+    // El balance de la empresa vive en el módulo Caja: se habilita y se abre una caja para vender.
+    await activarModulos(['Caja']);
+    await cerrarCajas();
+    await conEmpresa(agent.post('/api/caja/abrir')).send({ monto_inicial: 0 });
+    const antes = await balance();
+    const v = (await credito(100000)).body;
+    const trasVenta = await balance();
+    expect(trasVenta.dinero_actual).toBe(antes.dinero_actual); // vender a crédito no mueve el dinero
+    expect(trasVenta.cartera.por_cobrar - antes.cartera.por_cobrar).toBe(100000);
+
+    await abonar(v.id, 40000, { medio_pago: '47' }); // transferencia
+    const trasAbono = await balance();
+    expect(trasAbono.dinero_actual - antes.dinero_actual).toBe(40000);
+    expect(trasAbono.acumulado.abonos - antes.acumulado.abonos).toBe(40000);
+    expect(trasAbono.cartera.por_cobrar - antes.cartera.por_cobrar).toBe(60000);
+    await abonar(v.id, 60000);
+    await cerrarCajas();
+    await activarModulos([]);
+  });
+
+  describe('con módulo Caja', () => {
+    beforeAll(async () => { await activarModulos(['Caja']); await cerrarCajas(); });
+    afterAll(async () => { await cerrarCajas(); await activarModulos([]); });
+    const actual = async () => (await conEmpresa(agent.get('/api/caja/actual'))).body;
+
+    it('un abono en efectivo exige caja abierta y suma al efectivo esperado; por transferencia no', async () => {
+      const abrir = await conEmpresa(agent.post('/api/caja/abrir')).send({ monto_inicial: 50000 });
+      expect(abrir.status).toBe(201);
+      const v = (await credito(300000)).body;
+      expect((await actual()).resumen.efectivo_esperado).toBe(50000); // la venta a crédito no entra a la caja
+
+      const efectivo = await abonar(v.id, 100000, { medio_pago: '10' });
+      expect(efectivo.status).toBe(201);
+      expect(efectivo.body.abono.cajaId).toBe(abrir.body.id);
+      const c = await actual();
+      expect(c.resumen.abonos_efectivo).toBe(100000);
+      expect(c.resumen.efectivo_esperado).toBe(150000);
+
+      const transf = await abonar(v.id, 50000, { medio_pago: '47' });
+      expect(transf.body.abono.cajaId).toBeNull();
+      expect((await actual()).resumen.efectivo_esperado).toBe(150000); // no es efectivo
+
+      // Anular el abono en efectivo (caja abierta): el efectivo vuelve a bajar.
+      const anular = await conEmpresa(agent.post(`/api/cuentas-por-cobrar/abonos/${efectivo.body.abono.id}/anular`));
+      expect(anular.status).toBe(200);
+      expect((await actual()).resumen.efectivo_esperado).toBe(50000);
+      expect(Number((await dbVenta(v.id)).saldo_pendiente)).toBe(250000);
+    });
+
+    it('al cerrar la caja el abono en efectivo queda en la foto del turno y ya no se puede anular', async () => {
+      const v = (await credito(100000)).body;
+      const ab = await abonar(v.id, 30000);
+      const caja = await actual();
+      const cierre = await conEmpresa(agent.post(`/api/caja/${caja.id}/cerrar`)).send({ monto_contado: 80000 });
+      expect(cierre.status).toBe(200);
+      expect(Number(cierre.body.abonos_efectivo)).toBe(30000);
+      expect(Number(cierre.body.efectivo_esperado)).toBe(80000); // 50.000 de base + 30.000 abonados
+      expect(cierre.body.resumen.abonos_efectivo).toBe(30000);
+      const detalle = (await conEmpresa(agent.get(`/api/caja/${caja.id}`))).body;
+      expect(detalle.abonos.map((a) => Number(a.monto))).toEqual([30000]);
+
+      const tarde = await conEmpresa(agent.post(`/api/cuentas-por-cobrar/abonos/${ab.body.abono.id}/anular`));
+      expect(tarde.status).toBe(400);
+      expect(tarde.body.error).toMatch(/caja que ya fue cerrada/);
+
+      const sinCaja = await abonar(v.id, 10000, { medio_pago: '10' });
+      expect(sinCaja.status).toBe(400);
+      expect(sinCaja.body.error).toMatch(/caja abierta/);
+      expect((await abonar(v.id, 10000, { medio_pago: '48' })).status).toBe(201); // tarjeta: no necesita caja
+    });
+  });
+
+  it('el cajero puede cobrar y ver la cartera, pero no anular abonos', async () => {
+    const v = (await credito(100000)).body;
+    const res = await withEmpresa(cajero.post(`/api/cuentas-por-cobrar/${v.id}/abonos`)).send({ monto: 20000, medio_pago: '47' });
+    expect(res.status).toBe(201);
+    expect((await withEmpresa(cajero.get('/api/cuentas-por-cobrar'))).status).toBe(200);
+    expect((await withEmpresa(cajero.post(`/api/cuentas-por-cobrar/abonos/${res.body.abono.id}/anular`))).status).toBe(403);
+  });
+
+  it('exige el módulo Cuentas por cobrar', async () => {
+    const todos = await ctx.empresa.getModulos();
+    await ctx.empresa.setModulos(todos.filter((m) => m.nombre_codigo !== 'Cuentas por cobrar'));
+    invalidateAllProfiles();
+    expect((await conEmpresa(agent.get('/api/cuentas-por-cobrar'))).status).toBe(403);
+    await ctx.empresa.setModulos(todos);
+    invalidateAllProfiles();
+  });
+
+  it('el dashboard informa lo que deben los clientes y la auditoría lo cuenta', async () => {
+    const dash = (await conEmpresa(agent.get('/api/reportes/dashboard'))).body;
+    expect(dash.cartera.por_cobrar).toBeGreaterThan(0);
+    expect(dash.cartera.vencido_cobrar).toBeGreaterThanOrEqual(0);
+
+    let fila;
+    for (let i = 0; i < 40 && !fila; i += 1) {
+      const a = (await conEmpresa(agent.get('/api/auditoria?modulo=Cuentas por cobrar&limit=200'))).body;
+      fila = a.find((x) => x.accion === 'Recibió un abono de un cliente' && x.descripcion.includes('Cliente de crédito'));
+      if (!fila) await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(fila).toBeTruthy();
+    expect(fila.descripcion).toMatch(/a la venta #\d+/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cuentas por pagar (compras a crédito, pagos a proveedores)
+// ---------------------------------------------------------------------------
+describe('Cuentas por pagar', () => {
+  const { calcularVencimiento } = require('../../src/services/cartera');
+  let prod2; let proveedor2; let operario;
+  const stockDe = async (id) => Number((await models.Producto.findByPk(id)).stock_actual);
+  const dbCompra = (id) => models.Compra.findByPk(id);
+  const comprar = (monto, extra = {}) => conEmpresa(agent.post('/api/compras')).send({
+    proveedorId: proveedor2.id, ...extra,
+    detalles: [{ productoId: prod2.id, cantidad: 10, costo_unitario: monto / 10 }],
+  });
+  const pagar = (compraId, monto, extra = {}) => conEmpresa(agent.post(`/api/cuentas-por-pagar/${compraId}/pagos`)).send({ monto, ...extra });
+  const deudas = async (q = '') => (await conEmpresa(agent.get(`/api/cuentas-por-pagar${q}`))).body;
+  const balance = async () => (await conEmpresa(agent.get('/api/caja/balance'))).body;
+  const cerrarCajas = () => models.Caja.update(
+    { estado: 'CERRADA', fecha_cierre: new Date(), monto_contado: 0, total_egresos: 0 },
+    { where: { empresaId: ctx.empresa.id, estado: 'ABIERTA' } }
+  );
+
+  beforeAll(async () => {
+    await activarModulos(['Caja']); // el balance de la empresa vive en el módulo Caja
+    prod2 = await models.Producto.create({ empresaId: ctx.empresa.id, codigo: 'CXP-1', nombre_producto: 'Producto a crédito', precio_unitario: 1000, stock_actual: 0 });
+    proveedor2 = await models.Proveedor.create({ empresaId: ctx.empresa.id, nombre: 'Proveedor de crédito', nit: '811222333' });
+    const u = await models.Usuario.create({
+      rolId: 3, nombre: 'Operario CxP', username: 'operario_cxp',
+      contrasena_hash: await bcrypt.hash('Clave1234', 10), estado: true, must_change_password: false,
+    });
+    await u.setEmpresas([ctx.empresa.id]);
+    operario = request.agent(app);
+    expect((await operario.post('/api/auth/login').send({ username: 'operario_cxp', contrasena: 'Clave1234' })).status).toBe(200);
+  });
+  afterAll(async () => { await cerrarCajas(); await activarModulos([]); });
+
+  it('comprar a crédito exige el módulo y no se combina con pagar de la caja', async () => {
+    const todos = await ctx.empresa.getModulos();
+    await ctx.empresa.setModulos(todos.filter((m) => m.nombre_codigo !== 'Cuentas por pagar'));
+    invalidateAllProfiles();
+    const sinModulo = await comprar(100000, { forma_pago: 'CREDITO' });
+    expect(sinModulo.status).toBe(400);
+    expect(sinModulo.body.error).toMatch(/Cuentas por pagar/);
+    await ctx.empresa.setModulos(todos);
+    invalidateAllProfiles();
+
+    const conCaja = await comprar(100000, { forma_pago: 'CREDITO', pago_desde_caja: true });
+    expect(conCaja.status).toBe(400);
+    expect(conCaja.body.error).toMatch(/no se paga de la caja/);
+    expect(await stockDe(prod2.id)).toBe(0); // nada se registró
+  });
+
+  it('una compra a crédito suma stock pero NO saca dinero; una de contado sí', async () => {
+    const antes = await balance();
+    const c = await comprar(500000, { forma_pago: 'CREDITO', dias_credito: 20 });
+    expect(c.status).toBe(201);
+    expect(c.body.forma_pago).toBe('CREDITO');
+    expect(Number(c.body.saldo_pendiente)).toBe(500000);
+    expect(c.body.fecha_vencimiento).toBe(calcularVencimiento(20));
+    expect(await stockDe(prod2.id)).toBe(10);
+
+    const trasCredito = await balance();
+    expect(trasCredito.dinero_actual).toBe(antes.dinero_actual); // la deuda no es dinero que salió
+    expect(trasCredito.cartera.por_pagar - antes.cartera.por_pagar).toBe(500000);
+
+    const contado = await comprar(50000);
+    expect(contado.body.forma_pago).toBe('CONTADO');
+    expect(Number(contado.body.saldo_pendiente)).toBe(0);
+    expect((await balance()).dinero_actual).toBe(antes.dinero_actual - 50000);
+    await pagar(c.body.id, 500000); // queda pagada
+  });
+
+  it('pagos: parcial, total, mayor a la deuda y sobre una compra ya pagada', async () => {
+    const c = (await comprar(300000, { forma_pago: 'CREDITO' })).body;
+    expect(c.dias_credito).toBe(30);
+    const antes = await balance();
+    const parcial = await pagar(c.id, 100000, { origen: 'OTRO', nota: 'Transferencia' });
+    expect(parcial.status).toBe(201);
+    expect(parcial.body.saldo_pendiente).toBe(200000);
+    // pagar al proveedor sí saca dinero
+    const despues = await balance();
+    expect(antes.dinero_actual - despues.dinero_actual).toBe(100000);
+    expect(despues.acumulado.pagos_proveedores - antes.acumulado.pagos_proveedores).toBe(100000);
+    expect(despues.cartera.por_pagar - antes.cartera.por_pagar).toBe(-100000);
+
+    const demasiado = await pagar(c.id, 200001);
+    expect(demasiado.status).toBe(400);
+    expect(demasiado.body.error).toMatch(/supera lo que se debe/);
+    expect((await pagar(c.id, 0)).status).toBe(400);
+    expect((await pagar(c.id, 200000)).body.saldo_pendiente).toBe(0);
+    expect((await pagar(c.id, 1)).body.error).toMatch(/ya está pagada/);
+    expect((await pagar(999999, 1)).status).toBe(404);
+
+    const pagadas = await deudas('?estado=PAGADAS');
+    expect(pagadas.find((d) => d.id === c.id)).toMatchObject({ saldo_pendiente: 0, pagado: 300000 });
+    const historial = (await conEmpresa(agent.get(`/api/cuentas-por-pagar/${c.id}/pagos`))).body;
+    expect(historial.map((p) => Number(p.monto))).toEqual([100000, 200000]);
+  });
+
+  it('deudas vencidas, envejecimiento y estado de cuenta del proveedor', async () => {
+    const ids = [];
+    for (const [monto, dias] of [[100000, 20], [200000, -15], [300000, -70]]) {
+      const c = (await comprar(monto, { forma_pago: 'CREDITO' })).body;
+      await models.Compra.update({ fecha_vencimiento: calcularVencimiento(dias) }, { where: { id: c.id } });
+      ids.push(c.id);
+    }
+    const vencidas = (await deudas('?estado=VENCIDAS')).map((d) => d.id);
+    expect(vencidas).toEqual(expect.arrayContaining(ids.slice(1)));
+    expect(vencidas).not.toContain(ids[0]);
+    expect((await deudas(`?proveedorId=${proveedor2.id}`)).every((d) => d.proveedor.id === proveedor2.id)).toBe(true);
+
+    const r = (await conEmpresa(agent.get('/api/cuentas-por-pagar/resumen'))).body;
+    expect(r.D1_30).toBeGreaterThanOrEqual(200000);
+    expect(r.D61_90).toBeGreaterThanOrEqual(300000);
+    expect(r.por_proveedor[0]).toMatchObject({ proveedorId: proveedor2.id });
+
+    const estado = (await conEmpresa(agent.get(`/api/cuentas-por-pagar/proveedores/${proveedor2.id}/estado-cuenta`))).body;
+    expect(estado.proveedor.nombre).toBe('Proveedor de crédito');
+    expect(estado.saldo).toBeCloseTo(estado.total_credito - estado.total_pagado, 2);
+    expect(estado.vencido).toBeGreaterThanOrEqual(500000);
+    expect((await conEmpresa(agent.get('/api/cuentas-por-pagar/proveedores/999999/estado-cuenta'))).status).toBe(404);
+    for (const id of ids) await pagar(id, Number((await dbCompra(id)).saldo_pendiente));
+  });
+
+  describe('pagando desde la caja', () => {
+    beforeAll(async () => { await cerrarCajas(); });
+    afterAll(async () => { await cerrarCajas(); });
+    const actual = async () => (await conEmpresa(agent.get('/api/caja/actual'))).body;
+
+    it('pagar de la caja exige caja abierta y efectivo suficiente, y resta del efectivo esperado', async () => {
+      const c = (await comprar(300000, { forma_pago: 'CREDITO' })).body;
+      const sinCaja = await pagar(c.id, 100000, { origen: 'CAJA' });
+      expect(sinCaja.status).toBe(400);
+      expect(sinCaja.body.error).toMatch(/caja abierta/);
+
+      await conEmpresa(agent.post('/api/caja/abrir')).send({ monto_inicial: 150000 });
+      const poco = await pagar(c.id, 200000, { origen: 'CAJA' });
+      expect(poco.status).toBe(400);
+      expect(poco.body.error).toMatch(/no alcanza/);
+      expect(Number((await dbCompra(c.id)).saldo_pendiente)).toBe(300000); // sin registros a medias
+
+      const ok = await pagar(c.id, 100000, { origen: 'CAJA' });
+      expect(ok.status).toBe(201);
+      const caja = await actual();
+      expect(caja.resumen.efectivo_esperado).toBe(50000);
+      expect(caja.movimientos.map((m) => m.tipo)).toEqual(['PAGO_PROV']);
+
+      // Anular el pago (caja abierta): el efectivo vuelve y la deuda sube.
+      const anular = await conEmpresa(agent.post(`/api/cuentas-por-pagar/pagos/${ok.body.pago.id}/anular`));
+      expect(anular.status).toBe(200);
+      expect((await actual()).resumen.efectivo_esperado).toBe(150000);
+      expect(Number((await dbCompra(c.id)).saldo_pendiente)).toBe(300000);
+      expect((await conEmpresa(agent.post(`/api/cuentas-por-pagar/pagos/${ok.body.pago.id}/anular`))).status).toBe(400); // ya anulado
+
+      // Pago de la caja y cierre: el pago ya no se puede anular.
+      const otro = await pagar(c.id, 50000, { origen: 'CAJA' });
+      await conEmpresa(agent.post(`/api/caja/${(await actual()).id}/cerrar`)).send({ monto_contado: 100000 });
+      const tarde = await conEmpresa(agent.post(`/api/cuentas-por-pagar/pagos/${otro.body.pago.id}/anular`));
+      expect(tarde.status).toBe(400);
+      expect(tarde.body.error).toMatch(/caja que ya fue cerrada/);
+      await pagar(c.id, 250000); // se salda por otro medio
+    });
+  });
+
+  it('pagar de la caja sin el módulo Caja se rechaza', async () => {
+    const c = (await comprar(100000, { forma_pago: 'CREDITO' })).body;
+    await activarModulos([]);
+    const res = await pagar(c.id, 10000, { origen: 'CAJA' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/módulo "Caja"/);
+    await activarModulos(['Caja']);
+    await pagar(c.id, 100000);
+  });
+
+  it('la recepción de un pedido también puede quedar a crédito', async () => {
+    const ped = await conEmpresa(agent.post('/api/pedidos')).send({
+      proveedorId: proveedor2.id, detalles: [{ productoId: prod2.id, cantidad_pedida: 5, costo_estimado: 1000 }],
+    });
+    const mala = await conEmpresa(agent.post(`/api/pedidos/${ped.body.id}/checkin`)).send({
+      forma_pago: 'CREDITO', pago_desde_caja: true, detalles_recibidos: [{ productoId: prod2.id, cantidad: 5, costo_unitario: 1000 }],
+    });
+    expect(mala.status).toBe(400);
+
+    const rec = await conEmpresa(agent.post(`/api/pedidos/${ped.body.id}/checkin`)).send({
+      forma_pago: 'CREDITO', dias_credito: 45, detalles_recibidos: [{ productoId: prod2.id, cantidad: 5, costo_unitario: 1000 }],
+    });
+    expect(rec.status).toBe(200);
+    const compra = await dbCompra(rec.body.compraId);
+    expect(compra.forma_pago).toBe('CREDITO');
+    expect(Number(compra.saldo_pendiente)).toBe(5000);
+    expect(compra.fecha_vencimiento).toBe(calcularVencimiento(45));
+    await pagar(compra.id, 5000);
+  });
+
+  it('solo el administrador ve y paga las deudas con proveedores', async () => {
+    const c = (await comprar(100000, { forma_pago: 'CREDITO' })).body;
+    // cualquiera puede REGISTRAR una compra a crédito (si tiene Compras), pero no gestionar la deuda
+    expect((await withEmpresa(operario.get('/api/cuentas-por-pagar'))).status).toBe(403);
+    expect((await withEmpresa(operario.post(`/api/cuentas-por-pagar/${c.id}/pagos`)).send({ monto: 1000 })).status).toBe(403);
+    const compraOperario = await withEmpresa(operario.post('/api/compras')).send({
+      proveedorId: proveedor2.id, forma_pago: 'CREDITO', detalles: [{ productoId: prod2.id, cantidad: 1, costo_unitario: 1000 }],
+    });
+    expect(compraOperario.status).toBe(201);
+    await pagar(c.id, 100000);
+    await pagar(compraOperario.body.id, 1000);
+  });
+
+  it('el dashboard informa lo que se debe y la auditoría cuenta los pagos', async () => {
+    const c = (await comprar(100000, { forma_pago: 'CREDITO' })).body;
+    const dash = (await conEmpresa(agent.get('/api/reportes/dashboard'))).body;
+    expect(dash.cartera.por_pagar).toBeGreaterThanOrEqual(100000);
+    await pagar(c.id, 100000);
+
+    let fila;
+    for (let i = 0; i < 40 && !fila; i += 1) {
+      const a = (await conEmpresa(agent.get('/api/auditoria?modulo=Cuentas por pagar&limit=200'))).body;
+      fila = a.find((x) => x.accion === 'Pagó a un proveedor' && x.descripcion.includes('Proveedor de crédito'));
+      if (!fila) await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(fila).toBeTruthy();
+    expect(fila.descripcion).toMatch(/por la compra #\d+/);
   });
 });

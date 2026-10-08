@@ -64,6 +64,8 @@ app.use('/api/productos', require('./routes/productoRoutes'));
 app.use('/api/proveedores', require('./routes/proveedorRoutes'));
 app.use('/api/compras', require('./routes/compraRoutes'));
 app.use('/api/ventas', require('./routes/ventaRoutes'));
+app.use('/api/cuentas-por-cobrar', require('./routes/cobrarRoutes'));
+app.use('/api/cuentas-por-pagar', require('./routes/pagarRoutes'));
 app.use('/api/reposicion', require('./routes/reposicionRoutes'));
 app.use('/api/anulaciones', require('./routes/anulacionRoutes'));
 app.use('/api/caja', require('./routes/cajaRoutes'));

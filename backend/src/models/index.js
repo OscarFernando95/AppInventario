@@ -24,6 +24,8 @@ const Caja = require('./Caja');
 const AjusteInventario = require('./AjusteInventario');
 const Gasto = require('./Gasto');
 const AnulacionVenta = require('./AnulacionVenta');
+const AbonoVenta = require('./AbonoVenta');
+const PagoCompra = require('./PagoCompra');
 const CajaMovimiento = require('./CajaMovimiento');
 const Modificador = require('./Modificador');
 const ModificadorItem = require('./ModificadorItem');
@@ -132,6 +134,14 @@ AnulacionVenta.belongsTo(Usuario, { foreignKey: 'solicitada_por', as: 'solicitan
 AnulacionVenta.belongsTo(Usuario, { foreignKey: 'resuelta_por', as: 'resolutor' });
 Venta.belongsTo(Usuario, { foreignKey: 'anulada_por', as: 'anuladaPor' });
 
+// Cartera: abonos de clientes sobre ventas a crédito y pagos a proveedores sobre compras a crédito.
+Venta.hasMany(AbonoVenta, { foreignKey: 'ventaId', as: 'abonos' });
+AbonoVenta.belongsTo(Venta, { foreignKey: 'ventaId', as: 'venta' });
+AbonoVenta.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+Compra.hasMany(PagoCompra, { foreignKey: 'compraId', as: 'pagos' });
+PagoCompra.belongsTo(Compra, { foreignKey: 'compraId', as: 'compra' });
+PagoCompra.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+
 // Modificadores de platos.
 Empresa.hasMany(Modificador, { foreignKey: 'empresaId' });
 Modificador.belongsTo(Empresa, { foreignKey: 'empresaId' });
@@ -149,5 +159,5 @@ LogEvento.belongsTo(Empresa, { foreignKey: 'empresaId' });
 module.exports = {
   sequelize, Empresa, Role, Usuario, Modulo, Departamento, Municipio, ActividadCiiu, Sesion,
   Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle,
-  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta,
+  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra,
 };

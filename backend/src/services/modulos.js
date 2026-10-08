@@ -22,6 +22,8 @@ const REQUIERE = {
   Recetas: ['Inventario'],
   Caja: ['Ventas'],
   Gastos: [],
+  'Cuentas por cobrar': ['Ventas', 'Clientes'],
+  'Cuentas por pagar': ['Compras', 'Proveedores'],
 };
 
 /** Tipos de negocio admitidos (cambia los módulos SUGERIDOS en el alta, no las reglas). */

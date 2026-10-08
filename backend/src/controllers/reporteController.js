@@ -3,6 +3,7 @@ const { Compra, Venta, Gasto } = require('../models');
 const TtlCache = require('../utils/ttlCache');
 const { cargarProductosConReceta } = require('../services/inventarioDb');
 const { analizarProductos } = require('../services/reposicion');
+const { resumenCartera } = require('../services/cajaService');
 
 // El dashboard agrega SUM/COUNT sobre ventas y compras; cambia poco entre
 // visitas seguidas. Se cachea 60 s por empresa.
@@ -54,6 +55,9 @@ exports.getDashboardData = async (req, res) => {
     comprasMes: comprasMes || 0,
     gastosMes: gastosMes || 0,
     productosBajoStock,
+    // Lo que deben los clientes y lo que se debe a proveedores (solo con esos módulos).
+    cartera: (req.empresaModulos?.has('Cuentas por cobrar') || req.empresaModulos?.has('Cuentas por pagar'))
+      ? await resumenCartera(req.empresaId) : null,
   };
   dashboardCache.set(key, payload);
   res.json(payload);

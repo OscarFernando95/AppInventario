@@ -42,6 +42,8 @@ const ventaCreate = z.object({
   // `precio_base` que manda el cliente.
   descuento_global: porcentaje.optional(),
   forma_pago: z.string().trim().max(5).optional(),
+  // Solo con forma_pago '2' (crédito): plazo en días (por defecto 30).
+  dias_credito: z.coerce.number().int().min(0).max(365).optional(),
   medio_pago: z.string().trim().max(5).optional(),
 });
 
@@ -61,6 +63,9 @@ const compraCreate = z.object({
   detalles: z.array(compraDetalle).min(1),
   // true: se paga en efectivo de la caja abierta del usuario (exige el módulo Caja).
   pago_desde_caja: z.boolean().optional(),
+  // CREDITO: queda una deuda con el proveedor (módulo Cuentas por pagar) con este plazo en días (por defecto 30).
+  forma_pago: z.enum(['CONTADO', 'CREDITO']).optional(),
+  dias_credito: z.coerce.number().int().min(0).max(365).optional(),
 });
 
 // --- Pedido ---
@@ -88,6 +93,8 @@ const pedidoCheckin = z.object({
     )
     .min(1),
   pago_desde_caja: z.boolean().optional(),
+  forma_pago: z.enum(['CONTADO', 'CREDITO']).optional(),
+  dias_credito: z.coerce.number().int().min(0).max(365).optional(),
 });
 
 module.exports = { ventaCreate, compraCreate, pedidoCreate, pedidoCheckin };

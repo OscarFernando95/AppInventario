@@ -1,6 +1,6 @@
 'use strict';
 
-const { sequelize, Caja, CajaMovimiento, Venta, Usuario, Empresa } = require('../models');
+const { sequelize, Caja, CajaMovimiento, Venta, Usuario, Empresa, AbonoVenta } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { buildListWhere } = require('../utils/listFilters');
@@ -21,6 +21,7 @@ async function conResumen(caja) {
       num_ventas: caja.num_ventas,
       total_ventas: Number(caja.total_ventas),
       ventas_efectivo: Number(caja.ventas_efectivo),
+      abonos_efectivo: Number(caja.abonos_efectivo || 0),
       total_egresos: Number(caja.total_egresos || 0),
       efectivo_esperado: Number(caja.efectivo_esperado),
       medios: caja.resumen_medios || [],
@@ -82,6 +83,12 @@ exports.getCajaById = async (req, res) => {
   if (!caja || !puedeVer(req, caja)) return res.status(404).json({ error: 'Caja no encontrada' });
 
   const json = await conResumen(caja);
+  json.abonos = await AbonoVenta.findAll({
+    where: { cajaId: caja.id, estado: 'ACTIVO' },
+    attributes: ['id', 'ventaId', 'monto', 'medio_pago', 'fecha'],
+    order: [['fecha', 'ASC']],
+    raw: true,
+  });
   json.ventas = await Venta.findAll({
     where: { cajaId: caja.id },
     attributes: ['id', 'fecha', 'total', 'forma_pago', 'medio_pago', 'estado'],
@@ -136,6 +143,7 @@ exports.cerrarCaja = async (req, res) => {
       num_ventas: resumen.num_ventas,
       total_ventas: resumen.total_ventas,
       ventas_efectivo: resumen.ventas_efectivo,
+      abonos_efectivo: resumen.abonos_efectivo,
       total_egresos: resumen.total_egresos,
       efectivo_esperado: resumen.efectivo_esperado,
       monto_contado,

@@ -6,6 +6,7 @@ const { auditar } = require('../utils/audit');
 const { invalidateDashboard } = require('./reporteController');
 const { invalidateInforme } = require('./informeController');
 const { calcularVenta } = require('../services/calculo');
+const { calcularVencimiento, redondear2 } = require('../services/cartera');
 const { TIPOS_NO_VENDIBLES, redondear3, consumoConModificadores } = require('../services/recetas');
 const { cargarRecetas } = require('../services/recetasDb');
 
@@ -104,13 +105,25 @@ exports.getVentaById = async (req, res) => {
 exports.createVenta = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    const { clienteId, detalles, descuento_global, forma_pago, medio_pago } = req.body;
+    const { clienteId, detalles, descuento_global, forma_pago, medio_pago, dias_credito } = req.body;
+    const aCredito = String(forma_pago) === '2';
+    if (aCredito) {
+      if (!req.empresaModulos?.has('Cuentas por cobrar')) {
+        throw new ValidationError('Para vender a crédito habilita el módulo "Cuentas por cobrar".');
+      }
+      if (!clienteId) throw new ValidationError('Una venta a crédito necesita un cliente.');
+    }
+    const diasCredito = aCredito ? (dias_credito ?? 30) : null;
 
     let clienteNombre = null;
+    let clienteRow = null;
     if (clienteId) {
-      const cliente = await Cliente.findOne({ where: { id: clienteId, empresaId: req.empresaId }, transaction: t });
-      if (!cliente) throw new ValidationError('Cliente inválido');
-      clienteNombre = cliente.nombre;
+      // A crédito se bloquea la fila del cliente: dos ventas simultáneas no pueden pasarse del cupo.
+      clienteRow = await Cliente.findOne({
+        where: { id: clienteId, empresaId: req.empresaId }, transaction: t, ...(aCredito ? { lock: t.LOCK.UPDATE } : {}),
+      });
+      if (!clienteRow) throw new ValidationError('Cliente inválido');
+      clienteNombre = clienteRow.nombre;
     }
 
     // Con el módulo Caja, toda venta se registra en la caja abierta del usuario.
@@ -207,6 +220,19 @@ exports.createVenta = async (req, res) => {
     // precio_base del cliente. `descuento_global` es un porcentaje 0–100.
     const calc = calcularVenta(lineas, descuento_global);
 
+    // Cupo de crédito: lo que ya debe + esta venta no puede pasar del tope del cliente.
+    if (aCredito && clienteRow.cupo_credito != null) {
+      const deuda = redondear2(await Venta.sum('saldo_pendiente', {
+        where: { empresaId: req.empresaId, clienteId, estado: 'ACTIVA' }, transaction: t,
+      }) || 0);
+      const cupo = Number(clienteRow.cupo_credito);
+      if (deuda + calc.total > cupo + 0.005) {
+        throw new ValidationError(
+          `Supera el cupo de crédito de ${clienteNombre}: debe ${deuda.toLocaleString('es-CO')}, esta venta suma ${calc.total.toLocaleString('es-CO')} y su cupo es ${cupo.toLocaleString('es-CO')}.`
+        );
+      }
+    }
+
     const venta = await Venta.create({
       empresaId: req.empresaId,
       usuarioId: req.userId,
@@ -217,6 +243,10 @@ exports.createVenta = async (req, res) => {
       total_descuentos: calc.total_descuentos,
       forma_pago: forma_pago || '1',
       medio_pago: medio_pago || '10',
+      // Crédito: todo el total queda por cobrar hasta que el cliente abone.
+      saldo_pendiente: aCredito ? calc.total : 0,
+      dias_credito: diasCredito,
+      fecha_vencimiento: aCredito ? calcularVencimiento(diasCredito) : null,
       subtotal_bruto: calc.subtotal_bruto,
       total_impuestos: calc.total_impuestos,
       estado_fe: 'NO_EMITIDA',
@@ -230,7 +260,7 @@ exports.createVenta = async (req, res) => {
     await t.commit();
     invalidateDashboard(req.empresaId);
     invalidateInforme(req.empresaId);
-    auditar(req, 'venta_creada', { ventaId: venta.id, total: calc.total, clienteId: venta.clienteId, clienteNombre, numItems: lineas.length });
+    auditar(req, 'venta_creada', { ventaId: venta.id, total: calc.total, clienteId: venta.clienteId, clienteNombre, numItems: lineas.length, aCredito, diasCredito });
     res.status(201).json(venta);
   } catch (error) {
     await t.rollback();

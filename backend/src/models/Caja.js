@@ -23,6 +23,7 @@ const Caja = sequelize.define('Caja', {
   usuarioCierreId: { type: DataTypes.INTEGER, allowNull: true },
   num_ventas: { type: DataTypes.INTEGER, allowNull: true },
   total_ventas: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
+  abonos_efectivo: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
   total_egresos: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
   ventas_efectivo: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
   efectivo_esperado: { type: DataTypes.DECIMAL(14, 2), allowNull: true },

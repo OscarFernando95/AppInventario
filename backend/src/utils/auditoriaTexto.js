@@ -26,14 +26,14 @@ const sustantivo = (d) => SUSTANTIVO_PRODUCTO[d.tipo] || 'producto';
 const ref = (nombre, id, prefijo = '#') => (nombre ? `«${nombre}»` : (id != null ? `${prefijo}${id}` : ''));
 
 /** Módulos por los que se puede filtrar la vista (orden = orden del menú del filtro). */
-const MODULOS = ['Ventas', 'Compras', 'Pedidos', 'Inventario', 'Caja', 'Gastos', 'Clientes', 'Proveedores', 'Servicios', 'Recetas', 'Usuarios'];
+const MODULOS = ['Ventas', 'Cuentas por cobrar', 'Compras', 'Cuentas por pagar', 'Pedidos', 'Inventario', 'Caja', 'Gastos', 'Clientes', 'Proveedores', 'Servicios', 'Recetas', 'Usuarios'];
 
 const EVENTOS = {
   // Ventas
   venta_creada: {
     modulo: 'Ventas',
     accion: () => 'Registró una venta',
-    descripcion: (d) => `Venta #${d.ventaId} por ${cop(d.total)}${d.clienteNombre ? ` a ${d.clienteNombre}` : ''}${d.numItems ? ` (${plural(d.numItems, 'ítem', 'ítems')})` : ''}`,
+    descripcion: (d) => `Venta #${d.ventaId} por ${cop(d.total)}${d.clienteNombre ? ` a ${d.clienteNombre}` : ''}${d.numItems ? ` (${plural(d.numItems, 'ítem', 'ítems')})` : ''}${d.aCredito ? ` · a crédito (${d.diasCredito} días)` : ''}`,
   },
   venta_anulada: {
     modulo: 'Ventas',
@@ -50,11 +50,32 @@ const EVENTOS = {
     accion: () => 'Rechazó la anulación de una venta',
     descripcion: (d) => `Venta #${d.ventaId}${d.comentario ? ` · ${d.comentario}` : ''}`,
   },
+  // Cartera
+  abono_registrado: {
+    modulo: 'Cuentas por cobrar',
+    accion: () => 'Recibió un abono de un cliente',
+    descripcion: (d) => `${cop(d.monto)}${d.clienteNombre ? ` de ${d.clienteNombre}` : ''} a la venta #${d.ventaId}${d.medio_pago === '10' ? ' · en efectivo' : ''} · ${Number(d.saldo) > 0 ? `saldo ${cop(d.saldo)}` : 'quedó pagada'}`,
+  },
+  abono_anulado: {
+    modulo: 'Cuentas por cobrar',
+    accion: () => 'Anuló un abono',
+    descripcion: (d) => `Abono de ${cop(d.monto)} a la venta #${d.ventaId}`,
+  },
+  pago_proveedor_registrado: {
+    modulo: 'Cuentas por pagar',
+    accion: () => 'Pagó a un proveedor',
+    descripcion: (d) => `${cop(d.monto)}${d.proveedorNombre ? ` a ${d.proveedorNombre}` : ''} por la compra #${d.compraId}${d.origen === 'CAJA' ? ' · de la caja' : ''} · ${Number(d.saldo) > 0 ? `aún debe ${cop(d.saldo)}` : 'quedó pagada'}`,
+  },
+  pago_proveedor_anulado: {
+    modulo: 'Cuentas por pagar',
+    accion: () => 'Anuló un pago a proveedor',
+    descripcion: (d) => `Pago de ${cop(d.monto)} de la compra #${d.compraId}`,
+  },
   // Compras y pedidos
   compra_creada: {
     modulo: 'Compras',
     accion: () => 'Registró una compra',
-    descripcion: (d) => `Compra #${d.compraId} por ${cop(d.total)}${d.proveedorNombre ? ` a ${d.proveedorNombre}` : ''}${d.pagoDesdeCaja ? ' · pagada de la caja' : ''}`,
+    descripcion: (d) => `Compra #${d.compraId} por ${cop(d.total)}${d.proveedorNombre ? ` a ${d.proveedorNombre}` : ''}${d.pagoDesdeCaja ? ' · pagada de la caja' : ''}${d.aCredito ? ` · a crédito (${d.diasCredito} días)` : ''}`,
   },
   pedido_creado: {
     modulo: 'Pedidos',

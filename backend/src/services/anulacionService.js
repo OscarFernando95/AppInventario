@@ -1,6 +1,6 @@
 'use strict';
 
-const { Venta, VentaDetalle, Producto, Caja, Modificador, ModificadorItem } = require('../models');
+const { Venta, VentaDetalle, Producto, Caja, Modificador, ModificadorItem, AbonoVenta } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { consumoConModificadores, redondear3 } = require('./recetas');
 const { cargarRecetas } = require('./recetasDb');
@@ -41,6 +41,12 @@ async function anularVenta(req, t, ventaId, motivo) {
   if (!venta) return null;
   if (venta.estado === 'ANULADA') throw new ValidationError('Esta venta ya está anulada.');
 
+  // Una venta a crédito con abonos tiene dinero cobrado: primero se anulan esos abonos.
+  if (venta.forma_pago === '2') {
+    const abonos = await AbonoVenta.count({ where: { ventaId: venta.id, estado: 'ACTIVO' }, transaction: t });
+    if (abonos > 0) throw new ValidationError('Esta venta a crédito tiene abonos registrados: anúlalos primero en Cuentas por cobrar.');
+  }
+
   // 1. Devolver el inventario (sumado por producto y bloqueado en orden de id).
   const detalles = await VentaDetalle.findAll({ where: { ventaId: venta.id }, transaction: t });
   const devolver = new Map();
@@ -77,7 +83,7 @@ async function anularVenta(req, t, ventaId, motivo) {
   }
 
   // 3. Marcar la venta (no se borra: queda en el historial).
-  await venta.update({ estado: 'ANULADA', anulada_en: new Date(), anulada_por: req.userId, motivo_anulacion: motivo }, { transaction: t });
+  await venta.update({ estado: 'ANULADA', anulada_en: new Date(), anulada_por: req.userId, motivo_anulacion: motivo, saldo_pendiente: 0 }, { transaction: t });
   return { venta, devolucion };
 }
 

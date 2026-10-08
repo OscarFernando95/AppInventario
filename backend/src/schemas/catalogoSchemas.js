@@ -62,6 +62,8 @@ const cliente = z.object({
   telefono: textoOpc,
   direccion: textoOpc,
   tipo_documento: z.string().trim().max(5).optional(),
+  // Tope de deuda en ventas a crédito (vacío = sin tope).
+  cupo_credito: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().min(0).max(99_999_999_999).nullish()),
   dv: z.string().trim().max(1).optional(),
   tipo_persona: z.string().trim().max(1).optional(),
   regimen_fiscal: z.string().trim().max(20).optional(),
