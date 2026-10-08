@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const cajaController = require('../controllers/cajaController');
-const { verifyToken, requireModulo, isFrontAdmin } = require('../middlewares/auth');
+const { verifyToken, requireModulo, requirePermiso } = require('../middlewares/auth');
 const asyncHandler = require('../middlewares/asyncHandler');
 const validate = require('../middlewares/validate');
 const { idParam } = require('../schemas/common');
@@ -19,7 +19,7 @@ router.get('/', validate({ query: cajaListQuery }), asyncHandler(cajaController.
 router.get('/actual', asyncHandler(cajaController.getCajaActual));
 router.get('/base-sugerida', asyncHandler(cajaController.getBaseSugerida));
 // Dinero de la empresa vs su capital inicial: información financiera, solo administrador.
-router.get('/balance', isFrontAdmin, validate({ query: balanceQuery }), asyncHandler(cajaController.getBalance));
+router.get('/balance', requirePermiso('caja.balance'), validate({ query: balanceQuery }), asyncHandler(cajaController.getBalance));
 router.get('/:id', validate({ params: idParam }), asyncHandler(cajaController.getCajaById));
 router.post('/retiros', validate({ body: cajaRetiro }), asyncHandler(cajaController.registrarRetiro));
 router.post('/abrir', validate({ body: cajaAbrir }), asyncHandler(cajaController.abrirCaja));

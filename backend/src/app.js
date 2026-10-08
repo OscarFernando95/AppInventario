@@ -59,6 +59,7 @@ app.use('/api/auditoria', require('./routes/auditoriaRoutes'));
 app.use('/api/modulos', require('./routes/moduloRoutes'));
 app.use('/api/catalogos', require('./routes/catalogoRoutes'));
 app.use('/api/usuarios', require('./routes/usuarioRoutes'));
+app.use('/api/roles', require('./routes/rolRoutes'));
 app.use('/api/reportes', require('./routes/reporteRoutes'));
 app.use('/api/productos', require('./routes/productoRoutes'));
 app.use('/api/proveedores', require('./routes/proveedorRoutes'));

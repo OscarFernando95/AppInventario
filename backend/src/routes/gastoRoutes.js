@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const gastoController = require('../controllers/gastoController');
-const { verifyToken, requireModulo, isFrontAdmin } = require('../middlewares/auth');
+const { verifyToken, requireModulo, requirePermiso } = require('../middlewares/auth');
 const asyncHandler = require('../middlewares/asyncHandler');
 const validate = require('../middlewares/validate');
 const { idParam } = require('../schemas/common');
@@ -19,6 +19,6 @@ router.get('/', validate({ query: gastoListQuery }), asyncHandler(gastoControlle
 router.get('/resumen', validate({ query: gastoRango }), asyncHandler(gastoController.getResumen));
 router.post('/', validate({ body: gastoCreate }), asyncHandler(gastoController.createGasto));
 // Anular reescribe cifras ya reportadas: solo el administrador de la empresa.
-router.post('/:id/anular', isFrontAdmin, validate({ params: idParam }), asyncHandler(gastoController.anularGasto));
+router.post('/:id/anular', requirePermiso('gastos.anular'), validate({ params: idParam }), asyncHandler(gastoController.anularGasto));
 
 module.exports = router;

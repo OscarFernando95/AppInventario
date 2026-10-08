@@ -3014,3 +3014,259 @@ describe('Devolución parcial de ventas', () => {
     expect(fila.usuario.nombre).toBe('Front Admin');
   });
 });
+
+describe('Roles y permisos', () => {
+  const MODULOS_BASE = ['Inventario', 'Ventas', 'Compras', 'Proveedores', 'Informes', 'Clientes', 'Servicios', 'Pedidos', 'Gastos', 'Cuentas por cobrar', 'Cuentas por pagar'];
+  const rol = (body) => conEmpresa(agent.post('/api/roles')).send(body);
+  const nuevoUsuario = (cuerpo, quien = agent) => conEmpresa(quien.post('/api/usuarios')).send({ contrasena: 'Clave1234', ...cuerpo });
+  const loginComo = async (username) => {
+    const a = request.agent(app);
+    expect((await a.post('/api/auth/login').send({ username, contrasena: 'Clave1234' })).status).toBe(200);
+    return a;
+  };
+  const yo = async (a) => (await a.get('/api/auth/me')).body.usuario.empresas.find((e) => e.id === ctx.empresa.id);
+  const permisosDelAdmin = async () => (await yo(agent)).permisos;
+  let cajeroSinCostos; let supervisor; let gestor; let idCajero; let idGestor;
+
+  beforeAll(async () => { await activarModulos(['Roles y permisos']); });
+  afterAll(async () => {
+    await models.UsuarioEmpresa.update({ rolEmpresaId: null }, { where: { empresaId: ctx.empresa.id } });
+    await models.RolEmpresa.destroy({ where: {} });
+    await activarModulos([]);
+  });
+
+  it('sin el módulo contratado no se pueden gestionar roles', async () => {
+    await activarModulos([]);
+    expect((await conEmpresa(agent.get('/api/roles'))).status).toBe(403);
+    await activarModulos(['Roles y permisos']);
+  });
+
+  it('un operativo no gestiona roles', async () => {
+    const op = await loginComo('operativo');
+    expect((await conEmpresa(op.get('/api/roles'))).status).toBe(403);
+    expect((await conEmpresa(op.post('/api/roles')).send({ nombre: 'Intruso', permisos: [] })).status).toBe(403);
+  });
+
+  it('los roles base siguen igual: el administrador tiene todo y el operativo solo ve costos', async () => {
+    const admin = await yo(agent);
+    expect(admin.permisos).toEqual(expect.arrayContaining(['ventas.anular', 'ventas.devolver', 'caja.balance', 'auditoria.ver', 'usuarios.gestionar', 'roles.gestionar']));
+    expect(admin.rol_propio).toBeNull();
+    const op = await yo(await loginComo('operativo'));
+    expect(op.permisos).toEqual(['costos.ver']);
+    expect(op.acceso.sort()).toEqual(op.modulos.sort()); // sin rol propio entra a todo lo contratado
+  });
+
+  it('lista el catálogo, los roles base y los módulos que se pueden repartir', async () => {
+    const res = await conEmpresa(agent.get('/api/roles'));
+    expect(res.status).toBe(200);
+    expect(res.body.catalogo.map((p) => p.codigo)).toContain('ventas.devolver');
+    expect(res.body.base.map((r) => r.clave)).toEqual(['FRONT_ADMIN', 'FRONT_USER']);
+    expect(res.body.modulos).toContain('Ventas');
+    expect(res.body.modulos).not.toContain('Roles y permisos'); // su acceso lo da un permiso, no se reparte
+    expect(res.body.propios).toEqual([]);
+  });
+
+  describe('crear roles', () => {
+    it('valida nombre, permisos y módulos', async () => {
+      expect((await rol({ nombre: 'Administrador', permisos: [] })).status).toBe(400); // nombre de un rol base
+      expect((await rol({ nombre: 'Raro', permisos: ['no.existe'] })).status).toBe(400);
+      expect((await rol({ nombre: 'Raro', permisos: [], modulos: ['Caja'] })).status).toBe(400); // la empresa no lo tiene
+      expect((await rol({ nombre: 'X', permisos: [] })).status).toBe(400); // nombre muy corto
+    });
+
+    it('un rol con módulos incluye los que esos módulos necesitan', async () => {
+      const res = await rol({ nombre: 'Cajero sin costos', descripcion: 'Solo vende', permisos: [], modulos: ['Ventas'] });
+      expect(res.status).toBe(201);
+      expect(res.body.modulos).toEqual(['Clientes', 'Inventario', 'Ventas']);
+      cajeroSinCostos = res.body;
+      expect((await rol({ nombre: 'cajero SIN costos', permisos: [] })).status).toBe(400); // repetido (sin importar mayúsculas)
+    });
+
+    it('un rol con módulos null entra a todos los de la empresa', async () => {
+      const res = await rol({ nombre: 'Supervisor', permisos: ['ventas.anular', 'ventas.devolver', 'ventas.resolver_anulaciones', 'costos.ver'] });
+      expect(res.status).toBe(201);
+      expect(res.body.modulos).toBeNull();
+      supervisor = res.body;
+    });
+  });
+
+  describe('un usuario con rol propio', () => {
+    it('se crea con el rol y ve lo que el rol permite (permisos y módulos)', async () => {
+      const res = await nuevoUsuario({ nombre: 'Caja Uno', username: 'caja_uno', rolEmpresaId: cajeroSinCostos.id });
+      expect(res.status).toBe(201);
+      expect(res.body).toMatchObject({ rolEmpresaId: cajeroSinCostos.id, rol_nombre: 'Cajero sin costos' });
+      idCajero = res.body.id;
+
+      const e = await yo(await loginComo('caja_uno'));
+      expect(e.permisos).toEqual([]);
+      expect(e.acceso.sort()).toEqual(['Clientes', 'Inventario', 'Roles y permisos', 'Ventas']); // este último lo decide un permiso, no el rol
+      expect(e.modulos).toEqual(expect.arrayContaining(['Compras'])); // la empresa lo tiene; él no entra
+      expect(e.rol_propio).toMatchObject({ nombre: 'Cajero sin costos' });
+    });
+
+    it('no entra a los módulos que su rol no incluye', async () => {
+      const a = await loginComo('caja_uno');
+      expect((await conEmpresa(a.get('/api/compras'))).status).toBe(403);
+      expect((await conEmpresa(a.get('/api/ventas'))).status).toBe(200);
+    });
+
+    it('no ve costos ni márgenes en los productos, y el administrador sí', async () => {
+      const a = await loginComo('caja_uno');
+      const sin = (await conEmpresa(a.get('/api/productos'))).body;
+      expect(sin.length).toBeGreaterThan(0);
+      for (const p of sin) for (const campo of ['costo', 'costo_promedio', 'margen', 'margen_pct']) expect(p).not.toHaveProperty(campo);
+      const con = (await conEmpresa(agent.get('/api/productos'))).body;
+      expect(con[0]).toHaveProperty('costo_promedio');
+    });
+
+    it('sin costos.ver no ve la rentabilidad, con costos.ver sí', async () => {
+      await activarModulos(['Roles y permisos', 'Recetas']);
+      const sinCostos = await rol({ nombre: 'Operador de recetas', permisos: [] });
+      const u = await nuevoUsuario({ nombre: 'Rec Uno', username: 'rec_uno', rolEmpresaId: sinCostos.body.id });
+      expect(u.status).toBe(201);
+      const a = await loginComo('rec_uno');
+      expect((await conEmpresa(a.get('/api/recetas/rentabilidad'))).status).toBe(403);
+      expect((await conEmpresa((await loginComo('operativo')).get('/api/recetas/rentabilidad'))).status).toBe(200);
+      await models.UsuarioEmpresa.update({ rolEmpresaId: null }, { where: { usuarioId: u.body.id } });
+      await models.RolEmpresa.destroy({ where: { id: sinCostos.body.id } });
+      await activarModulos(['Roles y permisos']);
+    });
+
+    it('los permisos de acciones se aplican: devolver exige ventas.devolver', async () => {
+      const sinPermiso = await loginComo('caja_uno');
+      expect((await conEmpresa(sinPermiso.post('/api/ventas/999999/devoluciones')).send({ motivo: 'x', items: [{ ventaDetalleId: 1, cantidad: 1 }] })).status).toBe(403);
+
+      const u = await nuevoUsuario({ nombre: 'Super Uno', username: 'super_uno', rolEmpresaId: supervisor.id });
+      expect(u.status).toBe(201);
+      const conPermiso = await loginComo('super_uno');
+      // Pasó el permiso: ahora responde por la devolución (datos inválidos), no por el permiso.
+      expect((await conEmpresa(conPermiso.post('/api/ventas/999999/devoluciones')).send({ motivo: 'x', items: [{ ventaDetalleId: 1, cantidad: 1 }] })).status).not.toBe(403);
+      expect((await conEmpresa(conPermiso.get('/api/caja/balance'))).status).toBe(403); // no tiene caja.balance
+    });
+
+    it('anula en el acto solo con ventas.anular; sin él deja una solicitud', async () => {
+      const hacerVenta = async () => (await conEmpresa(agent.post('/api/ventas')).send({
+        clienteId: ctx.cliente.id,
+        detalles: [{ servicioId: ctx.servicio.id, cantidad: 1, precio_unitario: 100000, precio_base: 100000 }],
+      })).body.id;
+      await models.Servicio.update({ precio: 100000, porcentaje_iva: 0 }, { where: { id: ctx.servicio.id } });
+
+      const cajero = await loginComo('caja_uno');
+      const solicitud = await conEmpresa(cajero.post(`/api/ventas/${await hacerVenta()}/anular`)).send({ motivo: 'Error al digitar' });
+      expect(solicitud.body.resultado).toBe('SOLICITADA');
+
+      const jefe = await loginComo('super_uno');
+      const directa = await conEmpresa(jefe.post(`/api/ventas/${await hacerVenta()}/anular`)).send({ motivo: 'Error al digitar' });
+      expect(directa.body.resultado).toBe('ANULADA');
+
+      // Y quien resuelve solicitudes ve las de todos; los demás, solo las suyas.
+      expect((await conEmpresa(jefe.get('/api/anulaciones'))).body.length).toBeGreaterThan(0);
+      expect((await conEmpresa((await loginComo('operativo')).get('/api/anulaciones'))).body).toEqual([]);
+    });
+  });
+
+  describe('cambios y reglas de seguridad', () => {
+    it('al cambiar los permisos de un rol, quienes lo tienen lo notan de inmediato', async () => {
+      const a = await loginComo('caja_uno');
+      expect((await yo(a)).permisos).toEqual([]);
+      const res = await conEmpresa(agent.put(`/api/roles/${cajeroSinCostos.id}`)).send({ permisos: ['gastos.anular'], modulos: ['Ventas', 'Compras'] });
+      expect(res.status).toBe(200);
+      const e = await yo(a);
+      expect(e.permisos).toEqual(['gastos.anular']);
+      expect(e.acceso).toContain('Compras');
+      expect((await conEmpresa(a.get('/api/compras'))).status).toBe(200);
+      await conEmpresa(agent.put(`/api/roles/${cajeroSinCostos.id}`)).send({ permisos: [], modulos: ['Ventas'] });
+    });
+
+    it('un rol en uso no se elimina; sin usuarios sí', async () => {
+      const enUso = await conEmpresa(agent.delete(`/api/roles/${cajeroSinCostos.id}`));
+      expect(enUso.status).toBe(400);
+      expect(enUso.body.error).toMatch(/1 usuario/);
+      // Pasar al usuario a un rol base lo libera.
+      const cambio = await conEmpresa(agent.put(`/api/usuarios/${idCajero}`)).send({ rolId: 3 });
+      expect(cambio.status).toBe(200);
+      expect(cambio.body).toMatchObject({ rolEmpresaId: null, rol_nombre: 'Usuario Operativo' });
+      expect((await yo(await loginComo('caja_uno'))).permisos).toEqual(['costos.ver']);
+      expect((await conEmpresa(agent.delete(`/api/roles/${cajeroSinCostos.id}`))).status).toBe(204);
+    });
+
+    it('nadie cambia su propio rol', async () => {
+      const yoMismo = (await models.Usuario.findOne({ where: { username: 'fadmin' } })).id;
+      const res = await conEmpresa(agent.put(`/api/usuarios/${yoMismo}`)).send({ rolEmpresaId: supervisor.id });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/propio rol/);
+    });
+
+    it('un rol de otra empresa no se puede asignar', async () => {
+      const otra = await models.Empresa.create({ nombre: 'Otra SAS', nit: '900777888', tipo_empresa: 'SIMPLE' });
+      const ajeno = await models.RolEmpresa.create({ empresaId: otra.id, nombre: 'Ajeno', permisos: [] });
+      const res = await nuevoUsuario({ nombre: 'Intruso', username: 'intruso1', rolEmpresaId: ajeno.id });
+      expect(res.status).toBe(400);
+      expect((await conEmpresa(agent.put(`/api/roles/${ajeno.id}`)).send({ nombre: 'Mío' })).status).toBe(404);
+      expect((await conEmpresa(agent.delete(`/api/roles/${ajeno.id}`))).status).toBe(404);
+    });
+
+    describe('quien gestiona personal y roles no puede escalar privilegios', () => {
+      beforeAll(async () => {
+        gestor = (await rol({ nombre: 'Gestor de personal', permisos: ['usuarios.gestionar', 'roles.gestionar', 'ventas.devolver'] })).body;
+        const u = await nuevoUsuario({ nombre: 'Gestor Uno', username: 'gestor_uno', rolEmpresaId: gestor.id });
+        idGestor = u.body.id;
+      });
+
+      it('solo entrega permisos que él mismo tiene', async () => {
+        const g = await loginComo('gestor_uno');
+        const ok = await conEmpresa(g.post('/api/roles')).send({ nombre: 'Devoluciones', permisos: ['ventas.devolver'] });
+        expect(ok.status).toBe(201);
+        const mal = await conEmpresa(g.post('/api/roles')).send({ nombre: 'Con balance', permisos: ['caja.balance'] });
+        expect(mal.status).toBe(403);
+        expect(mal.body.error).toMatch(/no tienes/i);
+        // Tampoco puede ampliar un rol propio más allá de lo suyo.
+        expect((await conEmpresa(g.put(`/api/roles/${ok.body.id}`)).send({ permisos: ['ventas.devolver', 'auditoria.ver'] })).status).toBe(403);
+      });
+
+      it('no modifica roles que superan los suyos', async () => {
+        const g = await loginComo('gestor_uno');
+        expect((await conEmpresa(g.put(`/api/roles/${supervisor.id}`)).send({ nombre: 'Supervisor 2' })).status).toBe(403);
+        expect((await conEmpresa(g.delete(`/api/roles/${supervisor.id}`))).status).toBe(403);
+      });
+
+      it('no asigna roles base con más permisos que los suyos ni crea administradores', async () => {
+        const g = await loginComo('gestor_uno');
+        expect((await nuevoUsuario({ nombre: 'Nuevo Admin', username: 'nuevo_admin', rolId: 2 }, g)).status).toBe(403);
+        expect((await nuevoUsuario({ nombre: 'Nuevo Back', username: 'nuevo_back', rolId: 1 }, g)).status).toBe(403);
+        const propio = await nuevoUsuario({ nombre: 'Dev Uno', username: 'dev_uno', rolEmpresaId: gestor.id }, g);
+        expect(propio.status).toBe(201); // su mismo rol sí
+      });
+
+      it('no toca a usuarios con más permisos que él', async () => {
+        const g = await loginComo('gestor_uno');
+        const admin = (await models.Usuario.findOne({ where: { username: 'fadmin' } })).id;
+        const sup = (await models.Usuario.findOne({ where: { username: 'super_uno' } })).id;
+        for (const objetivo of [admin, sup]) {
+          const res = await conEmpresa(g.put(`/api/usuarios/${objetivo}`)).send({ contrasena: 'Otra1234x' });
+          expect(res.status).toBe(403);
+        }
+        // Ni quitándole el rol propio a alguien que quedaría como administrador.
+        const mismo = await nuevoUsuario({ nombre: 'Sube Uno', username: 'sube_uno', rolEmpresaId: gestor.id }, g);
+        await models.Usuario.update({ rolId: 2 }, { where: { id: mismo.body.id } }); // ahora su rol base sería administrador
+        const res = await conEmpresa(g.put(`/api/usuarios/${mismo.body.id}`)).send({ rolEmpresaId: null });
+        expect(res.status).toBe(403);
+      });
+
+      it('la lista de roles sirve a quien gestiona personal aunque no pueda editar roles', async () => {
+        const u = await rol({ nombre: 'Solo personal', permisos: ['usuarios.gestionar'] });
+        await nuevoUsuario({ nombre: 'Personal Uno', username: 'personal_uno', rolEmpresaId: u.body.id });
+        const p = await loginComo('personal_uno');
+        expect((await conEmpresa(p.get('/api/roles'))).status).toBe(200);
+        expect((await conEmpresa(p.post('/api/roles')).send({ nombre: 'Otro', permisos: [] })).status).toBe(403);
+      });
+    });
+
+    it('la auditoría registra la creación, el cambio y la eliminación de roles', async () => {
+      const res = await conEmpresa(agent.get('/api/auditoria?modulo=Usuarios&limit=100'));
+      expect(res.status).toBe(200);
+      const acciones = res.body.map((e) => e.accion);
+      expect(acciones).toEqual(expect.arrayContaining(['Creó un rol', 'Modificó un rol', 'Eliminó un rol']));
+    });
+  });
+});

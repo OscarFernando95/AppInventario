@@ -9,6 +9,16 @@ const { TIPOS_CON_RECETA, consumoBase, costoDeConsumo } = require('../services/r
 const { analizarProductos, objetivoDe } = require('../services/reposicion');
 const { cargarRecetas } = require('../services/recetasDb');
 const { margen } = require('../services/costos');
+const { tiene } = require('../middlewares/auth');
+
+/** Sin el permiso costos.ver el producto sale sin costo ni margen (en el listado y en las respuestas de crear/editar). */
+const CAMPOS_DE_COSTO = ['costo', 'costo_promedio', 'margen', 'margen_pct'];
+function segunPermisoDeCostos(req, producto) {
+  if (tiene(req, 'costos.ver')) return producto;
+  const json = typeof producto.toJSON === 'function' ? producto.toJSON() : { ...producto };
+  for (const campo of CAMPOS_DE_COSTO) delete json[campo];
+  return json;
+}
 
 exports.getProductos = async (req, res) => {
   const productos = await Producto.findAll({
@@ -38,7 +48,7 @@ exports.getProductos = async (req, res) => {
     }
     // Margen sobre el precio SIN IVA (el precio de lista incluye IVA).
     if (p.tipo === 'RECETA' || p.tipo === 'VENTA') Object.assign(p, margen(p.precio_unitario, p.porcentaje_iva, p.costo));
-    return p;
+    return segunPermisoDeCostos(req, p);
   }));
 };
 
@@ -149,7 +159,7 @@ exports.createProducto = async (req, res) => {
 
   invalidateDashboard(req.empresaId);
   auditar(req, 'producto_creado', { productoId: producto.id, nombre_producto: producto.nombre_producto, codigo: producto.codigo, tipo });
-  res.status(201).json(producto);
+  res.status(201).json(segunPermisoDeCostos(req, producto));
 };
 
 exports.updateProducto = async (req, res) => {
@@ -199,7 +209,7 @@ exports.updateProducto = async (req, res) => {
 
   invalidateDashboard(req.empresaId);
   auditar(req, 'producto_actualizado', { productoId: producto.id, nombre_producto: producto.nombre_producto, codigo: producto.codigo, tipo: producto.tipo });
-  res.json(producto);
+  res.json(segunPermisoDeCostos(req, producto));
 };
 
 /**

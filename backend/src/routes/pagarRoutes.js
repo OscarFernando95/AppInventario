@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const pagarController = require('../controllers/pagarController');
-const { verifyToken, requireModulo, isFrontAdmin } = require('../middlewares/auth');
+const { verifyToken, requireModulo, requirePermiso } = require('../middlewares/auth');
 const asyncHandler = require('../middlewares/asyncHandler');
 const validate = require('../middlewares/validate');
 const { idParam } = require('../schemas/common');
@@ -15,7 +15,7 @@ router.use((req, res, next) => {
 });
 router.use(requireModulo('Cuentas por pagar'));
 // Lo que se le debe a los proveedores y su pago son decisiones del administrador de la empresa.
-router.use(isFrontAdmin);
+router.use(requirePermiso('cartera.pagar'));
 
 const proveedorParam = z.object({ proveedorId: z.coerce.number().int().positive() });
 const compraParam = z.object({ compraId: z.coerce.number().int().positive() });

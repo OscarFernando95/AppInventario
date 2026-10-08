@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const cobrarController = require('../controllers/cobrarController');
-const { verifyToken, requireModulo, isFrontAdmin } = require('../middlewares/auth');
+const { verifyToken, requireModulo, requirePermiso } = require('../middlewares/auth');
 const asyncHandler = require('../middlewares/asyncHandler');
 const validate = require('../middlewares/validate');
 const { idParam } = require('../schemas/common');
@@ -22,7 +22,7 @@ router.get('/', validate({ query: listaCartera }), asyncHandler(cobrarController
 router.get('/resumen', asyncHandler(cobrarController.getResumen));
 router.get('/clientes/:clienteId/estado-cuenta', validate({ params: clienteParam }), asyncHandler(cobrarController.getEstadoCuenta));
 // Cualquier usuario puede cobrar un abono; anularlo (reescribe cifras) es del administrador.
-router.post('/abonos/:id/anular', isFrontAdmin, validate({ params: idParam }), asyncHandler(cobrarController.anularAbono));
+router.post('/abonos/:id/anular', requirePermiso('cartera.anular_abonos'), validate({ params: idParam }), asyncHandler(cobrarController.anularAbono));
 router.get('/:ventaId/abonos', validate({ params: ventaParam }), asyncHandler(cobrarController.getAbonos));
 router.post('/:ventaId/abonos', validate({ params: ventaParam, body: abonoCreate }), asyncHandler(cobrarController.crearAbono));
 

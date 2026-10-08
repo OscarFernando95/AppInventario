@@ -4,6 +4,8 @@ const Empresa = require('./Empresa');
 const Role = require('./Role');
 const Usuario = require('./Usuario');
 const Modulo = require('./Modulo');
+const RolEmpresa = require('./RolEmpresa');
+const UsuarioEmpresa = require('./UsuarioEmpresa');
 const Departamento = require('./Departamento');
 const Municipio = require('./Municipio');
 const ActividadCiiu = require('./ActividadCiiu');
@@ -33,8 +35,14 @@ const Modificador = require('./Modificador');
 const ModificadorItem = require('./ModificadorItem');
 
 // Relaciones Administrativas
-Empresa.belongsToMany(Usuario, { through: 'usuarios_empresas', foreignKey: 'empresaId' });
-Usuario.belongsToMany(Empresa, { through: 'usuarios_empresas', foreignKey: 'usuarioId' });
+Empresa.belongsToMany(Usuario, { through: UsuarioEmpresa, foreignKey: 'empresaId', otherKey: 'usuarioId' });
+Usuario.belongsToMany(Empresa, { through: UsuarioEmpresa, foreignKey: 'usuarioId', otherKey: 'empresaId' });
+
+// Roles propios de cada empresa; el rol de un usuario EN una empresa vive en la tabla de unión.
+Empresa.hasMany(RolEmpresa, { foreignKey: 'empresaId', as: 'roles' });
+RolEmpresa.belongsTo(Empresa, { foreignKey: 'empresaId' });
+RolEmpresa.hasMany(UsuarioEmpresa, { foreignKey: 'rolEmpresaId', as: 'asignaciones' });
+UsuarioEmpresa.belongsTo(RolEmpresa, { foreignKey: 'rolEmpresaId', as: 'rolEmpresa' });
 
 Role.hasMany(Usuario, { foreignKey: 'rolId' });
 Usuario.belongsTo(Role, { foreignKey: 'rolId' });
@@ -169,5 +177,5 @@ LogEvento.belongsTo(Empresa, { foreignKey: 'empresaId' });
 module.exports = {
   sequelize, Empresa, Role, Usuario, Modulo, Departamento, Municipio, ActividadCiiu, Sesion,
   Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle,
-  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle,
+  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle, RolEmpresa, UsuarioEmpresa,
 };

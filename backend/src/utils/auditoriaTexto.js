@@ -161,13 +161,16 @@ const EVENTOS = {
   usuario_creado: {
     modulo: 'Usuarios',
     accion: () => 'Creó un usuario',
-    descripcion: (d) => `${d.nombre ? `${d.nombre} ` : ''}(@${d.username})`.trim(),
+    descripcion: (d) => `${d.nombre ? `${d.nombre} ` : ''}(@${d.username})${d.rol ? ` · rol: ${d.rol}` : ''}`.trim(),
   },
   usuario_actualizado: {
     modulo: 'Usuarios',
     accion: () => 'Modificó un usuario',
-    descripcion: (d) => `${d.nombre ? `${d.nombre} ` : ''}(@${d.username})`.trim(),
+    descripcion: (d) => `${d.nombre ? `${d.nombre} ` : ''}(@${d.username})${d.rol ? ` · rol: ${d.rol}` : ''}`.trim(),
   },
+  rol_creado: { modulo: 'Usuarios', accion: () => 'Creó un rol', descripcion: (d) => `${ref(d.nombre, d.rolId)} · ${plural(d.numPermisos, 'permiso', 'permisos')}` },
+  rol_actualizado: { modulo: 'Usuarios', accion: () => 'Modificó un rol', descripcion: (d) => `${ref(d.nombre, d.rolId)} · ${plural(d.numPermisos, 'permiso', 'permisos')}` },
+  rol_eliminado: { modulo: 'Usuarios', accion: () => 'Eliminó un rol', descripcion: (d) => ref(d.nombre, d.rolId) },
 };
 
 /** Nombres de evento que entran en la vista gerencial. */

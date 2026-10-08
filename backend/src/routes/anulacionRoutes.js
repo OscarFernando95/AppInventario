@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const anulacionController = require('../controllers/anulacionController');
-const { verifyToken, requireModulo, isFrontAdmin } = require('../middlewares/auth');
+const { verifyToken, requireModulo, requirePermiso } = require('../middlewares/auth');
 const asyncHandler = require('../middlewares/asyncHandler');
 const validate = require('../middlewares/validate');
 const { idParam } = require('../schemas/common');
@@ -16,7 +16,7 @@ router.use(requireModulo('Ventas'));
 
 router.get('/', validate({ query: anulacionesQuery }), asyncHandler(anulacionController.getAnulaciones));
 // Resolver solicitudes reescribe cifras ya reportadas: solo el administrador de la empresa.
-router.post('/:id/aprobar', isFrontAdmin, validate({ params: idParam }), asyncHandler(anulacionController.aprobar));
-router.post('/:id/rechazar', isFrontAdmin, validate({ params: idParam, body: rechazarAnulacion }), asyncHandler(anulacionController.rechazar));
+router.post('/:id/aprobar', requirePermiso('ventas.resolver_anulaciones'), validate({ params: idParam }), asyncHandler(anulacionController.aprobar));
+router.post('/:id/rechazar', requirePermiso('ventas.resolver_anulaciones'), validate({ params: idParam, body: rechazarAnulacion }), asyncHandler(anulacionController.rechazar));
 
 module.exports = router;

@@ -6,6 +6,7 @@ const { ValidationError } = require('../utils/errors');
 const { hashPassword, BCRYPT_ROUNDS } = require('../utils/password');
 const logger = require('../utils/logger');
 const sessions = require('../services/sessions');
+const { accesosPorEmpresa } = require('../services/accesos');
 
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
 
@@ -38,7 +39,8 @@ function jtiDeLaCookie(req) {
  * Datos de sesión que consume el frontend (usuario, rol y, por empresa, sus
  * módulos habilitados y tipo de negocio). Lo comparten login y /auth/me.
  */
-function payloadUsuario(usuario) {
+async function payloadUsuario(usuario) {
+  const accesos = await accesosPorEmpresa(usuario);
   return {
     id: usuario.id,
     nombre: usuario.nombre,
@@ -50,7 +52,10 @@ function payloadUsuario(usuario) {
           id: emp.id,
           nombre: emp.nombre,
           tipo_negocio: emp.tipo_negocio,
-          modulos: emp.Modulos ? emp.Modulos.map((m) => m.nombre_codigo) : [],
+          modulos: accesos[emp.id].modulos, // lo que la empresa tiene contratado
+          acceso: accesos[emp.id].acceso, // a lo que este usuario entra según su rol
+          permisos: accesos[emp.id].permisos,
+          rol_propio: accesos[emp.id].rolPropio,
         }))
       : [],
   };
@@ -58,7 +63,7 @@ function payloadUsuario(usuario) {
 
 const INCLUDE_SESION = [
   { model: Role },
-  { model: Empresa, through: { attributes: [] }, include: [{ model: Modulo, through: { attributes: [] } }] },
+  { model: Empresa, through: { attributes: ['rolEmpresaId'] }, include: [{ model: Modulo, through: { attributes: [] } }] },
 ];
 
 exports.login = async (req, res) => {
@@ -93,7 +98,7 @@ exports.login = async (req, res) => {
   res.cookie(COOKIE_NAME, token, cookieOptions);
   logger.info('login_ok', { userId: usuario.id, rol: usuario.Role.tipo });
 
-  res.json({ mensaje: 'Login exitoso', usuario: payloadUsuario(usuario) });
+  res.json({ mensaje: 'Login exitoso', usuario: await payloadUsuario(usuario) });
 };
 
 exports.logout = async (req, res) => {
@@ -146,5 +151,5 @@ exports.changePassword = async (req, res) => {
 exports.me = async (req, res) => {
   const usuario = await Usuario.findByPk(req.userId, { include: INCLUDE_SESION });
   if (!usuario) return res.status(401).json({ error: 'Usuario inactivo o inexistente' });
-  res.json({ usuario: payloadUsuario(usuario) });
+  res.json({ usuario: await payloadUsuario(usuario) });
 };

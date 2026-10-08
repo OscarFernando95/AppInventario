@@ -7,8 +7,8 @@ const { auditar } = require('../utils/audit');
 const { invalidateDashboard } = require('./reporteController');
 const { invalidateInforme } = require('./informeController');
 const { anularVenta } = require('../services/anulacionService');
+const { tiene } = require('../middlewares/auth');
 
-const esAdmin = (req) => req.tipoRol === 'FRONT_ADMIN';
 
 const INCLUDES = [
   { model: Venta, as: 'venta', attributes: ['id', 'fecha', 'total', 'estado', 'forma_pago', 'medio_pago'], include: [{ model: Cliente, attributes: ['nombre'] }] },
@@ -33,13 +33,13 @@ async function alAnular(req, venta, devolucion, extra = {}) {
 
 /**
  * Un solo punto de entrada para "Anular venta":
- *   - Administrador: la anula en el acto.
- *   - Cualquier otro usuario: deja una SOLICITUD que el administrador aprueba o rechaza.
+ *   - Con el permiso ventas.anular: la anula en el acto.
+ *   - Cualquier otro usuario: deja una SOLICITUD que alguien con ventas.resolver_anulaciones aprueba o rechaza.
  */
 exports.anularOSolicitar = async (req, res) => {
   const { motivo } = req.body;
 
-  if (esAdmin(req)) {
+  if (tiene(req, 'ventas.anular')) {
     const r = await sequelize.transaction((t) => anularVenta(req, t, req.params.id, motivo));
     if (!r) return res.status(404).json({ error: 'Venta no encontrada' });
     await alAnular(req, r.venta, r.devolucion);
@@ -65,11 +65,11 @@ exports.anularOSolicitar = async (req, res) => {
   res.status(201).json({ resultado: 'SOLICITADA', solicitud });
 };
 
-/** Solicitudes de la empresa (el administrador ve todas; los demás, las suyas). */
+/** Solicitudes de la empresa (quien las resuelve ve todas; los demás, las suyas). */
 exports.getAnulaciones = async (req, res) => {
   const { limit, offset } = parseListQuery(req.query, { defaultLimit: 50 });
   const where = { empresaId: req.empresaId, estado: req.query.estado || 'PENDIENTE' };
-  if (!esAdmin(req)) where.solicitada_por = req.userId;
+  if (!tiene(req, 'ventas.resolver_anulaciones')) where.solicitada_por = req.userId;
   const { count, rows } = await AnulacionVenta.findAndCountAll({
     where, include: INCLUDES, order: [['createdAt', 'DESC']], limit, offset,
   });

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const ventaController = require('../controllers/ventaController');
-const { verifyToken, requireModulo, isFrontAdmin } = require('../middlewares/auth');
+const { verifyToken, requireModulo, requirePermiso } = require('../middlewares/auth');
 const asyncHandler = require('../middlewares/asyncHandler');
 const validate = require('../middlewares/validate');
 const { idParam } = require('../schemas/common');
@@ -24,7 +24,7 @@ router.get('/:id', validate({ params: idParam }), asyncHandler(ventaController.g
 router.post('/:id/anular', validate({ params: idParam, body: anularVenta }), asyncHandler(anulacionController.anularOSolicitar));
 router.get('/:id/devoluciones', validate({ params: idParam }), asyncHandler(devolucionController.getDevoluciones));
 // Devolver parte de una venta reescribe inventario y dinero: por ahora solo el administrador.
-router.post('/:id/devoluciones', isFrontAdmin, validate({ params: idParam, body: devolucionCreate }), asyncHandler(devolucionController.crearDevolucion));
+router.post('/:id/devoluciones', requirePermiso('ventas.devolver'), validate({ params: idParam, body: devolucionCreate }), asyncHandler(devolucionController.crearDevolucion));
 router.post('/', validate({ body: ventaCreate }), asyncHandler(ventaController.createVenta));
 
 module.exports = router;

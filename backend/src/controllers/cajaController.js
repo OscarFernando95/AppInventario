@@ -5,6 +5,7 @@ const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { buildListWhere } = require('../utils/listFilters');
 const { auditar } = require('../utils/audit');
+const { tiene } = require('../middlewares/auth');
 
 const { calcularResumen, registrarEgreso, calcularBalance, redondear2 } = require('../services/cajaService');
 
@@ -40,8 +41,8 @@ async function conResumen(caja) {
   return json;
 }
 
-// Un FRONT_USER solo ve/gestiona su propia caja; el FRONT_ADMIN, la de cualquiera.
-const puedeVer = (req, caja) => req.tipoRol === 'FRONT_ADMIN' || caja.usuarioId === req.userId;
+// Sin el permiso caja.todas, cada quien solo ve y gestiona su propia caja.
+const puedeVer = (req, caja) => tiene(req, 'caja.todas') || caja.usuarioId === req.userId;
 
 /** Caja abierta del usuario en la empresa activa (o null). */
 exports.getCajaActual = async (req, res) => {
@@ -56,7 +57,7 @@ exports.getCajas = async (req, res) => {
   const { limit, offset } = parseListQuery(req.query);
   const where = {
     empresaId: req.empresaId,
-    ...(req.tipoRol === 'FRONT_ADMIN' ? {} : { usuarioId: req.userId }),
+    ...(tiene(req, 'caja.todas') ? {} : { usuarioId: req.userId }),
     ...buildListWhere(req.query, { fecha: 'fecha_apertura', igualdad: ['estado'] }),
   };
   const { count, rows } = await Caja.findAndCountAll({
