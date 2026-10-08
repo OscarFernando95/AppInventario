@@ -5,7 +5,7 @@ const { invalidateDashboard } = require('./reporteController');
 const { COLUMNAS, normalizarCodigo, leerWorkbook, validarFilas } = require('../utils/xlsxImport');
 const logger = require('../utils/logger');
 const { auditar } = require('../utils/audit');
-const { TIPOS_CON_RECETA, consumoBase, costoDeConsumo } = require('../services/recetas');
+const { TIPOS_CON_RECETA, consumoBase, costoDeConsumo, esPorLotes } = require('../services/recetas');
 const { analizarProductos, objetivoDe } = require('../services/reposicion');
 const { cargarRecetas } = require('../services/recetasDb');
 const { margen } = require('../services/costos');
@@ -30,6 +30,10 @@ exports.getProductos = async (req, res) => {
   const json = productos.map((p) => p.toJSON());
   const analisis = analizarProductos(json);
   const costoPorId = new Map(json.map((p) => [p.id, Number(p.costo_promedio)]));
+  // Una preparación por lotes sin producir aún no tiene costo registrado: mientras tanto vale lo que cuesta su receta.
+  for (const p of json) {
+    if (esPorLotes(p) && !(Number(p.costo_promedio) > 0)) costoPorId.set(p.id, costoDeConsumo(analisis.get(p.id).consumo, costoPorId));
+  }
 
   res.json(json.map((p) => {
     const a = analisis.get(p.id);
@@ -41,7 +45,7 @@ exports.getProductos = async (req, res) => {
     p.stock_objetivo_efectivo = objetivoDe(p);
     if (TIPOS_CON_RECETA.includes(p.tipo)) {
       // Un plato / preparación no tiene stock ni costo propios: salen de sus ingredientes.
-      p.costo = Math.round(costoDeConsumo(a.consumo, costoPorId) * 10000) / 10000;
+      p.costo = esPorLotes(p) ? costoPorId.get(p.id) : Math.round(costoDeConsumo(a.consumo, costoPorId) * 10000) / 10000;
       if (p.tipo === 'RECETA') p.porciones_disponibles = a.disponible;
     } else {
       p.costo = Number(p.costo_promedio);
@@ -85,6 +89,7 @@ async function validarTipoYReceta(req, { tipo, recetaBody, productoId, rendimien
   if (productoId) {
     const recetas = await cargarRecetas(req.empresaId, {
       transaction: t,
+      sinLotes: true, // un ciclo es un error aunque una preparación del camino tenga stock propio
       overrides: new Map([[productoId, { rendimiento: tipo === 'RECETA' ? 1 : rendimiento, items: recetaBody }]]),
     });
     try {
@@ -122,11 +127,14 @@ function normalizarPresentacion(datos, tipo, actual) {
   return out;
 }
 
-/** Campos que no aplican según el tipo: costo en platos/preparaciones, rendimiento fuera de preparaciones. */
+/**
+ * Campos que no aplican según el tipo: costo en platos/preparaciones (en una preparación por lotes lo
+ * calcula cada producción), rendimiento y lotes fuera de las preparaciones.
+ */
 function limpiarPorTipo(datos, tipo) {
   const limpio = { ...datos };
   if (TIPOS_CON_RECETA.includes(tipo)) delete limpio.costo_promedio;
-  if (tipo !== 'PREPARACION') delete limpio.rendimiento;
+  if (tipo !== 'PREPARACION') { delete limpio.rendimiento; limpio.por_lotes = false; }
   return limpio;
 }
 
@@ -176,6 +184,10 @@ exports.updateProducto = async (req, res) => {
       datos.stock_objetivo !== undefined ? datos.stock_objetivo : actual.stock_objetivo
     );
     const cambiaTipo = tipo !== actual.tipo;
+    // Una preparación por lotes con existencias no puede dejar de serlo ni cambiar de tipo: ese stock quedaría huérfano.
+    if (esPorLotes(actual) && Number(actual.stock_actual) > 0 && (cambiaTipo || datos.por_lotes === false)) {
+      throw new ValidationError(`"${actual.nombre_producto}" tiene ${Number(actual.stock_actual)} en existencias: regístralas como merma o consúmelas antes de dejar de producirla por lotes.`);
+    }
     if (cambiaTipo) {
       const comoIngrediente = await RecetaItem.count({ where: { insumoId: actual.id }, transaction: t })
         + await ModificadorItem.count({ where: { insumoId: actual.id }, transaction: t });

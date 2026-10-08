@@ -16,6 +16,8 @@ const cajaCerrar = z.object({
 });
 
 const cajaRetiro = z.object({
+  // RETIRO: el dueño saca dinero. PROPINA: se entregan al personal las propinas recibidas en efectivo.
+  tipo: z.enum(['RETIRO', 'PROPINA']).optional().default('RETIRO'),
   concepto: z.string().trim().min(1, 'Indica el concepto.').max(255),
   monto: monto.refine((n) => n > 0, 'El monto debe ser mayor a 0.'),
 });

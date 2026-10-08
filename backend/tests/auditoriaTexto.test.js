@@ -39,6 +39,22 @@ describe('describirEvento (auditoría gerencial)', () => {
     expect(describirEvento('gasto_anulado', { descripcion: 'Papelería', monto: 10000 }).accion).toBe('Anuló un gasto');
   });
 
+  it('mesas: comanda, ítem anulado, cuenta cancelada y propina en la venta', () => {
+    expect(describirEvento('comanda_enviada', { cuentaId: 4, comandaId: 9, cuenta: 'Mesa 3', numItems: 2 }).descripcion).toBe('Mesa 3 · comanda #9 · 2 ítems');
+    const anulado = describirEvento('cuenta_item_anulado', { cuenta: 'Mesa 3', item: 'Pizza', cantidad: 1, motivo: 'Cliente se fue', enviado: true });
+    expect(anulado.accion).toBe('Anuló un pedido ya enviado a cocina');
+    expect(anulado.descripcion).toBe('Mesa 3 · 1 × Pizza · motivo: Cliente se fue');
+    expect(describirEvento('cuenta_cancelada', { cuenta: 'Mesa 3', numItems: 3, enviados: 2, motivo: 'Se fueron' }).descripcion).toBe('Mesa 3 · 3 ítems (2 ya enviados a cocina) · motivo: Se fueron');
+    expect(describirEvento('cuenta_movida', { desde: 'Mesa 1', hacia: 'Mesa 5' }).descripcion).toBe('De Mesa 1 a Mesa 5');
+    const venta = describirEvento('venta_creada', { ventaId: 5, total: 50000, cuenta: 'Mesa 2', propina: 5000, numItems: 4 }).descripcion;
+    expect(venta).toMatch(/Mesa 2 · propina \$\s?5\.000$/);
+    expect(describirEvento('caja_propinas', { monto: 12000 }).accion).toBe('Entregó las propinas al personal');
+  });
+
+  it('producción por lotes', () => {
+    expect(describirEvento('produccion_registrada', { productoNombre: 'Salsa', cantidad: 2000, unidad: 'ml' }).descripcion).toBe('2.000 ml de «Salsa»');
+  });
+
   it('usuarios: nombre y usuario', () => {
     expect(describirEvento('usuario_creado', { nombre: 'Luis Pérez', username: 'luis' }).descripcion).toBe('Luis Pérez (@luis)');
     expect(describirEvento('usuario_actualizado', { username: 'luis' }).descripcion).toBe('(@luis)');
@@ -71,7 +87,7 @@ describe('catálogo de eventos', () => {
       expect(MODULOS).toContain(modulo);
       expect(eventosDeModulo(modulo)).toContain(evento);
     }
-    expect(eventosDeModulo('Caja').sort()).toEqual(['caja_abierta', 'caja_cerrada', 'caja_retiro']);
+    expect(eventosDeModulo('Caja').sort()).toEqual(['caja_abierta', 'caja_cerrada', 'caja_propinas', 'caja_retiro']);
   });
 
   it('todo evento que un controlador audita tiene texto gerencial (o está marcado como solo-backoffice)', () => {

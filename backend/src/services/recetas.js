@@ -10,9 +10,11 @@
  *                stock; sus ingredientes se descuentan al vender el plato que
  *                la usa. `rendimiento` = cuánto produce la receta, en la
  *                unidad de medida de la preparación (p. ej. 1000 ml).
+ *                Si es "por lotes" (`lote`) tiene stock propio: se produce
+ *                aparte y al vender el plato se descuenta ELLA, no sus ingredientes.
  *   RECETA       plato vendible: al venderlo descuenta sus ingredientes.
  *
- * `recetas` = Map(productoId -> { rendimiento, items: [{ insumoId, cantidad }] })
+ * `recetas` = Map(productoId -> { rendimiento, lote, items: [{ insumoId, cantidad }] })
  * solo para RECETA y PREPARACION; cualquier otro id es un ingrediente base.
  */
 
@@ -22,6 +24,9 @@ const TIPOS_CON_RECETA = ['RECETA', 'PREPARACION'];
 /** Tipos que no se pueden vender directamente en el POS. */
 const TIPOS_NO_VENDIBLES = ['INSUMO', 'PREPARACION'];
 
+/** ¿Es una preparación con stock propio (se produce por lotes)? */
+const esPorLotes = (p) => p.tipo === 'PREPARACION' && !!p.por_lotes;
+
 const redondear3 = (n) => Math.round((Number(n) + Number.EPSILON) * 1000) / 1000;
 
 /**
@@ -29,18 +34,20 @@ const redondear3 = (n) => Math.round((Number(n) + Number.EPSILON) * 1000) / 1000
  * (1 porción de un plato; N unidades de una preparación). Expande las
  * sub-recetas de forma recursiva. Devuelve Map(insumoBaseId -> cantidad).
  * `factor` puede ser negativo (modificadores tipo "sin azúcar").
+ * Una preparación por lotes cuenta como ingrediente base (tiene stock propio) salvo que
+ * sea la raíz y `expandirLote` sea true (así se calcula lo que consume PRODUCIRLA).
  * Lanza Error si hay un ciclo entre recetas.
  */
-function consumoBase(productoId, recetas, factor = 1, acc = new Map(), pila = []) {
+function consumoBase(productoId, recetas, factor = 1, acc = new Map(), pila = [], expandirLote = false) {
   const receta = recetas.get(productoId);
-  if (!receta) {
+  if (!receta || (receta.lote && !(expandirLote && pila.length === 0))) {
     acc.set(productoId, (acc.get(productoId) || 0) + factor);
     return acc;
   }
   if (pila.includes(productoId)) throw new Error('CICLO');
   const proporcion = factor / (Number(receta.rendimiento) || 1);
   for (const item of receta.items) {
-    consumoBase(item.insumoId, recetas, proporcion * Number(item.cantidad), acc, [...pila, productoId]);
+    consumoBase(item.insumoId, recetas, proporcion * Number(item.cantidad), acc, [...pila, productoId], expandirLote);
   }
   return acc;
 }
@@ -55,6 +62,7 @@ function construirMapaRecetas(productos) {
     if (!TIPOS_CON_RECETA.includes(p.tipo)) continue;
     mapa.set(p.id, {
       rendimiento: p.tipo === 'RECETA' ? 1 : (Number(p.rendimiento) || 1),
+      lote: esPorLotes(p),
       items: (p.receta || []).map((i) => ({ insumoId: i.insumoId, cantidad: Number(i.cantidad) })),
     });
   }
@@ -106,5 +114,5 @@ function porcionesDisponibles(consumo, stockPorId) {
 
 module.exports = {
   TIPOS_PRODUCTO, TIPOS_CON_RECETA, TIPOS_NO_VENDIBLES,
-  redondear3, construirMapaRecetas, consumoBase, consumoConModificadores, costoDeConsumo, porcionesDisponibles,
+  esPorLotes, redondear3, construirMapaRecetas, consumoBase, consumoConModificadores, costoDeConsumo, porcionesDisponibles,
 };

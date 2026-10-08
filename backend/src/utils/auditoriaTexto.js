@@ -26,14 +26,14 @@ const sustantivo = (d) => SUSTANTIVO_PRODUCTO[d.tipo] || 'producto';
 const ref = (nombre, id, prefijo = '#') => (nombre ? `«${nombre}»` : (id != null ? `${prefijo}${id}` : ''));
 
 /** Módulos por los que se puede filtrar la vista (orden = orden del menú del filtro). */
-const MODULOS = ['Ventas', 'Cuentas por cobrar', 'Compras', 'Cuentas por pagar', 'Pedidos', 'Inventario', 'Caja', 'Gastos', 'Clientes', 'Proveedores', 'Servicios', 'Recetas', 'Usuarios'];
+const MODULOS = ['Ventas', 'Cuentas por cobrar', 'Compras', 'Cuentas por pagar', 'Pedidos', 'Inventario', 'Caja', 'Mesas', 'Gastos', 'Clientes', 'Proveedores', 'Servicios', 'Recetas', 'Usuarios'];
 
 const EVENTOS = {
   // Ventas
   venta_creada: {
     modulo: 'Ventas',
     accion: () => 'Registró una venta',
-    descripcion: (d) => `Venta #${d.ventaId} por ${cop(d.total)}${d.clienteNombre ? ` a ${d.clienteNombre}` : ''}${d.numItems ? ` (${plural(d.numItems, 'ítem', 'ítems')})` : ''}${d.aCredito ? ` · a crédito (${d.diasCredito} días)` : ''}`,
+    descripcion: (d) => `Venta #${d.ventaId} por ${cop(d.total)}${d.clienteNombre ? ` a ${d.clienteNombre}` : ''}${d.numItems ? ` (${plural(d.numItems, 'ítem', 'ítems')})` : ''}${d.aCredito ? ` · a crédito (${d.diasCredito} días)` : ''}${d.cuenta ? ` · ${d.cuenta}` : ''}${Number(d.propina) > 0 ? ` · propina ${cop(d.propina)}` : ''}`,
   },
   venta_anulada: {
     modulo: 'Ventas',
@@ -118,6 +118,16 @@ const EVENTOS = {
     accion: () => 'Hizo un conteo físico de inventario',
     descripcion: (d) => `${plural(d.ajustados || 0, 'producto ajustado', 'productos ajustados')}, ${d.sinCambio || 0} sin diferencia · diferencia valorizada ${cop(d.valor)}`,
   },
+  produccion_registrada: {
+    modulo: 'Recetas',
+    accion: () => 'Registró una producción por lotes',
+    descripcion: (d) => `${num(d.cantidad)}${d.unidad ? ` ${d.unidad}` : ''} de ${ref(d.productoNombre, d.productoId)}`,
+  },
+  produccion_anulada: {
+    modulo: 'Recetas',
+    accion: () => 'Anuló una producción por lotes',
+    descripcion: (d) => `${num(d.cantidad)}${d.unidad ? ` ${d.unidad}` : ''} de ${ref(d.productoNombre, d.productoId)}`,
+  },
   // Caja
   caja_abierta: {
     modulo: 'Caja',
@@ -137,6 +147,34 @@ const EVENTOS = {
     accion: () => 'Sacó dinero de la caja',
     descripcion: (d) => `${cop(d.monto)}${d.concepto ? ` · ${d.concepto}` : ''}`,
   },
+  caja_propinas: {
+    modulo: 'Caja',
+    accion: () => 'Entregó las propinas al personal',
+    descripcion: (d) => `${cop(d.monto)}${d.concepto ? ` · ${d.concepto}` : ''}`,
+  },
+  // Mesas y cocina
+  comanda_enviada: {
+    modulo: 'Mesas',
+    accion: () => 'Envió una comanda a cocina',
+    descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`} · comanda #${d.comandaId} · ${plural(d.numItems || 0, 'ítem', 'ítems')}`,
+  },
+  cuenta_item_anulado: {
+    modulo: 'Mesas',
+    accion: (d) => (d.enviado ? 'Anuló un pedido ya enviado a cocina' : 'Anuló un pedido'),
+    descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`} · ${d.cantidad != null ? `${num(d.cantidad)} × ` : ''}${d.item || 'ítem'}${d.motivo ? ` · motivo: ${d.motivo}` : ''}`,
+  },
+  cuenta_cancelada: {
+    modulo: 'Mesas',
+    accion: () => 'Canceló una cuenta',
+    descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`}${d.numItems ? ` · ${plural(d.numItems, 'ítem', 'ítems')}${d.enviados ? ` (${d.enviados} ya enviados a cocina)` : ''}` : ''}${d.motivo ? ` · motivo: ${d.motivo}` : ''}`,
+  },
+  cuenta_movida: {
+    modulo: 'Mesas',
+    accion: () => 'Cambió una cuenta de mesa',
+    descripcion: (d) => `De ${d.desde} a ${d.hacia}`,
+  },
+  mesa_creada: { modulo: 'Mesas', accion: () => 'Creó una mesa', descripcion: (d) => ref(d.nombre, d.mesaId) },
+  mesa_actualizada: { modulo: 'Mesas', accion: (d) => (d.activa === false ? 'Desactivó una mesa' : 'Modificó una mesa'), descripcion: (d) => ref(d.nombre, d.mesaId) },
   // Gastos
   gasto_creado: {
     modulo: 'Gastos',

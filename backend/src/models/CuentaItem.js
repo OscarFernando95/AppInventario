@@ -1,0 +1,25 @@
+const { DataTypes } = require('sequelize');
+const sequelize = require('../config/database');
+
+// Una línea de lo pedido en una cuenta. El precio no se guarda: se toma del catálogo al mostrar y al cobrar.
+const CuentaItem = sequelize.define('CuentaItem', {
+  id: { type: DataTypes.INTEGER, autoIncrement: true, primaryKey: true },
+  cuentaId: { type: DataTypes.INTEGER, allowNull: false },
+  productoId: { type: DataTypes.INTEGER, allowNull: true },
+  servicioId: { type: DataTypes.INTEGER, allowNull: true },
+  cantidad: { type: DataTypes.DECIMAL(12, 3), allowNull: false },
+  modificadores: { type: DataTypes.JSONB, allowNull: true },
+  nota: { type: DataTypes.STRING(200), allowNull: true },
+  usuarioId: { type: DataTypes.INTEGER, allowNull: false },
+  comandaId: { type: DataTypes.INTEGER, allowNull: true },
+  estado: { type: DataTypes.STRING(10), allowNull: false, defaultValue: 'ACTIVO' },
+  motivo_anulacion: { type: DataTypes.STRING(300), allowNull: true },
+  anulado_por: { type: DataTypes.INTEGER, allowNull: true },
+  ventaId: { type: DataTypes.INTEGER, allowNull: true },
+}, {
+  tableName: 'cuenta_items',
+  timestamps: true,
+  updatedAt: false,
+});
+
+module.exports = CuentaItem;

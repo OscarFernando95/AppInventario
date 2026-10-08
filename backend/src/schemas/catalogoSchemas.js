@@ -35,6 +35,8 @@ const producto = z.object({
   factor_compra: z.coerce.number().positive().max(99_999_999).transform((n) => Math.round(n * 1e6) / 1e6).optional(),
   // Solo preparaciones: cuánto produce la receta (en la unidad del producto).
   rendimiento: cantidadReceta.optional(),
+  // Solo preparaciones: con stock propio, se producen por lotes (módulo Recetas, «Producción»).
+  por_lotes: z.boolean().optional(),
   // VENTA (por defecto) | INSUMO | PREPARACION | RECETA. Distinto de VENTA exige el módulo Recetas.
   tipo: z.enum(TIPOS_PRODUCTO, { error: 'Tipo de producto no válido.' }).optional(),
   // Ingredientes de un plato o preparación (solo con tipo RECETA / PREPARACION).

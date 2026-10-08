@@ -41,6 +41,22 @@ const ajusteListQuery = z.object({
 
 const rangoQuery = z.object({ desde: fechaDia, hasta: fechaDia });
 
+// --- Producción de preparaciones por lotes ---
+const produccionCreate = z.object({
+  productoId: idRef,
+  cantidad: cantidadPositiva,
+  motivo: textoOpc,
+});
+
+const produccionListQuery = z.object({
+  productoId: z.preprocess((v) => (v === '' ? undefined : v), idRef.optional()),
+  estado: z.enum(['ACTIVA', 'ANULADA']).optional(),
+  desde: fechaDia,
+  hasta: fechaDia,
+  limit: z.any().optional(),
+  offset: z.any().optional(),
+});
+
 // --- Modificadores ---
 const modificadorItem = z.object({ insumoId: idRef, cantidad: cantidadConSigno });
 
@@ -54,5 +70,5 @@ const modificador = z.object({
 const modificadorUpdate = modificador.partial();
 
 module.exports = {
-  TIPOS_SALIDA, ajusteSalida, conteoFisico, ajusteListQuery, rangoQuery, modificador, modificadorUpdate,
+  TIPOS_SALIDA, ajusteSalida, conteoFisico, ajusteListQuery, rangoQuery, produccionCreate, produccionListQuery, modificador, modificadorUpdate,
 };

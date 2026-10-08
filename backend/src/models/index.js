@@ -31,6 +31,11 @@ const DevolucionVenta = require('./DevolucionVenta');
 const DevolucionVentaDetalle = require('./DevolucionVentaDetalle');
 const PagoCompra = require('./PagoCompra');
 const CajaMovimiento = require('./CajaMovimiento');
+const Produccion = require('./Produccion');
+const Mesa = require('./Mesa');
+const Cuenta = require('./Cuenta');
+const CuentaItem = require('./CuentaItem');
+const Comanda = require('./Comanda');
 const Modificador = require('./Modificador');
 const ModificadorItem = require('./ModificadorItem');
 
@@ -160,6 +165,32 @@ DevolucionVenta.hasMany(DevolucionVentaDetalle, { foreignKey: 'devolucionId', as
 DevolucionVentaDetalle.belongsTo(DevolucionVenta, { foreignKey: 'devolucionId' });
 DevolucionVentaDetalle.belongsTo(VentaDetalle, { foreignKey: 'ventaDetalleId', as: 'linea' });
 
+// Producción de preparaciones por lotes.
+Empresa.hasMany(Produccion, { foreignKey: 'empresaId' });
+Produccion.belongsTo(Empresa, { foreignKey: 'empresaId' });
+Producto.hasMany(Produccion, { foreignKey: 'productoId' });
+Produccion.belongsTo(Producto, { foreignKey: 'productoId' });
+Produccion.belongsTo(Usuario, { foreignKey: 'usuarioId' });
+
+// Mesas, cuentas abiertas y comandas.
+Empresa.hasMany(Mesa, { foreignKey: 'empresaId' });
+Mesa.belongsTo(Empresa, { foreignKey: 'empresaId' });
+Mesa.hasMany(Cuenta, { foreignKey: 'mesaId', as: 'cuentas' });
+Cuenta.belongsTo(Mesa, { foreignKey: 'mesaId', as: 'mesa' });
+Cuenta.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'mesero' });
+Cuenta.hasMany(CuentaItem, { foreignKey: 'cuentaId', as: 'items' });
+CuentaItem.belongsTo(Cuenta, { foreignKey: 'cuentaId', as: 'cuenta' });
+CuentaItem.belongsTo(Producto, { foreignKey: 'productoId', as: 'producto' });
+CuentaItem.belongsTo(Servicio, { foreignKey: 'servicioId', as: 'servicio' });
+CuentaItem.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+CuentaItem.belongsTo(Comanda, { foreignKey: 'comandaId', as: 'comanda' });
+Comanda.hasMany(CuentaItem, { foreignKey: 'comandaId', as: 'items' });
+Comanda.belongsTo(Cuenta, { foreignKey: 'cuentaId', as: 'cuenta' });
+Cuenta.hasMany(Comanda, { foreignKey: 'cuentaId', as: 'comandas' });
+Comanda.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'mesero' });
+Cuenta.hasMany(Venta, { foreignKey: 'cuentaId', as: 'ventas' });
+Venta.belongsTo(Cuenta, { foreignKey: 'cuentaId', as: 'cuenta' });
+
 // Modificadores de platos.
 Empresa.hasMany(Modificador, { foreignKey: 'empresaId' });
 Modificador.belongsTo(Empresa, { foreignKey: 'empresaId' });
@@ -177,5 +208,5 @@ LogEvento.belongsTo(Empresa, { foreignKey: 'empresaId' });
 module.exports = {
   sequelize, Empresa, Role, Usuario, Modulo, Departamento, Municipio, ActividadCiiu, Sesion,
   Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle,
-  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle, RolEmpresa, UsuarioEmpresa,
+  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle, RolEmpresa, UsuarioEmpresa, Produccion, Mesa, Cuenta, CuentaItem, Comanda,
 };

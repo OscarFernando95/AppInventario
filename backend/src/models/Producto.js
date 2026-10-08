@@ -82,6 +82,13 @@ const Producto = sequelize.define('Producto', {
     allowNull: false,
     defaultValue: 1,
   },
+  // Solo PREPARACION: con stock propio. Se produce por lotes y al vender un plato se descuenta ella
+  // (no sus ingredientes). Sin marcar, la preparación se descuenta al vender (sin stock).
+  por_lotes: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
   // Solo PREPARACION: cuánto produce la receta, en la unidad de medida del producto.
   rendimiento: {
     type: DataTypes.DECIMAL(12, 3),

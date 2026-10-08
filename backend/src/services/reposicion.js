@@ -7,10 +7,12 @@
  *   VENTA / INSUMO  -> su stock.
  *   RECETA          -> porciones enteras que se pueden preparar con los ingredientes.
  *   PREPARACION     -> unidades que se pueden producir con los ingredientes (puede ser fraccionario).
+ *                      Si es POR LOTES tiene stock propio: su disponible es su stock (y su `consumo`, lo que
+ *                      gasta producir una unidad, sirve para pedir los ingredientes).
  * Un producto tiene alerta si define un mínimo (> 0) y el disponible llegó a él (o se agotó).
  */
 
-const { TIPOS_CON_RECETA, construirMapaRecetas, consumoBase, porcionesDisponibles, redondear3 } = require('./recetas');
+const { TIPOS_CON_RECETA, construirMapaRecetas, consumoBase, porcionesDisponibles, esPorLotes, redondear3 } = require('./recetas');
 
 const EPS = 1e-9;
 // Unidades "medibles" que admiten decimales al pedir (kg, g, lb, oz, L, ml); cajas, bultos, etc. se piden enteros.
@@ -54,8 +56,9 @@ function analizarProductos(productos) {
     let disponible;
     let consumo = null;
     if (TIPOS_CON_RECETA.includes(p.tipo)) {
-      try { consumo = consumoBase(p.id, recetas, 1); } catch { consumo = new Map(); } // ciclo: dato inconsistente
-      disponible = p.tipo === 'RECETA' ? porcionesDisponibles(consumo, stockPorId) : unidadesProducibles(consumo, stockPorId);
+      try { consumo = consumoBase(p.id, recetas, 1, new Map(), [], true); } catch { consumo = new Map(); } // ciclo: dato inconsistente
+      if (esPorLotes(p)) disponible = Number(p.stock_actual);
+      else disponible = p.tipo === 'RECETA' ? porcionesDisponibles(consumo, stockPorId) : unidadesProducibles(consumo, stockPorId);
     } else {
       disponible = Number(p.stock_actual);
     }
@@ -90,7 +93,8 @@ function calcularReposicion(productos, analisis = analizarProductos(productos)) 
   for (const p of productos) {
     const a = analisis.get(p.id);
     if (!TIPOS_CON_RECETA.includes(p.tipo) || !a.alerta || !a.consumo) continue;
-    const objetivo = objetivoDe(p);
+    // Una preparación por lotes ya tiene existencias: solo se piden los ingredientes de lo que falta producir.
+    const objetivo = esPorLotes(p) ? Math.max(0, objetivoDe(p) - a.disponible) : objetivoDe(p);
     for (const [id, porUnidad] of a.consumo) {
       requeridoPlatos.set(id, (requeridoPlatos.get(id) || 0) + porUnidad * objetivo);
       paraPlatos.set(id, [...(paraPlatos.get(id) || []), p.nombre_producto]);

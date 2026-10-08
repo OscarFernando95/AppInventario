@@ -85,8 +85,52 @@ describe('costo y porciones', () => {
       { id: 3, tipo: 'PREPARACION', rendimiento: '500', receta: [] },
     ]);
     expect([...mapa.keys()]).toEqual([2, 3]);
-    expect(mapa.get(2)).toEqual({ rendimiento: 1, items: [{ insumoId: 1, cantidad: 3 }] });
+    expect(mapa.get(2)).toEqual({ rendimiento: 1, lote: false, items: [{ insumoId: 1, cantidad: 3 }] });
     expect(mapa.get(3).rendimiento).toBe(500);
+  });
+});
+
+describe('preparaciones por lotes (con stock propio)', () => {
+  // salsa (10) pasa a producirse por lotes; la pizza (20) la usa
+  const conLote = new Map(recetas);
+  conLote.set(10, { ...recetas.get(10), lote: true });
+
+  it('al vender un plato, la preparación por lotes cuenta como ingrediente base', () => {
+    const c = consumoBase(20, conLote);
+    expect(c.get(10)).toBeCloseTo(150); // 150 ml de salsa, no sus ingredientes
+    expect(c.get(2)).toBeCloseTo(10);
+    expect(c.has(1)).toBe(false);
+  });
+
+  it('producirla expande su receta (la raíz sí se expande)', () => {
+    const c = consumoBase(10, conLote, 500, new Map(), [], true);
+    expect(c.get(1)).toBeCloseTo(400);
+    expect(c.get(2)).toBeCloseTo(50);
+    expect(c.has(10)).toBe(false);
+  });
+
+  it('sin expandirLote la raíz por lotes también es un ingrediente base', () => {
+    expect([...consumoBase(10, conLote, 3)]).toEqual([[10, 3]]);
+  });
+
+  it('una por lotes anidada dentro de otra por lotes no se expande al producir', () => {
+    const anidado = new Map(conLote);
+    anidado.set(30, { rendimiento: 1, lote: true, items: [{ insumoId: 10, cantidad: 2 }, { insumoId: 2, cantidad: 5 }] });
+    const c = consumoBase(30, anidado, 4, new Map(), [], true);
+    expect(c.get(10)).toBeCloseTo(8);
+    expect(c.get(2)).toBeCloseTo(20);
+    expect(c.has(1)).toBe(false);
+  });
+
+  it('construirMapaRecetas marca solo las PREPARACION con por_lotes', () => {
+    const mapa = construirMapaRecetas([
+      { id: 3, tipo: 'PREPARACION', por_lotes: true, rendimiento: 100, receta: [] },
+      { id: 4, tipo: 'PREPARACION', por_lotes: false, receta: [] },
+      { id: 5, tipo: 'RECETA', por_lotes: true, receta: [] },
+    ]);
+    expect(mapa.get(3).lote).toBe(true);
+    expect(mapa.get(4).lote).toBe(false);
+    expect(mapa.get(5).lote).toBe(false);
   });
 });
 

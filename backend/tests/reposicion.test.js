@@ -108,6 +108,27 @@ describe('calcularReposicion', () => {
   });
 });
 
+describe('preparación por lotes', () => {
+  const harina = prod(1, 'Harina', 'INSUMO', { stock_actual: 2000 });
+  const masa = prod(2, 'Masa', 'PREPARACION', {
+    por_lotes: true, stock_actual: 100, rendimiento: 1000, stock_minimo: 500, stock_objetivo: 1000, receta: [{ insumoId: 1, cantidad: 500 }],
+  });
+  const pan = prod(3, 'Pan', 'RECETA', { receta: [{ insumoId: 2, cantidad: 40 }] });
+
+  it('su disponible es su stock (no lo que se podría producir)', () => {
+    const a = analizarProductos([harina, masa, pan]);
+    expect(a.get(2)).toMatchObject({ disponible: 100, estado: 'BAJO', alerta: true });
+    // el plato se limita por el stock de la masa: 100 / 40 = 2 porciones, aunque la harina alcance para más
+    expect(a.get(3).disponible).toBe(2);
+  });
+
+  it('bajo su mínimo pide los ingredientes de lo que falta producir', () => {
+    const [s] = calcularReposicion([prod(1, 'Harina', 'INSUMO', { stock_actual: 100 }), masa]);
+    // faltan 900 de masa (objetivo 1000 − 100): 450 de harina − 100 en stock
+    expect(s).toMatchObject({ productoId: 1, motivo: 'PLATOS', para: ['Masa'], sugerido_base: 350 });
+  });
+});
+
 describe('aPresentacionDePedido', () => {
   it('unidades medibles (kg): decimales hacia arriba; cajas: enteros hacia arriba', () => {
     const kg = { unidad_compra: 'KGM', factor_compra: 1000 };

@@ -16,6 +16,8 @@ router.use(requireModulo('Inventario'));
 
 router.get('/', validate({ query: ajusteListQuery }), asyncHandler(ajusteController.getAjustes));
 router.get('/resumen', validate({ query: rangoQuery }), asyncHandler(ajusteController.getResumen));
+// Consumo teórico vs. conteo físico: detecta robos, desperdicio y recetas mal medidas. Es del administrador.
+router.get('/desviaciones', requirePermiso('inventario.conteo'), validate({ query: rangoQuery }), asyncHandler(ajusteController.getDesviaciones));
 router.post('/', validate({ body: ajusteSalida }), asyncHandler(ajusteController.registrarSalida));
 // El conteo físico reescribe el stock: solo el administrador de la empresa.
 router.post('/conteo', requirePermiso('inventario.conteo'), validate({ body: conteoFisico }), asyncHandler(ajusteController.registrarConteo));

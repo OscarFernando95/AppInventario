@@ -30,6 +30,10 @@ const Venta = sequelize.define('Venta', {
   // Acumulado de lo devuelto por el cliente (devoluciones parciales); la venta original no cambia.
   total_devuelto: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0 },
   dias_credito: { type: DataTypes.INTEGER, allowNull: true },
+  // Propina voluntaria (cuentas de mesa): NO es ingreso, no suma a `total`; si se pagó en efectivo sí entra a la caja.
+  propina: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0 },
+  // Cuenta de mesa de la que salió esta venta (una cuenta puede dividirse en varias ventas).
+  cuentaId: { type: DataTypes.INTEGER, allowNull: true },
   cajaId: {
     type: DataTypes.INTEGER,
     allowNull: true, // solo si la empresa tiene el módulo Caja

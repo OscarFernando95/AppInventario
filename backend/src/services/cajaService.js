@@ -13,7 +13,8 @@ const esEfectivo = (forma, medio) => String(forma) === '1' && String(medio) === 
 
 /**
  * Totales de una caja: ventas por forma/medio de pago, abonos de clientes y egresos.
- *   efectivo_esperado = base + ventas de contado en efectivo + abonos en efectivo − egresos de caja.
+ *   efectivo_esperado = base + ventas de contado en efectivo + propinas en efectivo + abonos en efectivo − egresos de caja.
+ * La propina no es ingreso (no suma a las ventas) pero sí es efectivo que está en el cajón hasta que se entrega al personal.
  * Los ingresos de la caja son las ventas y el cobro de ventas a crédito (abonos); todo lo que sale
  * (retiros, gastos, compras, pagos a proveedores y devoluciones) es un egreso registrado.
  */
@@ -37,6 +38,10 @@ async function calcularResumen(caja, transaction) {
     medios.filter((m) => esEfectivo(m.forma_pago, m.medio_pago)).reduce((a, m) => a + m.total, 0)
   );
 
+  // Propinas de las ventas en efectivo de contado del turno.
+  const propinasEfectivo = await Venta.sum('propina', { where: { cajaId: caja.id, estado: 'ACTIVA', forma_pago: '1', medio_pago: '10' }, transaction });
+  const propinas_efectivo = redondear2(propinasEfectivo || 0);
+
   // Abonos de clientes cobrados en efectivo en este turno (los anulados ya no cuentan).
   const abonosEfectivo = await AbonoVenta.sum('monto', { where: { cajaId: caja.id, estado: 'ACTIVO', medio_pago: '10' }, transaction });
   const abonos_efectivo = redondear2(abonosEfectivo || 0);
@@ -48,9 +53,10 @@ async function calcularResumen(caja, transaction) {
     num_ventas,
     total_ventas,
     ventas_efectivo,
+    propinas_efectivo,
     abonos_efectivo,
     total_egresos,
-    efectivo_esperado: redondear2(Number(caja.monto_inicial) + ventas_efectivo + abonos_efectivo - total_egresos),
+    efectivo_esperado: redondear2(Number(caja.monto_inicial) + ventas_efectivo + propinas_efectivo + abonos_efectivo - total_egresos),
     medios,
   };
 }

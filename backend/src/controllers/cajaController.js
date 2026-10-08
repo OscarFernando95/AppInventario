@@ -22,6 +22,7 @@ async function conResumen(caja) {
       num_ventas: caja.num_ventas,
       total_ventas: Number(caja.total_ventas),
       ventas_efectivo: Number(caja.ventas_efectivo),
+      propinas_efectivo: Number(caja.propinas_efectivo || 0),
       abonos_efectivo: Number(caja.abonos_efectivo || 0),
       total_egresos: Number(caja.total_egresos || 0),
       efectivo_esperado: Number(caja.efectivo_esperado),
@@ -92,7 +93,7 @@ exports.getCajaById = async (req, res) => {
   });
   json.ventas = await Venta.findAll({
     where: { cajaId: caja.id },
-    attributes: ['id', 'fecha', 'total', 'forma_pago', 'medio_pago', 'estado'],
+    attributes: ['id', 'fecha', 'total', 'propina', 'forma_pago', 'medio_pago', 'estado'],
     order: [['fecha', 'ASC']],
     raw: true,
   });
@@ -144,6 +145,7 @@ exports.cerrarCaja = async (req, res) => {
       num_ventas: resumen.num_ventas,
       total_ventas: resumen.total_ventas,
       ventas_efectivo: resumen.ventas_efectivo,
+      propinas_efectivo: resumen.propinas_efectivo,
       abonos_efectivo: resumen.abonos_efectivo,
       total_egresos: resumen.total_egresos,
       efectivo_esperado: resumen.efectivo_esperado,
@@ -166,11 +168,15 @@ exports.cerrarCaja = async (req, res) => {
   res.json(await conResumen(completa));
 };
 
-/** Retiro de efectivo de la caja del usuario (sacar dinero). Los pagos de gastos/compras tienen su propio flujo. */
+/**
+ * Retiro de efectivo de la caja del usuario (sacar dinero). Los pagos de gastos/compras tienen su propio flujo.
+ * `tipo` PROPINA = entrega de las propinas al personal: sale de la caja pero no es un retiro de la empresa
+ * (la propina nunca fue ingreso, así que no resta del dinero de la empresa).
+ */
 exports.registrarRetiro = async (req, res) => {
-  const { concepto, monto } = req.body;
-  const mov = await sequelize.transaction((t) => registrarEgreso(req, t, { tipo: 'RETIRO', concepto, monto }));
-  auditar(req, 'caja_retiro', { cajaId: mov.cajaId, monto: Number(mov.monto), concepto });
+  const { concepto, monto, tipo } = req.body;
+  const mov = await sequelize.transaction((t) => registrarEgreso(req, t, { tipo, concepto, monto }));
+  auditar(req, tipo === 'PROPINA' ? 'caja_propinas' : 'caja_retiro', { cajaId: mov.cajaId, monto: Number(mov.monto), concepto });
   res.status(201).json(mov);
 };
 
