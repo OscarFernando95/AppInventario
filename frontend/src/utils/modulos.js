@@ -17,7 +17,7 @@ export const TIPOS_NEGOCIO = [
     value: 'RESTAURANTE',
     label: 'Restaurante / cafetería',
     descripcion: 'Platos que consumen ingredientes del inventario.',
-    sugeridos: ['Inventario', 'Proveedores', 'Clientes', 'Compras', 'Pedidos', 'Ventas', 'Recetas', 'Caja', 'Gastos', 'Cuentas por pagar', 'Informes'],
+    sugeridos: ['Inventario', 'Proveedores', 'Clientes', 'Compras', 'Pedidos', 'Ventas', 'Recetas', 'Mesas', 'Cocina', 'Caja', 'Gastos', 'Cuentas por pagar', 'Informes'],
   },
   {
     value: 'SERVICIOS',

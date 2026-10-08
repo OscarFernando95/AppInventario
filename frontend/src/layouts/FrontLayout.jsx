@@ -4,7 +4,7 @@ import { useAuthStore } from '../store/authStore';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../api/axios';
 import { usePermisos } from '../hooks/usePermisos';
-import { KeyRound, Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins, PackagePlus, ReceiptText, WalletCards } from 'lucide-react';
+import { KeyRound, Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins, PackagePlus, ReceiptText, WalletCards, Armchair, CookingPot } from 'lucide-react';
 
 // Títulos con tilde para las rutas cuyo nombre se escribe sin ella.
 const TITULOS = {
@@ -68,6 +68,8 @@ const FrontLayout = () => {
     { name: 'Pedidos', path: '/app/pedidos', icon: ClipboardList },
     { name: 'Compras', path: '/app/compras', icon: Package },
     { name: 'Ventas', path: '/app/ventas', icon: ShoppingCart },
+    { name: 'Mesas', path: '/app/mesas', icon: Armchair },
+    { name: 'Cocina', path: '/app/cocina', icon: CookingPot },
     { name: 'Caja', path: '/app/caja', icon: Wallet },
     { name: 'Cuentas por cobrar', path: '/app/cuentas-por-cobrar', icon: ReceiptText },
     { name: 'Cuentas por pagar', path: '/app/cuentas-por-pagar', icon: WalletCards, permiso: 'cartera.pagar' },

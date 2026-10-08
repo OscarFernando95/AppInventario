@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { ClipboardCheck, CheckCircle2, MinusCircle } from 'lucide-react';
-import { formatCOP, formatCantidad } from '../../utils/format';
+import { ClipboardCheck, CheckCircle2, MinusCircle, ScanSearch } from 'lucide-react';
+import { formatCOP, formatCantidad, fechaLocal } from '../../utils/format';
 import { unidadCorta } from '../../utils/unidades';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
@@ -28,6 +28,9 @@ const TIPOS = {
 };
 const FILTROS_VACIOS = { tipo: '', desde: '', hasta: '' };
 
+/** Platos y preparaciones no tienen stock propio (se descuenta de sus ingredientes), salvo las preparaciones por lotes. */
+const conStockPropio = (p) => !['RECETA', 'PREPARACION'].includes(p.tipo) || !!p.por_lotes;
+
 const fmtFecha = (v) => new Date(v).toLocaleString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 /* ───────────────────────── Mermas y ajustes ───────────────────────── */
@@ -41,7 +44,7 @@ const Mermas = () => {
   const hayFiltros = Object.values(filtros).some(Boolean);
 
   const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
-  const conStock = useMemo(() => productos.filter((p) => !['RECETA', 'PREPARACION'].includes(p.tipo)), [productos]);
+  const conStock = useMemo(() => productos.filter(conStockPropio), [productos]);
   const opciones = useMemo(
     () => conStock.map((p) => ({ value: String(p.id), label: `${p.nombre_producto} · ${formatCantidad(p.stock_actual)} ${unidadCorta(p.unidad_medida)}`, keywords: p.codigo })),
     [conStock]
@@ -208,7 +211,7 @@ const Conteo = () => {
   const lista = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     return productos
-      .filter((p) => !['RECETA', 'PREPARACION'].includes(p.tipo))
+      .filter(conStockPropio)
       .filter((p) => !q || `${p.codigo} ${p.nombre_producto}`.toLowerCase().includes(q));
   }, [productos, busqueda]);
 
@@ -355,11 +358,121 @@ const Conteo = () => {
   );
 };
 
+/* ───────────────────────── Desviaciones ───────────────────────── */
+const ESTADOS_DESVIACION = {
+  FALTANTE: { label: 'Faltante', tone: 'bg-red-100 text-red-800' },
+  SOBRANTE: { label: 'Sobrante', tone: 'bg-sky-100 text-sky-800' },
+  OK: { label: 'Cuadra', tone: 'bg-emerald-100 text-emerald-800' },
+  SIN_CONTEO: { label: 'Sin diferencias', tone: 'bg-slate-100 text-slate-600' },
+};
+
+const Stat = ({ label, value, tone = 'text-slate-800' }) => (
+  <div className="card-container p-5">
+    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">{label}</p>
+    <p className={`text-2xl font-bold mt-1 ${tone}`}>{value}</p>
+  </div>
+);
+
+const Desviaciones = () => {
+  const [rango, setRango] = useState(() => {
+    const hoy = fechaLocal();
+    return { desde: `${hoy.slice(0, 8)}01`, hasta: hoy }; // desde el 1 del mes
+  });
+  const [soloProblemas, setSoloProblemas] = useState(false);
+  const hayFiltros = !!rango.desde || !!rango.hasta;
+
+  const { data, isLoading, isError, error, refetch } = useEmpresaQuery(['ajustes', 'desviaciones', rango], async () => {
+    const params = {};
+    Object.entries(rango).forEach(([k, v]) => { if (v) params[k] = v; });
+    return (await api.get('/ajustes/desviaciones', { params })).data;
+  });
+  const filas = useMemo(() => (data?.filas || []).filter((f) => !soloProblemas || f.estado === 'FALTANTE'), [data, soloProblemas]);
+  const t = data?.totales;
+  const conValores = t?.valor_faltante !== undefined;
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-slate-500 max-w-3xl">
+        Compara lo que <strong>debió gastarse</strong> según las recetas y las producciones con lo que <strong>faltó o sobró al contar</strong>.
+        Un faltante grande frente al consumo teórico sugiere desperdicio, porciones mal servidas, robo o una receta mal medida.
+        Solo aparece diferencia donde hiciste un conteo físico en el rango.
+      </p>
+
+      <FilterBar hayFiltros={hayFiltros} onLimpiar={() => setRango({ desde: '', hasta: '' })}>
+        <Field label="Desde" className="w-full sm:w-44">
+          <input type="date" className="input-field" value={rango.desde} onChange={(e) => setRango({ ...rango, desde: e.target.value })} />
+        </Field>
+        <Field label="Hasta" className="w-full sm:w-44">
+          <input type="date" className="input-field" value={rango.hasta} onChange={(e) => setRango({ ...rango, hasta: e.target.value })} />
+        </Field>
+        <label className="flex items-center gap-2 text-sm text-slate-700 pb-2.5">
+          <input type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600" checked={soloProblemas} onChange={(e) => setSoloProblemas(e.target.checked)} />
+          Solo faltantes
+        </label>
+      </FilterBar>
+
+      {conValores && (
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+          <Stat label="Faltante al contar" value={formatCOP(t.valor_faltante)} tone={t.valor_faltante > 0 ? 'text-red-700' : 'text-slate-800'} />
+          <Stat label="Sobrante al contar" value={formatCOP(t.valor_sobrante)} tone="text-sky-700" />
+          <Stat label="Mermas registradas" value={formatCOP(t.valor_mermas)} tone="text-amber-700" />
+          <Stat label="Productos con faltante" value={t.con_faltante} />
+        </div>
+      )}
+
+      <TableCard>
+        <THead>
+          <Th>Producto</Th>
+          <Th align="right">Debió gastarse</Th>
+          <Th align="right">Mermas</Th>
+          <Th align="right">Al contar</Th>
+          {conValores && <Th align="right">Valor</Th>}
+          <Th align="right">% del consumo</Th>
+          <Th align="center">Estado</Th>
+        </THead>
+        <tbody>
+          <TableState
+            colSpan={conValores ? 7 : 6} isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
+            isEmpty={filas.length === 0} emptyIcon={ScanSearch}
+            emptyTitle="Sin datos para este rango"
+            emptyHint="Aparecen los productos que se gastaron en ventas o producciones, o que tuvieron conteo o mermas."
+          />
+          {filas.map((f) => (
+            <Tr key={f.productoId}>
+              <Td className="font-medium text-slate-800">
+                {f.nombre_producto}
+                <span className="block text-xs font-normal text-slate-500">{f.codigo}</span>
+              </Td>
+              <Td align="right" className="whitespace-nowrap">
+                {formatCantidad(f.consumo_teorico)} {unidadCorta(f.unidad_medida)}
+                {f.consumo_produccion > 0 && (
+                  <span className="block text-[11px] text-slate-500">{formatCantidad(f.consumo_ventas)} ventas · {formatCantidad(f.consumo_produccion)} producción</span>
+                )}
+              </Td>
+              <Td align="right" className="whitespace-nowrap">{f.mermas > 0 ? `${formatCantidad(f.mermas)} ${unidadCorta(f.unidad_medida)}` : <span className="text-slate-400">—</span>}</Td>
+              <Td align="right" className={`whitespace-nowrap font-semibold ${f.conteo < 0 ? 'text-red-700' : f.conteo > 0 ? 'text-sky-700' : 'text-slate-400'}`}>
+                {f.conteo === 0 ? '—' : `${f.conteo > 0 ? '+' : ''}${formatCantidad(f.conteo)} ${unidadCorta(f.unidad_medida)}`}
+              </Td>
+              {conValores && <Td align="right" className={`whitespace-nowrap ${f.valor_conteo < 0 ? 'text-red-700' : ''}`}>{f.contado && f.valor_conteo !== 0 ? formatCOP(f.valor_conteo) : <span className="text-slate-400">—</span>}</Td>}
+              <Td align="right" className={`font-semibold ${f.desviacion_pct >= 10 ? 'text-red-700' : f.desviacion_pct >= 3 ? 'text-amber-700' : 'text-slate-700'}`}>
+                {f.desviacion_pct == null ? <span className="text-slate-400 font-normal">—</span> : `${f.desviacion_pct.toLocaleString('es-CO', { maximumFractionDigits: 1 })}%`}
+              </Td>
+              <Td align="center">
+                <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${ESTADOS_DESVIACION[f.estado].tone}`}>{ESTADOS_DESVIACION[f.estado].label}</span>
+              </Td>
+            </Tr>
+          ))}
+        </tbody>
+      </TableCard>
+    </div>
+  );
+};
+
 /* ───────────────────────── Página ───────────────────────── */
 const Ajustes = () => {
   const esAdmin = usePermisos().can('inventario.conteo');
   const [tab, setTab] = useState('mermas');
-  const tabs = [{ id: 'mermas', label: 'Mermas y ajustes' }, ...(esAdmin ? [{ id: 'conteo', label: 'Conteo físico' }] : [])];
+  const tabs = [{ id: 'mermas', label: 'Mermas y ajustes' }, ...(esAdmin ? [{ id: 'conteo', label: 'Conteo físico' }, { id: 'desviaciones', label: 'Desviaciones' }] : [])];
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -368,7 +481,7 @@ const Ajustes = () => {
         description="Registra mermas y vencidos, y cuadra el stock del sistema con lo que realmente hay."
       />
       <Tabs tabs={tabs} value={esAdmin ? tab : 'mermas'} onChange={setTab} />
-      {tab === 'conteo' && esAdmin ? <Conteo /> : <Mermas />}
+      {tab === 'conteo' && esAdmin ? <Conteo /> : tab === 'desviaciones' && esAdmin ? <Desviaciones /> : <Mermas />}
     </div>
   );
 };

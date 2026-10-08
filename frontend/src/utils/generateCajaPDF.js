@@ -23,6 +23,7 @@ export const generateCajaPDF = (caja, options = {}) => {
   const movimientos = caja.movimientos || [];
   const abonos = caja.abonos || [];
   const totalAbonos = Number(resumen.abonos_efectivo || 0);
+  const totalPropinas = Number(resumen.propinas_efectivo || 0);
   const totalEgresos = Number(resumen.total_egresos || 0);
   const cerrada = caja.estado === 'CERRADA';
 
@@ -159,6 +160,7 @@ export const generateCajaPDF = (caja, options = {}) => {
   const cuadre = [
     ['Base inicial', formatCOP(caja.monto_inicial)],
     ['(+) Ventas en efectivo', formatCOP(resumen.ventas_efectivo)],
+    ...(totalPropinas > 0 ? [['(+) Propinas en efectivo (no son ventas)', formatCOP(totalPropinas)]] : []),
     ...(totalAbonos > 0 ? [['(+) Abonos de clientes en efectivo', formatCOP(totalAbonos)]] : []),
     ['(−) Egresos de caja (retiros y pagos)', totalEgresos > 0 ? `-${formatCOP(totalEgresos)}` : formatCOP(0)],
     ['(=) Efectivo esperado', formatCOP(resumen.efectivo_esperado)],
@@ -209,7 +211,7 @@ export const generateCajaPDF = (caja, options = {}) => {
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...primary);
     doc.text('EGRESOS DE CAJA', margin, y);
-    const tipos = { RETIRO: 'Retiro', GASTO: 'Gasto', COMPRA: 'Compra', DEVOLUCION: 'Devolución', PAGO_PROV: 'Pago proveedor' };
+    const tipos = { RETIRO: 'Retiro', GASTO: 'Gasto', COMPRA: 'Compra', DEVOLUCION: 'Devolución', PAGO_PROV: 'Pago proveedor', PROPINA: 'Propinas' };
     autoTable(doc, {
       startY: y + 3,
       margin: { left: margin, right: margin },

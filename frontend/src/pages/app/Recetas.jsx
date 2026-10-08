@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { ChefHat, Plus, Trash2, Edit, TrendingUp } from 'lucide-react';
+import { ChefHat, Plus, Trash2, Edit, TrendingUp, Soup, Undo2 } from 'lucide-react';
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { unidadCorta } from '../../utils/unidades';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
@@ -16,6 +16,10 @@ import Field from '../../components/ui/Field';
 import FilterBar from '../../components/ui/FilterBar';
 import { TableCard, THead, Th, Tr, Td } from '../../components/ui/Table';
 import { TableState } from '../../components/ui/DataState';
+import TablePagination from '../../components/ui/TablePagination';
+
+const LIMIT_PRODUCCION = 15;
+const fmtFecha = (v) => new Date(v).toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
 const pct = (n) => `${Number(n).toLocaleString('es-CO', { maximumFractionDigits: 1 })}%`;
 const toneMargen = (p) => (p >= 50 ? 'text-emerald-700' : p >= 20 ? 'text-amber-700' : 'text-red-700');
@@ -291,22 +295,213 @@ const Modificadores = () => {
   );
 };
 
+/* ───────────────────────── Producción por lotes ───────────────────────── */
+const Produccion = () => {
+  const queryClient = useQueryClient();
+  const { can } = usePermisos();
+  const puedeDeshacer = can('inventario.conteo');
+  const verCostos = can('costos.ver');
+  const [form, setForm] = useState({ productoId: '', cantidad: '', motivo: '' });
+  const [formError, setFormError] = useState(null);
+  const [okMsg, setOkMsg] = useState(null);
+  const [offset, setOffset] = useState(0);
+  const [deshacer, setDeshacer] = useState(null);
+
+  const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
+  const lotes = useMemo(() => productos.filter((p) => p.tipo === 'PREPARACION' && p.por_lotes), [productos]);
+  const porId = useMemo(() => new Map(productos.map((p) => [p.id, p])), [productos]);
+  const opciones = useMemo(
+    () => lotes.map((p) => ({ value: String(p.id), label: `${p.nombre_producto} · hay ${formatCantidad(p.stock_actual)} ${unidadCorta(p.unidad_medida)}`, keywords: p.codigo })),
+    [lotes]
+  );
+  const prep = porId.get(Number(form.productoId));
+  const cantidad = Number(form.cantidad) || 0;
+
+  // Lo que gastaría el lote: cada ingrediente directo × cantidad / rendimiento.
+  const necesidades = useMemo(() => {
+    if (!prep || !(cantidad > 0)) return [];
+    const factor = cantidad / (Number(prep.rendimiento) || 1);
+    return (prep.receta || []).map((i) => {
+      const ing = porId.get(i.insumoId);
+      const necesario = Number(i.cantidad) * factor;
+      const esSubreceta = ing?.tipo === 'PREPARACION' && !ing.por_lotes;
+      return { ing, necesario, falta: !esSubreceta && ing && Number(ing.stock_actual) < necesario - 1e-9, esSubreceta };
+    });
+  }, [prep, cantidad, porId]);
+  const hayFaltantes = necesidades.some((n) => n.falta);
+
+  const { data: historial, isLoading, isError, error, refetch } = useEmpresaQuery(['produccion', offset], async () => {
+    const res = await api.get('/produccion', { params: { limit: LIMIT_PRODUCCION, offset } });
+    return { rows: res.data, total: Number(res.headers['x-total-count'] || 0) };
+  });
+
+  const refrescar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
+  const producir = useMutation({
+    mutationFn: (payload) => api.post('/produccion', payload),
+    onSuccess: (res) => {
+      refrescar();
+      setFormError(null);
+      setOkMsg(`Producción registrada: ${formatCantidad(res.data.cantidad)} ${unidadCorta(prep?.unidad_medida)} de ${prep?.nombre_producto}.`);
+      setForm((f) => ({ ...f, cantidad: '', motivo: '' }));
+    },
+    onError: (err) => { setOkMsg(null); setFormError(apiError(err, 'No se pudo registrar la producción')); },
+  });
+  const anular = useMutation({
+    mutationFn: (id) => api.post(`/produccion/${id}/anular`),
+    onSuccess: () => { refrescar(); setDeshacer(null); setFormError(null); },
+    onError: (err) => { setDeshacer(null); setOkMsg(null); setFormError(apiError(err, 'No se pudo deshacer la producción')); },
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    setFormError(null);
+    setOkMsg(null);
+    if (!prep) return setFormError('Elige la preparación que hiciste.');
+    if (!(cantidad > 0)) return setFormError('Indica cuánto preparaste (mayor a 0).');
+    producir.mutate({ productoId: prep.id, cantidad, motivo: form.motivo.trim() || undefined });
+  };
+
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-slate-500 max-w-3xl">
+        Registra lo que preparas en lote («hoy preparé 2 litros de salsa»): se descuentan los ingredientes y la preparación suma su propio stock.
+        Al vender un plato que la usa se descuenta ella. Para que una preparación aparezca aquí, márcala «por lotes» en Inventario.
+      </p>
+
+      <FormError message={formError} onDismiss={() => setFormError(null)} />
+      {okMsg && <p role="status" className="rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-4 py-3">{okMsg}</p>}
+
+      {lotes.length === 0 ? (
+        <div className="card-container p-8 text-center text-slate-500">
+          <Soup className="w-8 h-8 mx-auto mb-2 text-slate-400" aria-hidden="true" />
+          <p className="font-semibold text-slate-700">Aún no hay preparaciones por lotes</p>
+          <p className="text-sm mt-1">En Inventario, crea una preparación (o edita una) y marca «Prepararla por lotes».</p>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="card-container p-5 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr_2fr] gap-4">
+            <Field label="Preparación" required>
+              <SearchableSelect options={opciones} value={form.productoId} onChange={(v) => setForm({ ...form, productoId: v })} placeholder="Buscar preparación…" allowClear={false} />
+            </Field>
+            <Field label={`Cantidad preparada${prep ? ` (${unidadCorta(prep.unidad_medida)})` : ''}`} required>
+              <input type="number" step="any" min="0" className="input-field" placeholder="2000" value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} />
+            </Field>
+            <Field label="Nota (opcional)">
+              <input className="input-field" maxLength={500} placeholder="Lote del lunes" value={form.motivo} onChange={(e) => setForm({ ...form, motivo: e.target.value })} />
+            </Field>
+          </div>
+
+          {necesidades.length > 0 && (
+            <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
+              <p className="text-sm font-semibold text-slate-700 mb-2">Se descontará del inventario</p>
+              <ul className="text-sm space-y-1">
+                {necesidades.map((n, i) => (
+                  <li key={i} className={n.falta ? 'text-red-700 font-semibold' : 'text-slate-700'}>
+                    {n.ing?.nombre_producto || 'Ingrediente'}: {formatCantidad(Math.round(n.necesario * 1000) / 1000)} {unidadCorta(n.ing?.unidad_medida)}
+                    {n.falta && ` — solo hay ${formatCantidad(n.ing.stock_actual)}`}
+                    {n.esSubreceta && <span className="text-slate-500 font-normal"> (sub-receta: se descuentan sus ingredientes)</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <button type="submit" className="btn-primary px-6 gap-2" disabled={producir.isPending || hayFaltantes}>
+              <Soup className="w-4 h-4" aria-hidden="true" /> {producir.isPending ? 'Registrando…' : 'Registrar producción'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      <div>
+        <h3 className="text-lg font-semibold text-slate-800 mb-3">Historial de producción</h3>
+        <TableCard>
+          <THead>
+            <Th>Fecha</Th>
+            <Th>Preparación</Th>
+            <Th align="right">Cantidad</Th>
+            {verCostos && <Th align="right">Costo del lote</Th>}
+            <Th>Registró</Th>
+            <Th align="center">Estado</Th>
+            {puedeDeshacer && <Th align="center" className="w-24">Acciones</Th>}
+          </THead>
+          <tbody>
+            <TableState
+              colSpan={5 + (verCostos ? 1 : 0) + (puedeDeshacer ? 1 : 0)} isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
+              isEmpty={(historial?.rows || []).length === 0} emptyIcon={Soup}
+              emptyTitle="Aún no hay producciones" emptyHint="Cuando registres un lote aparecerá aquí."
+            />
+            {(historial?.rows || []).map((r) => (
+              <Tr key={r.id}>
+                <Td className="whitespace-nowrap text-sm">{fmtFecha(r.fecha)}</Td>
+                <Td className="font-medium text-slate-800">
+                  {r.Producto?.nombre_producto}
+                  {r.motivo && <span className="block text-xs font-normal text-slate-500">{r.motivo}</span>}
+                </Td>
+                <Td align="right" className="whitespace-nowrap">{formatCantidad(r.cantidad)} {unidadCorta(r.Producto?.unidad_medida)}</Td>
+                {verCostos && <Td align="right" className="whitespace-nowrap">{formatCOP(r.costo_total)}</Td>}
+                <Td className="text-sm">{r.Usuario?.nombre}</Td>
+                <Td align="center">
+                  <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${r.estado === 'ACTIVA' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>
+                    {r.estado === 'ACTIVA' ? 'ACTIVA' : 'DESHECHA'}
+                  </span>
+                </Td>
+                {puedeDeshacer && (
+                  <Td align="center">
+                    {r.estado === 'ACTIVA' && (
+                      <button className="btn-icon" aria-label={`Deshacer la producción #${r.id}`} onClick={() => setDeshacer(r)}><Undo2 className="w-4 h-4" /></button>
+                    )}
+                  </Td>
+                )}
+              </Tr>
+            ))}
+          </tbody>
+        </TableCard>
+        <TablePagination total={historial?.total || 0} offset={offset} limit={LIMIT_PRODUCCION} onChange={setOffset} />
+      </div>
+
+      <Modal open={!!deshacer} onClose={() => setDeshacer(null)} title="Deshacer producción" size="md">
+        {deshacer && (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-700">
+              Se devolverán los ingredientes al inventario y se quitarán {formatCantidad(deshacer.cantidad)} {unidadCorta(deshacer.Producto?.unidad_medida)} de «{deshacer.Producto?.nombre_producto}».
+              Solo se puede si el lote sigue completo; si ya se usó en platos, regístralo como merma.
+            </p>
+            <ModalActions>
+              <button type="button" className="btn-secondary" onClick={() => setDeshacer(null)}>Volver</button>
+              <button type="button" className="btn-primary px-6" disabled={anular.isPending} onClick={() => anular.mutate(deshacer.id)}>
+                {anular.isPending ? 'Deshaciendo…' : 'Deshacer producción'}
+              </button>
+            </ModalActions>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+};
+
 /* ───────────────────────── Página ───────────────────────── */
 const Recetas = () => {
   const verCostos = usePermisos().can('costos.ver'); // la rentabilidad muestra costos y márgenes
   const [tab, setTab] = useState(verCostos ? 'rentabilidad' : 'modificadores');
+  const actual = !verCostos && tab === 'rentabilidad' ? 'modificadores' : tab;
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
         title="Recetas y rentabilidad"
-        description="Cuánto cuesta y cuánto deja cada plato, y los modificadores que se ofrecen al vender."
+        description="Cuánto cuesta y cuánto deja cada plato, las preparaciones por lotes y los modificadores que se ofrecen al vender."
       />
       <Tabs
-        tabs={[...(verCostos ? [{ id: 'rentabilidad', label: 'Rentabilidad' }] : []), { id: 'modificadores', label: 'Modificadores' }]}
-        value={verCostos ? tab : 'modificadores'}
+        tabs={[
+          ...(verCostos ? [{ id: 'rentabilidad', label: 'Rentabilidad' }] : []),
+          { id: 'produccion', label: 'Producción' },
+          { id: 'modificadores', label: 'Modificadores' },
+        ]}
+        value={actual}
         onChange={setTab}
       />
-      {verCostos && tab === 'rentabilidad' ? <Rentabilidad /> : <Modificadores />}
+      {actual === 'rentabilidad' ? <Rentabilidad /> : actual === 'produccion' ? <Produccion /> : <Modificadores />}
     </div>
   );
 };

@@ -27,6 +27,8 @@ import { CuentasCobrar, CuentasPagar } from './pages/app/Cartera';
 import Informes from './pages/app/Informes';
 import Auditoria from './pages/app/Auditoria';
 import Roles from './pages/app/Roles';
+import Mesas from './pages/app/Mesas';
+import Cocina from './pages/app/Cocina';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { isAuthenticated, user } = useAuthStore();
@@ -123,6 +125,8 @@ const App = () => {
           <Route path="cuentas-por-cobrar" element={<ModuloRoute modulo="Cuentas por cobrar"><CuentasCobrar /></ModuloRoute>} />
           <Route path="cuentas-por-pagar" element={<ModuloRoute modulo="Cuentas por pagar"><ConPermiso permiso="cartera.pagar"><CuentasPagar /></ConPermiso></ModuloRoute>} />
           <Route path="gastos" element={<ModuloRoute modulo="Gastos"><Gastos /></ModuloRoute>} />
+          <Route path="mesas" element={<ModuloRoute modulo="Mesas"><Mesas /></ModuloRoute>} />
+          <Route path="cocina" element={<ModuloRoute modulo="Cocina"><Cocina /></ModuloRoute>} />
           <Route path="caja" element={<ModuloRoute modulo="Caja"><Caja /></ModuloRoute>} />
           <Route path="pedidos" element={<ModuloRoute modulo="Pedidos"><Pedidos /></ModuloRoute>} />
           <Route path="informes" element={<ModuloRoute modulo="Informes"><Informes /></ModuloRoute>} />

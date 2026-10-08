@@ -1,0 +1,389 @@
+import { useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  ArrowLeft, ChefHat, Printer, Ban, ArrowRightLeft, Minus, Plus, Trash2, Users, Clock, Receipt, CheckCircle2, FileDown, MessageSquareText, Armchair, ShoppingBag,
+} from 'lucide-react';
+import api from '../../api/axios';
+import { formatCOP, formatCantidad } from '../../utils/format';
+import { apiError } from '../../utils/apiError';
+import { generateInvoicePDF } from '../../utils/generateInvoicePDF';
+import { imprimirComanda } from '../../utils/comandaTicket';
+import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import { usePermisos } from '../../hooks/usePermisos';
+import { useAuthStore } from '../../store/authStore';
+import { useAhora, hace } from '../../hooks/useAhora';
+import FormError from '../FormError';
+import Modal, { ModalActions } from '../ui/Modal';
+import Field from '../ui/Field';
+import ProductPicker from './ProductPicker';
+import CobrarModal from './CobrarModal';
+
+const ESTADO_COMANDA = {
+  PENDIENTE: { texto: 'En preparación', tono: 'bg-sky-100 text-sky-800' },
+  LISTA: { texto: 'Lista', tono: 'bg-emerald-100 text-emerald-800' },
+  ENTREGADA: { texto: 'Entregada', tono: 'bg-slate-100 text-slate-600' },
+};
+
+// ¿Imprimir la comanda al enviarla? Por omisión sí cuando no hay pantalla de cocina. Se recuerda por navegador.
+const CLAVE_IMPRIMIR = 'mesas-imprimir-comanda';
+const leerImprimir = (porOmision) => {
+  try {
+    const v = localStorage.getItem(CLAVE_IMPRIMIR);
+    return v === null ? porOmision : v === '1';
+  } catch { return porOmision; }
+};
+const guardarImprimir = (v) => { try { localStorage.setItem(CLAVE_IMPRIMIR, v ? '1' : '0'); } catch { /* sin almacenamiento: se usa el valor por omisión */ } };
+
+const FilaItem = ({ item, comandaPorId, puedeAnular, acciones, bloqueado }) => {
+  const cobrado = !!item.ventaId;
+  const anulado = item.estado === 'ANULADO';
+  const comanda = item.comandaId ? comandaPorId.get(item.comandaId) : null;
+  return (
+    <li className={`flex gap-3 py-3 ${anulado ? 'opacity-50' : ''}`}>
+      <div className="flex-1 min-w-0">
+        <p className={`font-medium text-slate-800 ${anulado ? 'line-through' : ''}`}>
+          {formatCantidad(item.cantidad)} × {item.nombre}
+        </p>
+        {item.modificadores.length > 0 && <p className="text-xs text-slate-500">+ {item.modificadores.map((m) => m.nombre).join(', ')}</p>}
+        {item.nota && <p className="text-xs font-medium text-amber-800 flex items-center gap-1"><MessageSquareText className="w-3 h-3" aria-hidden="true" /> {item.nota}</p>}
+        <p className="mt-0.5 text-[11px] text-slate-500 flex flex-wrap gap-x-2 items-center">
+          <span>{formatCOP(item.precio_unitario)} c/u</span>
+          {cobrado && <span className="font-semibold text-emerald-700">Cobrado · venta #{item.ventaId}</span>}
+          {anulado && <span className="font-semibold text-red-700">Anulado{item.motivo_anulacion ? `: ${item.motivo_anulacion}` : ''}</span>}
+          {comanda && !cobrado && !anulado && <span className={`rounded px-1.5 py-0.5 font-semibold ${ESTADO_COMANDA[comanda.estado].tono}`}>{ESTADO_COMANDA[comanda.estado].texto}</span>}
+        </p>
+      </div>
+      <div className="flex flex-col items-end gap-1">
+        <span className="font-semibold text-slate-800">{formatCOP(item.subtotal)}</span>
+        {!cobrado && !anulado && !bloqueado && (
+          item.enviado ? (
+            puedeAnular && <button type="button" className="text-xs font-semibold text-red-700 hover:underline" onClick={() => acciones.anular(item)}>Anular</button>
+          ) : (
+            <span className="flex items-center gap-0.5">
+              <button type="button" className="btn-icon" aria-label={`Menos ${item.nombre}`} onClick={() => (item.cantidad > 1 ? acciones.cantidad(item, item.cantidad - 1) : acciones.quitar(item))}><Minus className="w-4 h-4" /></button>
+              <button type="button" className="btn-icon" aria-label={`Más ${item.nombre}`} onClick={() => acciones.cantidad(item, item.cantidad + 1)}><Plus className="w-4 h-4" /></button>
+              <button type="button" className="btn-icon" aria-label={`Quitar ${item.nombre}`} onClick={() => acciones.quitar(item)}><Trash2 className="w-4 h-4" /></button>
+              <button type="button" className="btn-icon" aria-label={`Nota para ${item.nombre}`} onClick={() => acciones.nota(item)}><MessageSquareText className="w-4 h-4" /></button>
+            </span>
+          )
+        )}
+      </div>
+    </li>
+  );
+};
+
+/** Una cuenta abierta: se piden platos, se envían a cocina y se cobra (todo o por partes). */
+const CuentaPanel = ({ cuentaId, onVolver }) => {
+  const qc = useQueryClient();
+  const { can } = usePermisos();
+  const activeEmpresa = useAuthStore((s) => s.activeEmpresa);
+  const empresaId = activeEmpresa?.id;
+  const modulos = activeEmpresa?.modulos || [];
+  const ahora = useAhora();
+  const puedeAnular = can('mesas.anular_items');
+  const conCocina = modulos.includes('Cocina');
+
+  const claveCuenta = ['empresa', empresaId ?? null, 'cuentas', cuentaId];
+  const { data: cuenta, isLoading, isError, error } = useEmpresaQuery(['cuentas', cuentaId], `/cuentas/${cuentaId}`, { refetchInterval: 10_000 });
+  const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
+  const { data: servicios = [] } = useEmpresaQuery(['servicios'], '/servicios', { enabled: modulos.includes('Servicios') });
+  const { data: modificadores = [] } = useEmpresaQuery(['modificadores'], '/modificadores', { enabled: modulos.includes('Recetas') });
+  const { data: tablero } = useEmpresaQuery(['mesas'], '/mesas');
+
+  const [imprimir, setImprimir] = useState(() => leerImprimir(!conCocina));
+  const [pidiendo, setPidiendo] = useState(null); // plato con extras que se está pidiendo { opcion, mods, nota, cantidad }
+  const [dialogo, setDialogo] = useState(null); // { tipo: 'anular'|'nota'|'cancelar'|'mover', item? }
+  const [texto, setTexto] = useState('');
+  const [mesaDestino, setMesaDestino] = useState('');
+  const [cobrando, setCobrando] = useState(false);
+  const [resultado, setResultado] = useState(null); // respuesta del cobro
+  const [aviso, setAviso] = useState(null);
+  const [error_, setError] = useState(null);
+
+  const refrescarTablero = () => qc.invalidateQueries({ queryKey: ['empresa', empresaId ?? null, 'mesas'] });
+  const aplicar = (res) => { qc.setQueryData(claveCuenta, res.data); refrescarTablero(); setError(null); };
+  const fallar = (err) => { setError(apiError(err, 'No se pudo completar la acción')); qc.invalidateQueries({ queryKey: claveCuenta }); };
+
+  const agregar = useMutation({ mutationFn: (b) => api.post(`/cuentas/${cuentaId}/items`, b), onSuccess: aplicar, onError: fallar });
+  const editar = useMutation({ mutationFn: ({ id, ...b }) => api.patch(`/cuentas/${cuentaId}/items/${id}`, b), onSuccess: (r) => { aplicar(r); setDialogo(null); }, onError: fallar });
+  const quitar = useMutation({ mutationFn: (id) => api.delete(`/cuentas/${cuentaId}/items/${id}`), onSuccess: aplicar, onError: fallar });
+  const anularItem = useMutation({ mutationFn: ({ id, motivo }) => api.post(`/cuentas/${cuentaId}/items/${id}/anular`, { motivo }), onSuccess: (r) => { aplicar(r); setDialogo(null); }, onError: (e) => { setDialogo(null); fallar(e); } });
+  const mover = useMutation({ mutationFn: (mesaId) => api.post(`/cuentas/${cuentaId}/mover`, { mesaId }), onSuccess: (r) => { aplicar(r); setDialogo(null); }, onError: (e) => { setDialogo(null); fallar(e); } });
+  const cancelar = useMutation({
+    mutationFn: (motivo) => api.post(`/cuentas/${cuentaId}/cancelar`, { motivo }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['empresa'] }); onVolver(); },
+    onError: (e) => { setDialogo(null); fallar(e); },
+  });
+  const enviar = useMutation({
+    mutationFn: () => api.post(`/cuentas/${cuentaId}/enviar`),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ['empresa'] });
+      setError(null);
+      setAviso(`Comanda #${res.data.id} enviada a ${conCocina ? 'cocina' : 'preparación'}.`);
+      if (imprimir) imprimirComanda(res.data, { empresa: activeEmpresa?.nombre });
+    },
+    onError: fallar,
+  });
+
+  const modsDe = (o) => (o.tipo === 'RECETA' ? modificadores : []);
+  const elegir = (o) => {
+    setError(null);
+    setAviso(null);
+    if (modsDe(o).length > 0) return setPidiendo({ opcion: o, mods: [], nota: '', cantidad: 1 });
+    agregar.mutate(o.producto ? { productoId: o.producto.id } : { servicioId: o.servicio.id });
+  };
+  const confirmarPedido = (e) => {
+    e.preventDefault();
+    agregar.mutate({ productoId: pidiendo.opcion.producto.id, cantidad: pidiendo.cantidad, modificadores: pidiendo.mods, nota: pidiendo.nota.trim() || undefined });
+    setPidiendo(null);
+  };
+
+  const descargarFactura = async (ventaId) => {
+    try {
+      const { data } = await api.get(`/ventas/${ventaId}`);
+      generateInvoicePDF(data, data.Empresa || activeEmpresa);
+    } catch (err) {
+      setError(apiError(err, 'No se pudo generar la factura'));
+    }
+  };
+
+  const reimprimir = async (comandaId) => {
+    try {
+      const { data } = await api.get(`/comandas/${comandaId}`);
+      imprimirComanda(data, { empresa: activeEmpresa?.nombre, reimpresion: true });
+    } catch (err) {
+      setError(apiError(err, 'No se pudo cargar la comanda'));
+    }
+  };
+
+  if (isLoading) return <p className="py-12 text-center text-slate-500" role="status">Cargando cuenta…</p>;
+  if (isError || !cuenta) {
+    return (
+      <div className="space-y-4">
+        <button type="button" className="btn-secondary gap-2" onClick={onVolver}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> Volver al tablero</button>
+        <FormError message={apiError(error, 'No se encontró la cuenta.')} />
+      </div>
+    );
+  }
+
+  const abierta = cuenta.estado === 'ABIERTA';
+  const comandaPorId = new Map(cuenta.comandas.map((c) => [c.id, c]));
+  const porEnviar = cuenta.items.filter((i) => i.estado === 'ACTIVO' && !i.enviado && !i.ventaId);
+  const pendientesCobro = cuenta.items.filter((i) => i.estado === 'ACTIVO' && !i.ventaId);
+  const acciones = {
+    cantidad: (item, cantidad) => editar.mutate({ id: item.id, cantidad }),
+    quitar: (item) => quitar.mutate(item.id),
+    anular: (item) => { setTexto(''); setDialogo({ tipo: 'anular', item }); },
+    nota: (item) => { setTexto(item.nota || ''); setDialogo({ tipo: 'nota', item }); },
+  };
+  const ocupada = (m) => m.cuenta && m.cuenta.id !== cuenta.id;
+  const mesasLibres = (tablero?.mesas || []).filter((m) => !ocupada(m) && m.id !== cuenta.mesa?.id);
+  const Icono = cuenta.mesa ? Armchair : ShoppingBag;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="button" className="btn-secondary gap-2" onClick={onVolver}><ArrowLeft className="w-4 h-4" aria-hidden="true" /> Mesas</button>
+        <div className="min-w-0">
+          <h3 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><Icono className="w-6 h-6 text-brand-700" aria-hidden="true" /> {cuenta.nombre}
+            <span className={`text-[10px] font-semibold uppercase tracking-wide rounded px-1.5 py-0.5 ${abierta ? 'bg-brand-700 text-white' : cuenta.estado === 'COBRADA' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'}`}>{cuenta.estado}</span>
+          </h3>
+          <p className="text-sm text-slate-500 flex flex-wrap gap-x-3">
+            <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" aria-hidden="true" /> abierta hace {hace(cuenta.abierta_en, ahora)}</span>
+            <span>Atiende: {cuenta.mesero?.nombre}</span>
+            {cuenta.comensales ? <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" aria-hidden="true" /> {cuenta.comensales}</span> : null}
+          </p>
+        </div>
+        {abierta && (
+          <div className="ml-auto flex flex-wrap gap-2">
+            <button type="button" className="btn-secondary gap-2" onClick={() => { setMesaDestino(''); setDialogo({ tipo: 'mover' }); }}><ArrowRightLeft className="w-4 h-4" aria-hidden="true" /> Cambiar mesa</button>
+            <button type="button" className="btn-secondary gap-2 hover:bg-red-50 hover:text-red-700" onClick={() => { setTexto(''); setDialogo({ tipo: 'cancelar' }); }}><Ban className="w-4 h-4" aria-hidden="true" /> Cancelar cuenta</button>
+          </div>
+        )}
+      </div>
+
+      <FormError message={error_} onDismiss={() => setError(null)} />
+      {aviso && <p role="status" className="rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-4 py-3">{aviso}</p>}
+      {!abierta && (
+        <p role="status" className="rounded-xl bg-slate-100 border border-slate-200 text-slate-700 text-sm px-4 py-3">
+          {cuenta.estado === 'COBRADA' ? 'Esta cuenta ya se cobró por completo.' : `Esta cuenta se canceló${cuenta.motivo_cancelacion ? `: ${cuenta.motivo_cancelacion}` : '.'}`}
+        </p>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr] gap-6 items-start">
+        {abierta ? (
+          <section aria-label="Catálogo" className="card-container p-4">
+            <h4 className="text-sm font-semibold text-slate-700 mb-3">Agregar a la cuenta</h4>
+            <ProductPicker productos={productos} servicios={servicios} onElegir={elegir} deshabilitado={agregar.isPending} />
+          </section>
+        ) : <span />}
+
+        <section aria-label="Cuenta" className="card-container p-4 lg:sticky lg:top-24">
+          <h4 className="text-sm font-semibold text-slate-700 mb-1">Pedido</h4>
+          {cuenta.items.length === 0 ? (
+            <p className="py-8 text-center text-sm text-slate-500">Aún no hay nada pedido.</p>
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {cuenta.items.map((i) => <FilaItem key={i.id} item={i} comandaPorId={comandaPorId} puedeAnular={puedeAnular} acciones={acciones} bloqueado={!abierta} />)}
+            </ul>
+          )}
+
+          <dl className="mt-3 pt-3 border-t border-slate-200 text-sm space-y-1">
+            {cuenta.totales.cobrado > 0 && <div className="flex justify-between"><dt className="text-slate-500">Ya cobrado</dt><dd className="font-semibold text-emerald-700">{formatCOP(cuenta.totales.cobrado)}</dd></div>}
+            <div className="flex justify-between text-lg"><dt className="font-semibold text-slate-800">{cuenta.totales.cobrado > 0 ? 'Falta por cobrar' : 'Total'}</dt><dd className="font-bold text-slate-900">{formatCOP(cuenta.totales.pendiente)}</dd></div>
+          </dl>
+
+          {abierta && (
+            <div className="mt-4 space-y-3">
+              <label className="flex items-center gap-2 text-xs text-slate-600">
+                <input type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600" checked={imprimir} onChange={(e) => { setImprimir(e.target.checked); guardarImprimir(e.target.checked); }} />
+                Imprimir la comanda al enviar
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" className="btn-secondary gap-2" disabled={porEnviar.length === 0 || enviar.isPending} onClick={() => { setAviso(null); enviar.mutate(); }}>
+                  <ChefHat className="w-4 h-4" aria-hidden="true" /> {enviar.isPending ? 'Enviando…' : `Enviar (${porEnviar.length})`}
+                </button>
+                <button type="button" className="btn-primary gap-2" disabled={pendientesCobro.length === 0} onClick={() => { setError(null); setCobrando(true); }}>
+                  <Receipt className="w-4 h-4" aria-hidden="true" /> Cobrar
+                </button>
+              </div>
+            </div>
+          )}
+
+          {cuenta.comandas.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-slate-200">
+              <h5 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5">Comandas</h5>
+              <ul className="space-y-1 text-sm">
+                {cuenta.comandas.map((c) => (
+                  <li key={c.id} className="flex items-center justify-between gap-2">
+                    <span>#{c.id} <span className={`ml-1 text-[11px] rounded px-1.5 py-0.5 font-semibold ${ESTADO_COMANDA[c.estado].tono}`}>{ESTADO_COMANDA[c.estado].texto}</span></span>
+                    <button type="button" className="btn-icon" aria-label={`Reimprimir la comanda ${c.id}`} onClick={() => reimprimir(c.id)}><Printer className="w-4 h-4" /></button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {cuenta.ventas.length > 0 && (
+            <div className="mt-4 pt-3 border-t border-slate-200">
+              <h5 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5">Cobros</h5>
+              <ul className="space-y-1 text-sm">
+                {cuenta.ventas.map((v) => (
+                  <li key={v.id} className="flex items-center justify-between gap-2">
+                    <span>Venta #{v.id} · {formatCOP(v.total)}{v.propina > 0 ? ` + ${formatCOP(v.propina)} propina` : ''}{v.estado === 'ANULADA' ? ' (anulada)' : ''}</span>
+                    <button type="button" className="btn-icon" aria-label={`Descargar la factura de la venta ${v.id}`} onClick={() => descargarFactura(v.id)}><FileDown className="w-4 h-4" /></button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      </div>
+
+      {/* Plato con extras */}
+      <Modal open={!!pidiendo} onClose={() => setPidiendo(null)} title={pidiendo ? pidiendo.opcion.nombre : ''} size="md">
+        {pidiendo && (
+          <form onSubmit={confirmarPedido} className="space-y-4">
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-semibold text-slate-700 mb-1">Extras y cambios</legend>
+              {modificadores.map((m) => (
+                <label key={m.id} className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"
+                    checked={pidiendo.mods.includes(m.id)}
+                    onChange={(e) => setPidiendo({ ...pidiendo, mods: e.target.checked ? [...pidiendo.mods, m.id] : pidiendo.mods.filter((x) => x !== m.id) })}
+                  />
+                  {m.nombre}{Number(m.precio_extra) > 0 && <span className="text-slate-500"> (+{formatCOP(m.precio_extra)})</span>}
+                </label>
+              ))}
+            </fieldset>
+            <div className="grid grid-cols-[6rem_1fr] gap-3">
+              <Field label="Cantidad">
+                <input type="number" min="1" className="input-field" value={pidiendo.cantidad} onChange={(e) => setPidiendo({ ...pidiendo, cantidad: Math.max(1, Number(e.target.value) || 1) })} />
+              </Field>
+              <Field label="Nota para cocina (opcional)">
+                <input className="input-field" maxLength={200} placeholder="Sin cebolla, bien cocido…" value={pidiendo.nota} onChange={(e) => setPidiendo({ ...pidiendo, nota: e.target.value })} />
+              </Field>
+            </div>
+            <ModalActions>
+              <button type="button" className="btn-secondary" onClick={() => setPidiendo(null)}>Cancelar</button>
+              <button type="submit" className="btn-primary px-6">Agregar</button>
+            </ModalActions>
+          </form>
+        )}
+      </Modal>
+
+      {/* Anular ítem enviado / nota / cancelar cuenta / cambiar mesa */}
+      <Modal
+        open={!!dialogo} onClose={() => setDialogo(null)} size="md"
+        title={{ anular: 'Anular pedido ya enviado', nota: 'Nota para cocina', cancelar: 'Cancelar la cuenta', mover: 'Cambiar de mesa' }[dialogo?.tipo] || ''}
+      >
+        {dialogo?.tipo === 'mover' && (
+          <form onSubmit={(e) => { e.preventDefault(); if (mesaDestino) mover.mutate(Number(mesaDestino)); }} className="space-y-4">
+            <Field label="Mesa libre" required>
+              <select className="input-field" value={mesaDestino} onChange={(e) => setMesaDestino(e.target.value)} autoFocus>
+                <option value="">Elige una mesa…</option>
+                {mesasLibres.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
+              </select>
+            </Field>
+            <ModalActions>
+              <button type="button" className="btn-secondary" onClick={() => setDialogo(null)}>Volver</button>
+              <button type="submit" className="btn-primary px-6" disabled={!mesaDestino || mover.isPending}>Pasar la cuenta</button>
+            </ModalActions>
+          </form>
+        )}
+        {dialogo?.tipo === 'nota' && (
+          <form onSubmit={(e) => { e.preventDefault(); editar.mutate({ id: dialogo.item.id, nota: texto.trim() || null }); }} className="space-y-4">
+            <Field label={dialogo.item.nombre}>
+              <input className="input-field" autoFocus maxLength={200} placeholder="Sin cebolla, para llevar…" value={texto} onChange={(e) => setTexto(e.target.value)} />
+            </Field>
+            <ModalActions>
+              <button type="button" className="btn-secondary" onClick={() => setDialogo(null)}>Cancelar</button>
+              <button type="submit" className="btn-primary px-6" disabled={editar.isPending}>Guardar nota</button>
+            </ModalActions>
+          </form>
+        )}
+        {(dialogo?.tipo === 'anular' || dialogo?.tipo === 'cancelar') && (
+          <form
+            onSubmit={(e) => { e.preventDefault(); if (texto.trim().length < 3) return; if (dialogo.tipo === 'anular') anularItem.mutate({ id: dialogo.item.id, motivo: texto.trim() }); else cancelar.mutate(texto.trim()); }}
+            className="space-y-4"
+          >
+            <p className="text-sm text-slate-600">
+              {dialogo.tipo === 'anular'
+                ? `«${dialogo.item.nombre}» ya salió a cocina. Queda registrado quién lo anula y por qué, y la comanda lo muestra tachado.`
+                : 'Se anulan todos los pedidos de la cuenta y la mesa queda libre. Queda registrado.'}
+            </p>
+            <Field label="Motivo" required>
+              <input className="input-field" autoFocus maxLength={300} placeholder="El cliente se arrepintió, error al digitar…" value={texto} onChange={(e) => setTexto(e.target.value)} />
+            </Field>
+            <ModalActions>
+              <button type="button" className="btn-secondary" onClick={() => setDialogo(null)}>Volver</button>
+              <button type="submit" className="btn-danger px-6" disabled={texto.trim().length < 3 || anularItem.isPending || cancelar.isPending}>
+                {dialogo.tipo === 'anular' ? 'Anular pedido' : 'Cancelar cuenta'}
+              </button>
+            </ModalActions>
+          </form>
+        )}
+      </Modal>
+
+      {cobrando && <CobrarModal cuenta={cuenta} onClose={() => setCobrando(false)} onCobrado={(res) => { setCobrando(false); qc.setQueryData(claveCuenta, res.cuenta); setResultado(res); }} />}
+
+      <Modal open={!!resultado} onClose={() => setResultado(null)} title="Cobro registrado" size="md">
+        {resultado && (
+          <div className="space-y-4">
+            <p className="flex items-center gap-2 text-emerald-700 font-semibold"><CheckCircle2 className="w-5 h-5" aria-hidden="true" /> Venta #{resultado.venta.id} por {formatCOP(resultado.venta.total)}{Number(resultado.venta.propina) > 0 ? ` + ${formatCOP(resultado.venta.propina)} de propina` : ''}.</p>
+            <p className="text-sm text-slate-600">{resultado.cuenta_cerrada ? 'La cuenta quedó cobrada y la mesa libre.' : `Falta por cobrar ${formatCOP(resultado.cuenta.totales.pendiente)} de esta cuenta.`}</p>
+            <ModalActions>
+              <button type="button" className="btn-secondary gap-2" onClick={() => descargarFactura(resultado.venta.id)}><FileDown className="w-4 h-4" aria-hidden="true" /> Factura (PDF)</button>
+              {resultado.cuenta_cerrada
+                ? <button type="button" className="btn-primary px-6" onClick={() => { setResultado(null); onVolver(); }}>Volver a las mesas</button>
+                : <button type="button" className="btn-primary px-6" onClick={() => setResultado(null)}>Seguir con la cuenta</button>}
+            </ModalActions>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+};
+
+export default CuentaPanel;

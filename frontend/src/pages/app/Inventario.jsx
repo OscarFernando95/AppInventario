@@ -21,7 +21,7 @@ import { TableState } from '../../components/ui/DataState';
 const EMPTY_FORM = {
   codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
   porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: '',
-  tipo: 'VENTA', receta: [], costo_promedio: '', rendimiento: '',
+  tipo: 'VENTA', receta: [], costo_promedio: '', rendimiento: '', por_lotes: false,
   unidad_compra: '', factor_compra: '', presOtra: false, // presentación de compra (kg, caja…)
   stock_minimo: '', stock_objetivo: '', // alerta de reposición
 };
@@ -127,6 +127,7 @@ const Inventario = () => {
       tipo: p.tipo || 'VENTA',
       costo_promedio: CON_RECETA.includes(p.tipo) ? '' : String(Number(p.costo_promedio ?? 0) || ''),
       rendimiento: p.tipo === 'PREPARACION' ? String(Number(p.rendimiento)) : '',
+      por_lotes: p.tipo === 'PREPARACION' && !!p.por_lotes,
       stock_minimo: Number(p.stock_minimo) ? String(Number(p.stock_minimo)) : '',
       stock_objetivo: p.stock_objetivo != null ? String(Number(p.stock_objetivo)) : '',
       unidad_compra: p.unidad_compra || '',
@@ -163,6 +164,7 @@ const Inventario = () => {
       precio_unitario: SIN_PRECIO.includes(formData.tipo) ? (formData.precio_unitario || 0) : formData.precio_unitario,
       costo_promedio: esPlato || formData.costo_promedio === '' ? undefined : Number(formData.costo_promedio),
       rendimiento: formData.tipo === 'PREPARACION' ? Number(formData.rendimiento) : undefined,
+      por_lotes: formData.tipo === 'PREPARACION' ? !!formData.por_lotes : undefined,
       // Presentación de compra: vacía = se compra en la unidad base (null la quita al editar).
       unidad_compra: esPlato ? undefined : (formData.unidad_compra.trim() || null),
       factor_compra: !esPlato && formData.unidad_compra.trim() ? Number(formData.factor_compra) : undefined,
@@ -300,7 +302,9 @@ const Inventario = () => {
                   {p.tipo === 'RECETA'
                     ? `${formatCantidad(p.disponible)} porciones`
                     : p.tipo === 'PREPARACION'
-                      ? `${formatCantidad(p.disponible)} ${unidadCorta(p.unidad_medida)} producibles`
+                      ? (p.por_lotes
+                        ? `${formatCantidad(p.stock_actual)} ${unidadCorta(p.unidad_medida)} preparados`
+                        : `${formatCantidad(p.disponible)} ${unidadCorta(p.unidad_medida)} producibles`)
                       : `${formatCantidad(p.stock_actual)} ${unidadCorta(p.unidad_medida)}`}
                 </span>
                 {Number(p.stock_minimo) > 0 && (
@@ -342,7 +346,7 @@ const Inventario = () => {
               hint={{
                 VENTA: 'Se compra y se vende tal cual (gaseosa, snack…).',
                 INSUMO: 'Ingrediente: se compra y se gasta en recetas; no se vende solo.',
-                PREPARACION: 'Sub-receta (salsa, masa…): se prepara en lotes y la usan otros platos; no se vende ni se compra.',
+                PREPARACION: 'Sub-receta (salsa, masa…): la usan otros platos; no se vende ni se compra.',
                 RECETA: 'Plato o bebida preparada: al venderlo descuenta sus ingredientes.',
               }[formData.tipo]}
             >
@@ -403,6 +407,23 @@ const Inventario = () => {
                 value={formData.costo_promedio} onChange={(e) => setFormData({ ...formData, costo_promedio: e.target.value })}
               />
             </Field>
+          )}
+
+          {formData.tipo === 'PREPARACION' && (
+            <label className="flex items-start gap-3 rounded-xl border border-slate-200 p-4 text-sm text-slate-700 cursor-pointer">
+              <input
+                type="checkbox" className="mt-0.5 w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"
+                checked={!!formData.por_lotes} onChange={(e) => setFormData({ ...formData, por_lotes: e.target.checked })}
+              />
+              <span>
+                <strong className="text-slate-800">Prepararla por lotes (con su propio stock)</strong>
+                <span className="block text-xs text-slate-500 mt-0.5">
+                  Registras «hoy preparé 2 litros» en Recetas → Producción: se descuentan los ingredientes y se suma el stock de la
+                  preparación. Al vender un plato se descuenta ella, no sus ingredientes; si no hay, no se puede vender.
+                  Sin marcar, los ingredientes se descuentan al vender cada plato.
+                </span>
+              </span>
+            </label>
           )}
 
           <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">

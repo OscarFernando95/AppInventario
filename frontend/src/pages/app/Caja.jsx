@@ -63,6 +63,7 @@ const Caja = () => {
   const { data: cajaActual, isLoading: cargandoActual } = useEmpresaQuery(['caja', 'actual'], '/caja/actual');
   const conGastos = (activeEmpresa?.modulos || []).includes('Gastos');
   const conCobrar = (activeEmpresa?.modulos || []).includes('Cuentas por cobrar');
+  const conMesas = (activeEmpresa?.modulos || []).includes('Mesas');
 
   // Base sugerida al abrir: lo contado en el último cierre (o el capital inicial si es la primera caja).
   const { data: baseSugerida } = useEmpresaQuery(['caja', 'base-sugerida'], '/caja/base-sugerida', { enabled: showAbrir });
@@ -117,8 +118,8 @@ const Caja = () => {
   });
 
   const egreso = useMutation({
-    mutationFn: ({ modo, concepto, monto, categoria }) => (modo === 'RETIRO'
-      ? api.post('/caja/retiros', { concepto, monto })
+    mutationFn: ({ modo, concepto, monto, categoria }) => (modo === 'RETIRO' || modo === 'PROPINA'
+      ? api.post('/caja/retiros', { tipo: modo, concepto, monto })
       : api.post('/gastos', { categoria, descripcion: concepto, monto, pagar_desde_caja: true })),
     onSuccess: () => {
       invalidar();
@@ -162,7 +163,7 @@ const Caja = () => {
   const handleEgreso = (e) => {
     e.preventDefault();
     setFormError(null);
-    if (!egresoForm.concepto.trim()) return setFormError(egresoForm.modo === 'RETIRO' ? 'Indica el concepto del retiro.' : 'Describe el gasto.');
+    if (!egresoForm.concepto.trim()) return setFormError(egresoForm.modo === 'GASTO' ? 'Describe el gasto.' : 'Indica el concepto.');
     if (!(Number(egresoForm.monto) > 0)) return setFormError('El monto debe ser mayor a 0.');
     egreso.mutate({ ...egresoForm, concepto: egresoForm.concepto.trim(), monto: Number(egresoForm.monto) });
   };
@@ -227,10 +228,11 @@ const Caja = () => {
             </div>
           </div>
 
-          <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${conCobrar ? 'xl:grid-cols-6' : 'xl:grid-cols-5'}`}>
+          <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${(conCobrar ? 1 : 0) + (Number(resumenActual.propinas_efectivo) > 0 ? 1 : 0) === 2 ? 'xl:grid-cols-7' : (conCobrar || Number(resumenActual.propinas_efectivo) > 0) ? 'xl:grid-cols-6' : 'xl:grid-cols-5'}`}>
             <Stat icon={Banknote} label="Base inicial" value={formatCOP(cajaActual.monto_inicial)} />
             <Stat icon={Receipt} label={`Ventas (${resumenActual.num_ventas})`} value={formatCOP(resumenActual.total_ventas)} tone="bg-emerald-50 text-emerald-700" />
             <Stat icon={TrendingUp} label="Ventas en efectivo" value={formatCOP(resumenActual.ventas_efectivo)} tone="bg-amber-50 text-amber-700" />
+            {Number(resumenActual.propinas_efectivo) > 0 && <Stat icon={HandCoins} label="Propinas en efectivo" value={formatCOP(resumenActual.propinas_efectivo)} tone="bg-violet-50 text-violet-700" />}
             {conCobrar && <Stat icon={HandCoins} label="Abonos en efectivo" value={formatCOP(resumenActual.abonos_efectivo)} tone="bg-sky-50 text-sky-700" />}
             <Stat icon={TrendingDown} label="Egresos de caja" value={formatCOP(resumenActual.total_egresos)} tone="bg-red-50 text-red-700" />
             <Stat icon={Wallet} label="Efectivo esperado" value={formatCOP(resumenActual.efectivo_esperado)} tone="bg-brand-100 text-brand-800" />
@@ -243,7 +245,7 @@ const Caja = () => {
                 {cajaActual.movimientos.map((m) => (
                   <li key={m.id} className="flex justify-between gap-3 py-2">
                     <span className="text-slate-600 min-w-0 truncate">
-                      <span className="text-[10px] font-semibold uppercase tracking-wide bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 mr-2">{{ RETIRO: 'Retiro', GASTO: 'Gasto', COMPRA: 'Compra', DEVOLUCION: 'Devolución', PAGO_PROV: 'Pago proveedor' }[m.tipo]}</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-wide bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 mr-2">{{ RETIRO: 'Retiro', GASTO: 'Gasto', COMPRA: 'Compra', DEVOLUCION: 'Devolución', PAGO_PROV: 'Pago proveedor', PROPINA: 'Propinas' }[m.tipo]}</span>
                       {m.concepto}
                     </span>
                     <span className="font-semibold text-red-700 whitespace-nowrap">−{formatCOP(m.monto)}</span>
@@ -476,7 +478,7 @@ const Caja = () => {
         <form onSubmit={handleEgreso} className="space-y-4">
           <FormError message={formError} onDismiss={() => setFormError(null)} />
           <div role="radiogroup" aria-label="Tipo de egreso" className="grid grid-cols-2 gap-2">
-            {[['RETIRO', 'Retiro de efectivo', 'Sacar dinero (consignación, entrega al dueño…)'], ...(conGastos ? [['GASTO', 'Pagar un gasto', 'Domicilio, insumo menor, recibo…']] : [])].map(([valor, titulo, ayuda]) => (
+            {[['RETIRO', 'Retiro de efectivo', 'Sacar dinero (consignación, entrega al dueño…)'], ...(conGastos ? [['GASTO', 'Pagar un gasto', 'Domicilio, insumo menor, recibo…']] : []), ...(conMesas ? [['PROPINA', 'Entregar propinas', 'Dinero de propinas que se reparte al personal']] : [])].map(([valor, titulo, ayuda]) => (
               <label key={valor} className={`rounded-xl border p-3 cursor-pointer text-sm transition-colors focus-within:ring-2 focus-within:ring-brand-600 ${egresoForm.modo === valor ? 'bg-brand-50 border-brand-200' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
                 <input type="radio" className="sr-only" name="modo-egreso" checked={egresoForm.modo === valor} onChange={() => setEgresoForm({ ...egresoForm, modo: valor })} />
                 <span className="font-semibold text-slate-800">{titulo}</span>
@@ -491,8 +493,8 @@ const Caja = () => {
               </select>
             </Field>
           )}
-          <Field label={egresoForm.modo === 'RETIRO' ? 'Concepto' : 'Descripción del gasto'} required>
-            <input className="input-field" maxLength={255} autoFocus placeholder={egresoForm.modo === 'RETIRO' ? 'Consignación al banco' : 'Pago domiciliario'} value={egresoForm.concepto} onChange={(e) => setEgresoForm({ ...egresoForm, concepto: e.target.value })} />
+          <Field label={egresoForm.modo === 'GASTO' ? 'Descripción del gasto' : 'Concepto'} required>
+            <input className="input-field" maxLength={255} autoFocus placeholder={egresoForm.modo === 'RETIRO' ? 'Consignación al banco' : egresoForm.modo === 'PROPINA' ? 'Propinas del turno' : 'Pago domiciliario'} value={egresoForm.concepto} onChange={(e) => setEgresoForm({ ...egresoForm, concepto: e.target.value })} />
           </Field>
           <Field label="Monto ($)" required>
             <input type="number" min="0" step="0.01" className="input-field" value={egresoForm.monto} onChange={(e) => setEgresoForm({ ...egresoForm, monto: e.target.value })} />
@@ -518,6 +520,7 @@ const Caja = () => {
                   ['Base inicial', formatCOP(detalleCierre.monto_inicial)],
                   [`Ventas del turno (${detalleCierre.resumen.num_ventas})`, formatCOP(detalleCierre.resumen.total_ventas)],
                   ['Ventas en efectivo', formatCOP(detalleCierre.resumen.ventas_efectivo)],
+                  ...(Number(detalleCierre.resumen.propinas_efectivo) > 0 ? [['Propinas en efectivo (no son ventas)', `+${formatCOP(detalleCierre.resumen.propinas_efectivo)}`]] : []),
                   ...(Number(detalleCierre.resumen.abonos_efectivo) > 0 ? [['Abonos de clientes en efectivo', `+${formatCOP(detalleCierre.resumen.abonos_efectivo)}`]] : []),
                   ['Egresos de caja (retiros y pagos)', `−${formatCOP(detalleCierre.resumen.total_egresos)}`],
                 ].map(([k, v]) => (
@@ -577,6 +580,9 @@ const Caja = () => {
             </p>
             <dl className="rounded-xl bg-slate-50 border border-slate-200 divide-y divide-slate-200 text-sm">
               <div className="flex justify-between px-4 py-2.5"><dt className="text-slate-600">Total vendido</dt><dd className="font-semibold">{formatCOP(cerradaOk.total_ventas)}</dd></div>
+              {Number(cerradaOk.propinas_efectivo) > 0 && (
+                <div className="flex justify-between px-4 py-2.5"><dt className="text-slate-600">Propinas en efectivo</dt><dd className="font-semibold">+{formatCOP(cerradaOk.propinas_efectivo)}</dd></div>
+              )}
               {Number(cerradaOk.abonos_efectivo) > 0 && (
                 <div className="flex justify-between px-4 py-2.5"><dt className="text-slate-600">Abonos en efectivo</dt><dd className="font-semibold">+{formatCOP(cerradaOk.abonos_efectivo)}</dd></div>
               )}
