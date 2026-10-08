@@ -31,6 +31,10 @@ const Cliente = sequelize.define('Cliente', {
     type: DataTypes.STRING,
     allowNull: true,
   },
+  cupo_credito: {
+    type: DataTypes.DECIMAL(14, 2),
+    allowNull: true, // null = sin tope de crédito
+  },
   tipo_documento: {
     type: DataTypes.STRING,
     defaultValue: '13', // 13=CC, 31=NIT

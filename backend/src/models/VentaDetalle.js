@@ -42,7 +42,27 @@ const VentaDetalle = sequelize.define('VentaDetalle', {
   subtotal_bruto: {
     type: DataTypes.DECIMAL(14, 2),
     defaultValue: 0,
-  }
+  },
+  // Costo de lo vendido por unidad (foto al vender; base del reporte de rentabilidad).
+  costo_unitario: {
+    type: DataTypes.DECIMAL(14, 4),
+    allowNull: false,
+    defaultValue: 0,
+  },
+  // Devoluciones: unidades devueltas y, de ellas, las que volvieron al inventario.
+  cantidad_devuelta: { type: DataTypes.DECIMAL(12, 3), allowNull: false, defaultValue: 0 },
+  cantidad_reingresada: { type: DataTypes.DECIMAL(12, 3), allowNull: false, defaultValue: 0 },
+  // Inventario que descontó esta línea: [{ productoId, cantidad }] (el producto, o los
+  // ingredientes base de un plato). Se usa para devolverlo exacto al anular la venta.
+  consumo: {
+    type: DataTypes.JSONB,
+    allowNull: true,
+  },
+  // Modificadores elegidos en un plato: [{ id, nombre, precio_extra }].
+  modificadores: {
+    type: DataTypes.JSONB,
+    allowNull: true,
+  },
 }, {
   tableName: 'ventas_detalles',
   timestamps: false,

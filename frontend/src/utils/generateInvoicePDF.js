@@ -168,7 +168,10 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
     : [['#', 'Descripción', 'Tipo', 'Cant.', 'P. Unitario', 'Subtotal']];
 
   const tableBody = detalles.map((d, i) => {
-    const nombre = d.Producto?.nombre_producto || d.Servicio?.nombre || d.nombre || 'Ítem';
+    const nombreBase = d.Producto?.nombre_producto || d.Servicio?.nombre || d.nombre || 'Ítem';
+    // Platos con extras / "sin ...": se listan debajo del nombre.
+    const mods = Array.isArray(d.modificadores) ? d.modificadores.map((m) => m.nombre).filter(Boolean) : [];
+    const nombre = mods.length ? `${nombreBase}\n  + ${mods.join(', ')}` : nombreBase;
     const tipo = d.Producto ? 'Producto' : 'Servicio';
     const qty = Number(d.cantidad);
     const unitPrice = Number(d.precio_unitario);
@@ -380,6 +383,20 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(...textMuted);
       doc.text(`Página ${i} de ${totalPages}`, pageW - margin, pageH - 10, { align: 'right' });
+    }
+  }
+
+  // Venta anulada: sello diagonal en cada página (el PDF sigue sirviendo como constancia).
+  if (venta.estado === 'ANULADA') {
+    for (let i = 1; i <= doc.internal.getNumberOfPages(); i += 1) {
+      doc.setPage(i);
+      doc.saveGraphicsState();
+      try { doc.setGState(new doc.GState({ opacity: 0.18 })); } catch { /* sin opacidad: se pinta suave igual */ }
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(92);
+      doc.setTextColor(...discountColor);
+      doc.text('ANULADA', pageW / 2, pageH / 2, { align: 'center', angle: 35 });
+      doc.restoreGraphicsState();
     }
   }
 

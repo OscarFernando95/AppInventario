@@ -1,15 +1,35 @@
 import { useEffect, useState } from 'react';
 import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
-import { useQueryClient } from '@tanstack/react-query';
-import { Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import api from '../api/axios';
+import { usePermisos } from '../hooks/usePermisos';
+import { KeyRound, Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins, PackagePlus, ReceiptText, WalletCards } from 'lucide-react';
+
+// Títulos con tilde para las rutas cuyo nombre se escribe sin ella.
+const TITULOS = {
+  auditoria: 'Auditoría', reposicion: 'Reposición', admin: 'Administración', roles: 'Roles y permisos',
+  'cuentas-por-cobrar': 'Cuentas por cobrar', 'cuentas-por-pagar': 'Cuentas por pagar',
+};
 
 const FrontLayout = () => {
-  const { user, activeEmpresa, setActiveEmpresa, logout } = useAuthStore();
+  const { user, activeEmpresa, setActiveEmpresa, logout, syncSesion } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
   const queryClient = useQueryClient();
   const [menuOpen, setMenuOpen] = useState(false);
+  const { can, puedeEntrar } = usePermisos();
+
+  // Los módulos habilitados viajan en la sesión; si el administrador los cambia
+  // (p. ej. activa o quita Caja) se refrescan al volver a la pestaña, sin cerrar sesión.
+  const { data: sesion } = useQuery({
+    queryKey: ['sesion'],
+    queryFn: async () => (await api.get('/auth/me')).data.usuario,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 5 * 60_000,
+  });
+  useEffect(() => { if (sesion) syncSesion(sesion); }, [sesion, syncSesion]);
 
 
   useEffect(() => {
@@ -39,23 +59,30 @@ const FrontLayout = () => {
   const baseMenu = [
     { name: 'Dashboard', path: '/app', icon: LayoutDashboard },
     { name: 'Inventario', path: '/app/inventario', icon: Boxes },
+    { name: 'Reposición', path: '/app/reposicion', icon: PackagePlus, modulo: 'Inventario' },
+    { name: 'Recetas', path: '/app/recetas', icon: ChefHat },
+    { name: 'Ajustes', path: '/app/ajustes', icon: ClipboardCheck, modulo: 'Inventario' },
     { name: 'Proveedores', path: '/app/proveedores', icon: Truck },
     { name: 'Clientes', path: '/app/clientes', icon: Users },
     { name: 'Servicios', path: '/app/servicios', icon: Briefcase },
     { name: 'Pedidos', path: '/app/pedidos', icon: ClipboardList },
     { name: 'Compras', path: '/app/compras', icon: Package },
     { name: 'Ventas', path: '/app/ventas', icon: ShoppingCart },
+    { name: 'Caja', path: '/app/caja', icon: Wallet },
+    { name: 'Cuentas por cobrar', path: '/app/cuentas-por-cobrar', icon: ReceiptText },
+    { name: 'Cuentas por pagar', path: '/app/cuentas-por-pagar', icon: WalletCards, permiso: 'cartera.pagar' },
+    { name: 'Gastos', path: '/app/gastos', icon: HandCoins },
     { name: 'Informes', path: '/app/informes', icon: FileText },
   ];
 
+  // El menú muestra lo que la empresa contrató Y el rol del usuario deja usar (módulos y permisos).
   const menu = baseMenu.filter(
-    (item) => item.name === 'Dashboard' || (activeEmpresa?.modulos || []).includes(item.name)
+    (item) => item.name === 'Dashboard' || (puedeEntrar(item.modulo || item.name) && (!item.permiso || can(item.permiso)))
   );
 
-  if (user?.rol === 'FRONT_ADMIN') {
-    menu.push({ name: 'Administración', path: '/app/admin', icon: Settings });
-    menu.push({ name: 'Auditoría', path: '/app/auditoria', icon: ScrollText });
-  }
+  if (can('usuarios.gestionar')) menu.push({ name: 'Administración', path: '/app/admin', icon: Settings });
+  if (can('roles.gestionar') && puedeEntrar('Roles y permisos')) menu.push({ name: 'Roles y permisos', path: '/app/roles', icon: KeyRound });
+  if (can('auditoria.ver')) menu.push({ name: 'Auditoría', path: '/app/auditoria', icon: ScrollText });
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans">
@@ -140,7 +167,7 @@ const FrontLayout = () => {
           <div className="flex flex-col mb-4 px-2">
             <span className="text-sm font-semibold text-slate-800 truncate">{user?.nombre}</span>
             <span className="text-xs font-medium text-brand-700 tracking-wide mt-0.5">
-              {user?.rol === 'FRONT_ADMIN' ? 'ADMINISTRADOR' : 'USUARIO'}
+              {activeEmpresa?.rol_propio ? activeEmpresa.rol_propio.nombre.toUpperCase() : user?.rol === 'FRONT_ADMIN' ? 'ADMINISTRADOR' : 'USUARIO'}
             </span>
           </div>
           <Link
@@ -171,7 +198,7 @@ const FrontLayout = () => {
               <Menu className="w-5 h-5" />
             </button>
             <h2 className="text-xl sm:text-2xl font-bold text-slate-800 capitalize truncate">
-              {location.pathname === '/app' ? 'Resumen General' : location.pathname.split('/').pop()}
+              {location.pathname === '/app' ? 'Resumen General' : (TITULOS[location.pathname.split('/').pop()] || location.pathname.split('/').pop())}
             </h2>
           </div>
           <div className="flex items-center gap-4">

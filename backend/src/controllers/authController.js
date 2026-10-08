@@ -6,6 +6,7 @@ const { ValidationError } = require('../utils/errors');
 const { hashPassword, BCRYPT_ROUNDS } = require('../utils/password');
 const logger = require('../utils/logger');
 const sessions = require('../services/sessions');
+const { accesosPorEmpresa } = require('../services/accesos');
 
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '8h';
 
@@ -34,16 +35,41 @@ function jtiDeLaCookie(req) {
   }
 }
 
+/**
+ * Datos de sesión que consume el frontend (usuario, rol y, por empresa, sus
+ * módulos habilitados y tipo de negocio). Lo comparten login y /auth/me.
+ */
+async function payloadUsuario(usuario) {
+  const accesos = await accesosPorEmpresa(usuario);
+  return {
+    id: usuario.id,
+    nombre: usuario.nombre,
+    username: usuario.username,
+    rol: usuario.Role.tipo,
+    mustChangePassword: usuario.must_change_password,
+    empresas: usuario.Empresas
+      ? usuario.Empresas.map((emp) => ({
+          id: emp.id,
+          nombre: emp.nombre,
+          tipo_negocio: emp.tipo_negocio,
+          modulos: accesos[emp.id].modulos, // lo que la empresa tiene contratado
+          acceso: accesos[emp.id].acceso, // a lo que este usuario entra según su rol
+          permisos: accesos[emp.id].permisos,
+          rol_propio: accesos[emp.id].rolPropio,
+        }))
+      : [],
+  };
+}
+
+const INCLUDE_SESION = [
+  { model: Role },
+  { model: Empresa, through: { attributes: ['rolEmpresaId'] }, include: [{ model: Modulo, through: { attributes: [] } }] },
+];
+
 exports.login = async (req, res) => {
   const { username, contrasena } = req.body;
 
-  const usuario = await Usuario.findOne({
-    where: { username },
-    include: [
-      { model: Role },
-      { model: Empresa, through: { attributes: [] }, include: [{ model: Modulo, through: { attributes: [] } }] },
-    ],
-  });
+  const usuario = await Usuario.findOne({ where: { username }, include: INCLUDE_SESION });
 
   const hashParaComparar = usuario ? usuario.contrasena_hash : DUMMY_HASH;
   const passwordOk = await bcrypt.compare(contrasena, hashParaComparar);
@@ -72,23 +98,7 @@ exports.login = async (req, res) => {
   res.cookie(COOKIE_NAME, token, cookieOptions);
   logger.info('login_ok', { userId: usuario.id, rol: usuario.Role.tipo });
 
-  res.json({
-    mensaje: 'Login exitoso',
-    usuario: {
-      id: usuario.id,
-      nombre: usuario.nombre,
-      username: usuario.username,
-      rol: usuario.Role.tipo,
-      mustChangePassword: usuario.must_change_password,
-      empresas: usuario.Empresas
-        ? usuario.Empresas.map((emp) => ({
-            id: emp.id,
-            nombre: emp.nombre,
-            modulos: emp.Modulos ? emp.Modulos.map((m) => m.nombre_codigo) : [],
-          }))
-        : [],
-    },
-  });
+  res.json({ mensaje: 'Login exitoso', usuario: await payloadUsuario(usuario) });
 };
 
 exports.logout = async (req, res) => {
@@ -131,4 +141,15 @@ exports.changePassword = async (req, res) => {
 
   logger.info('password_changed', { userId: usuario.id });
   res.json({ mensaje: 'Contraseña actualizada' });
+};
+
+/**
+ * Datos ACTUALES de la sesión (rol, empresas y módulos habilitados). El
+ * frontend los refresca al volver a la pestaña: si el administrador cambia los
+ * módulos de una empresa, el usuario no tiene que cerrar sesión para verlo.
+ */
+exports.me = async (req, res) => {
+  const usuario = await Usuario.findByPk(req.userId, { include: INCLUDE_SESION });
+  if (!usuario) return res.status(401).json({ error: 'Usuario inactivo o inexistente' });
+  res.json({ usuario: await payloadUsuario(usuario) });
 };

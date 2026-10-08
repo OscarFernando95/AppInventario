@@ -31,7 +31,12 @@ const Compra = sequelize.define('Compra', {
   total: {
     type: DataTypes.DECIMAL(14, 2),
     allowNull: false,
-  }
+  },
+  // Compras a crédito: lo que aún se le debe al proveedor.
+  forma_pago: { type: DataTypes.STRING(10), allowNull: false, defaultValue: 'CONTADO' }, // CONTADO | CREDITO
+  dias_credito: { type: DataTypes.INTEGER, allowNull: true },
+  fecha_vencimiento: { type: DataTypes.DATEONLY, allowNull: true },
+  saldo_pendiente: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0 },
 }, {
   tableName: 'compras',
   timestamps: true,

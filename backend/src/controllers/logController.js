@@ -40,7 +40,4 @@ async function listarEventos(req, res, whereBase = {}) {
 // Backoffice: todos los eventos, sin acotar.
 exports.getLogs = (req, res) => listarEventos(req, res, {});
 
-// FRONT_ADMIN: solo los eventos de su empresa activa.
-exports.getAuditoria = (req, res) => listarEventos(req, res, { empresaId: req.empresaId });
-
 exports.listarEventos = listarEventos;

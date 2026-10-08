@@ -1,5 +1,6 @@
-import { Boxes, Package, ShoppingCart, TrendingUp, PlusCircle, ArrowRight, ClipboardList, AlertTriangle } from 'lucide-react';
+import { Boxes, Package, ShoppingCart, TrendingUp, PlusCircle, ArrowRight, ClipboardList, AlertTriangle, HandCoins } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
+import { usePermisos } from '../../hooks/usePermisos';
 import { useNavigate } from 'react-router-dom';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import api from '../../api/axios';
@@ -63,13 +64,17 @@ const ACCESOS = [
 
 const DashboardUser = () => {
   const { user, activeEmpresa } = useAuthStore();
+  const { can, puedeEntrar, tieneModulo } = usePermisos();
+  // Si la empresa tiene el módulo pero el rol no entra a él, la tarjeta no se muestra.
+  const oculta = (modulo) => tieneModulo(modulo) && !puedeEntrar(modulo);
   const navigate = useNavigate();
 
   // Endpoint agregado y cacheado en el backend (1 consulta en vez de 4).
   const { data: dash, isLoading, isError } = useEmpresaQuery(['dashboard'], '/reportes/dashboard');
 
   // Total de pedidos: solo si la empresa tiene el módulo (evita un 403).
-  const tienePedidos = (activeEmpresa?.modulos || []).includes('Pedidos');
+  const tienePedidos = puedeEntrar('Pedidos');
+  const tieneGastos = puedeEntrar('Gastos');
   const {
     data: totalPedidos,
     isLoading: loadingPedidos,
@@ -97,19 +102,63 @@ const DashboardUser = () => {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-6">
+      {dash?.cartera && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          {puedeEntrar('Cuentas por cobrar') && (
+            <button type="button" onClick={() => navigate('/app/cuentas-por-cobrar')} className="card-container p-5 text-left hover:shadow-md transition-shadow">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Te deben</p>
+              <p className="text-3xl font-bold text-slate-800 mt-1">{formatCOP(dash.cartera.por_cobrar)}</p>
+              <p className={`text-sm mt-1 ${dash.cartera.vencido_cobrar > 0 ? 'font-semibold text-red-700' : 'text-slate-500'}`}>
+                {dash.cartera.vencido_cobrar > 0 ? `${formatCOP(dash.cartera.vencido_cobrar)} vencido` : 'Nada vencido'}
+              </p>
+            </button>
+          )}
+          {puedeEntrar('Cuentas por pagar') && can('cartera.pagar') && (
+            <button type="button" onClick={() => navigate('/app/cuentas-por-pagar')} className="card-container p-5 text-left hover:shadow-md transition-shadow">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Debes</p>
+              <p className="text-3xl font-bold text-slate-800 mt-1">{formatCOP(dash.cartera.por_pagar)}</p>
+              <p className={`text-sm mt-1 ${dash.cartera.vencido_pagar > 0 ? 'font-semibold text-red-700' : 'text-slate-500'}`}>
+                {dash.cartera.vencido_pagar > 0 ? `${formatCOP(dash.cartera.vencido_pagar)} vencido` : 'Nada vencido'}
+              </p>
+            </button>
+          )}
+        </div>
+      )}
+
+      {(dash?.productosBajoStock?.length ?? 0) > 0 && puedeEntrar('Inventario') && (
+        <div role="status" className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
+          <AlertTriangle className="w-5 h-5 shrink-0" aria-hidden="true" />
+          <span className="flex-1 min-w-48">
+            <strong>{dash.productosBajoStock.length >= 10 ? '10 o más' : dash.productosBajoStock.length} producto(s) en o bajo su stock mínimo</strong>
+            {' '}— {dash.productosBajoStock.slice(0, 3).map((p) => p.nombre_producto).join(', ')}{dash.productosBajoStock.length > 3 ? '…' : ''}
+          </span>
+          <button type="button" className="btn-primary px-4 py-2 text-sm" onClick={() => navigate('/app/reposicion')}>Ver reposición</button>
+        </div>
+      )}
+
+      <div className={`grid grid-cols-1 sm:grid-cols-2 gap-6 ${tieneGastos ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
         <StatCard
           label="Productos" icon={Boxes} tone="bg-brand-50 text-brand-700"
           value={dash?.totalProductos ?? 0} isLoading={isLoading} isError={isError}
         />
-        <StatCard
-          label="Ventas Mes" icon={TrendingUp} tone="bg-emerald-50 text-emerald-700"
-          value={formatCOP(dash?.ventasMes)} isLoading={isLoading} isError={isError}
-        />
-        <StatCard
-          label="Compras Mes" icon={Package} tone="bg-slate-100 text-slate-700"
-          value={formatCOP(dash?.comprasMes)} isLoading={isLoading} isError={isError}
-        />
+        {!oculta('Ventas') && (
+          <StatCard
+            label="Ventas Mes" icon={TrendingUp} tone="bg-emerald-50 text-emerald-700"
+            value={formatCOP(dash?.ventasMes)} isLoading={isLoading} isError={isError}
+          />
+        )}
+        {!oculta('Compras') && (
+          <StatCard
+            label="Compras Mes" icon={Package} tone="bg-slate-100 text-slate-700"
+            value={formatCOP(dash?.comprasMes)} isLoading={isLoading} isError={isError}
+          />
+        )}
+        {tieneGastos && (
+          <StatCard
+            label="Gastos Mes" icon={HandCoins} tone="bg-red-50 text-red-700"
+            value={formatCOP(dash?.gastosMes)} isLoading={isLoading} isError={isError}
+          />
+        )}
         <StatCard
           label="Pedidos" icon={ShoppingCart} tone="bg-amber-50 text-amber-700"
           value={tienePedidos ? (totalPedidos ?? 0) : '—'}

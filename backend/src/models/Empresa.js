@@ -84,6 +84,17 @@ const Empresa = sequelize.define('Empresa', {
     allowNull: false,
     defaultValue: 'SIMPLE', // SIMPLE | FACTURACION_ELECTRONICA
   },
+  tipo_negocio: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: 'COMERCIO', // COMERCIO | RESTAURANTE | SERVICIOS (sugiere módulos en el alta)
+  },
+  // Dinero con el que la empresa empieza en el software; referencia para medir su crecimiento.
+  capital_inicial: {
+    type: DataTypes.DECIMAL(14, 2),
+    allowNull: false,
+    defaultValue: 0,
+  },
   activa: {
     type: DataTypes.BOOLEAN,
     defaultValue: true,

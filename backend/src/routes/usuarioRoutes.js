@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const usuarioController = require('../controllers/usuarioController');
-const { verifyToken } = require('../middlewares/auth');
+const { verifyToken, tiene } = require('../middlewares/auth');
 const asyncHandler = require('../middlewares/asyncHandler');
 const validate = require('../middlewares/validate');
 const { idParam, createUsuario, updateUsuario } = require('../schemas/usuarioSchemas');
@@ -9,7 +9,7 @@ const { idParam, createUsuario, updateUsuario } = require('../schemas/usuarioSch
 router.use(verifyToken);
 
 const allowAdmins = (req, res, next) => {
-  if (req.tipoRol === 'BACKOFFICE_ADMIN' || req.tipoRol === 'FRONT_ADMIN') {
+  if (req.tipoRol === 'BACKOFFICE_ADMIN' || tiene(req, 'usuarios.gestionar')) {
     return next();
   }
   return res.status(403).json({ error: 'No autorizado' });

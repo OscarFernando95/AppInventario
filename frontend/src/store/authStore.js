@@ -19,6 +19,22 @@ export const useAuthStore = create(
       setActiveEmpresa: (empresaData) => {
         set({ activeEmpresa: empresaData });
       },
+      // Refresca rol, empresas y módulos con los datos ACTUALES del servidor (GET
+      // /auth/me), para que un cambio de módulos hecho en el backoffice se vea sin
+      // cerrar sesión. No toca nada si no cambió, para no re-renderizar en balde.
+      syncSesion: (datos) => {
+        set((state) => {
+          if (!state.user || !datos) return state;
+          const empresas = datos.empresas || [];
+          const activa = state.activeEmpresa
+            ? empresas.find((e) => e.id === state.activeEmpresa.id) || null
+            : (empresas.length === 1 ? empresas[0] : null);
+          const mismo = JSON.stringify([state.user.empresas, state.user.rol, state.user.nombre, state.activeEmpresa])
+            === JSON.stringify([empresas, datos.rol, datos.nombre, activa]);
+          if (mismo) return state;
+          return { user: { ...state.user, nombre: datos.nombre, rol: datos.rol, empresas }, activeEmpresa: activa };
+        });
+      },
       clearMustChangePassword: () => {
         set((state) => ({ user: state.user ? { ...state.user, mustChangePassword: false } : state.user }));
       },

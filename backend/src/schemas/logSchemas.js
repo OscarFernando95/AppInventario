@@ -30,3 +30,17 @@ const logsQuery = z.object({
 });
 
 module.exports = { logsQuery, NIVELES };
+
+// --- Auditoría gerencial (vista del administrador de la empresa) ---
+const { MODULOS } = require('../utils/auditoriaTexto');
+
+const auditoriaQuery = z.object({
+  modulo: z.preprocess((v) => (v === '' || v == null ? undefined : v), z.enum(MODULOS).optional()),
+  usuarioId: enteroOpc,
+  desde: isoDateOpc,
+  hasta: isoDateOpc,
+  limit: enteroOpc,
+  offset: enteroOpc,
+});
+
+module.exports.auditoriaQuery = auditoriaQuery;

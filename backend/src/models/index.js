@@ -4,6 +4,8 @@ const Empresa = require('./Empresa');
 const Role = require('./Role');
 const Usuario = require('./Usuario');
 const Modulo = require('./Modulo');
+const RolEmpresa = require('./RolEmpresa');
+const UsuarioEmpresa = require('./UsuarioEmpresa');
 const Departamento = require('./Departamento');
 const Municipio = require('./Municipio');
 const ActividadCiiu = require('./ActividadCiiu');
@@ -19,10 +21,28 @@ const Pedido = require('./Pedido');
 const PedidoDetalle = require('./PedidoDetalle');
 const Sesion = require('./Sesion');
 const LogEvento = require('./LogEvento');
+const RecetaItem = require('./RecetaItem');
+const Caja = require('./Caja');
+const AjusteInventario = require('./AjusteInventario');
+const Gasto = require('./Gasto');
+const AnulacionVenta = require('./AnulacionVenta');
+const AbonoVenta = require('./AbonoVenta');
+const DevolucionVenta = require('./DevolucionVenta');
+const DevolucionVentaDetalle = require('./DevolucionVentaDetalle');
+const PagoCompra = require('./PagoCompra');
+const CajaMovimiento = require('./CajaMovimiento');
+const Modificador = require('./Modificador');
+const ModificadorItem = require('./ModificadorItem');
 
 // Relaciones Administrativas
-Empresa.belongsToMany(Usuario, { through: 'usuarios_empresas', foreignKey: 'empresaId' });
-Usuario.belongsToMany(Empresa, { through: 'usuarios_empresas', foreignKey: 'usuarioId' });
+Empresa.belongsToMany(Usuario, { through: UsuarioEmpresa, foreignKey: 'empresaId', otherKey: 'usuarioId' });
+Usuario.belongsToMany(Empresa, { through: UsuarioEmpresa, foreignKey: 'usuarioId', otherKey: 'empresaId' });
+
+// Roles propios de cada empresa; el rol de un usuario EN una empresa vive en la tabla de unión.
+Empresa.hasMany(RolEmpresa, { foreignKey: 'empresaId', as: 'roles' });
+RolEmpresa.belongsTo(Empresa, { foreignKey: 'empresaId' });
+RolEmpresa.hasMany(UsuarioEmpresa, { foreignKey: 'rolEmpresaId', as: 'asignaciones' });
+UsuarioEmpresa.belongsTo(RolEmpresa, { foreignKey: 'rolEmpresaId', as: 'rolEmpresa' });
 
 Role.hasMany(Usuario, { foreignKey: 'rolId' });
 Usuario.belongsTo(Role, { foreignKey: 'rolId' });
@@ -88,6 +108,65 @@ VentaDetalle.belongsTo(Producto, { foreignKey: 'productoId' });
 Servicio.hasMany(VentaDetalle, { foreignKey: 'servicioId' });
 VentaDetalle.belongsTo(Servicio, { foreignKey: 'servicioId' });
 
+// Receta de un plato: productoId = plato, insumoId = ingrediente.
+Producto.hasMany(RecetaItem, { foreignKey: 'productoId', as: 'receta' });
+RecetaItem.belongsTo(Producto, { foreignKey: 'productoId', as: 'plato' });
+RecetaItem.belongsTo(Producto, { foreignKey: 'insumoId', as: 'insumo' });
+
+// Caja (turno de un usuario) y las ventas registradas en ella.
+Empresa.hasMany(Caja, { foreignKey: 'empresaId' });
+Caja.belongsTo(Empresa, { foreignKey: 'empresaId' });
+Caja.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+Caja.belongsTo(Usuario, { foreignKey: 'usuarioCierreId', as: 'usuarioCierre' });
+Caja.hasMany(Venta, { foreignKey: 'cajaId' });
+Venta.belongsTo(Caja, { foreignKey: 'cajaId' });
+
+// Ajustes manuales de inventario (merma, vencido, conteo).
+Empresa.hasMany(AjusteInventario, { foreignKey: 'empresaId' });
+AjusteInventario.belongsTo(Empresa, { foreignKey: 'empresaId' });
+Producto.hasMany(AjusteInventario, { foreignKey: 'productoId' });
+AjusteInventario.belongsTo(Producto, { foreignKey: 'productoId' });
+AjusteInventario.belongsTo(Usuario, { foreignKey: 'usuarioId' });
+
+// Gastos operativos y egresos de caja.
+Empresa.hasMany(Gasto, { foreignKey: 'empresaId' });
+Gasto.belongsTo(Empresa, { foreignKey: 'empresaId' });
+Gasto.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+Gasto.belongsTo(Proveedor, { foreignKey: 'proveedorId' });
+Caja.hasMany(CajaMovimiento, { foreignKey: 'cajaId', as: 'movimientos' });
+CajaMovimiento.belongsTo(Caja, { foreignKey: 'cajaId' });
+CajaMovimiento.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+
+// Solicitudes de anulación de ventas.
+Venta.hasMany(AnulacionVenta, { foreignKey: 'ventaId', as: 'anulaciones' });
+AnulacionVenta.belongsTo(Venta, { foreignKey: 'ventaId', as: 'venta' });
+AnulacionVenta.belongsTo(Usuario, { foreignKey: 'solicitada_por', as: 'solicitante' });
+AnulacionVenta.belongsTo(Usuario, { foreignKey: 'resuelta_por', as: 'resolutor' });
+Venta.belongsTo(Usuario, { foreignKey: 'anulada_por', as: 'anuladaPor' });
+
+// Cartera: abonos de clientes sobre ventas a crédito y pagos a proveedores sobre compras a crédito.
+Venta.hasMany(AbonoVenta, { foreignKey: 'ventaId', as: 'abonos' });
+AbonoVenta.belongsTo(Venta, { foreignKey: 'ventaId', as: 'venta' });
+AbonoVenta.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+Compra.hasMany(PagoCompra, { foreignKey: 'compraId', as: 'pagos' });
+PagoCompra.belongsTo(Compra, { foreignKey: 'compraId', as: 'compra' });
+PagoCompra.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+
+// Devoluciones parciales de ventas.
+Venta.hasMany(DevolucionVenta, { foreignKey: 'ventaId', as: 'devoluciones' });
+DevolucionVenta.belongsTo(Venta, { foreignKey: 'ventaId', as: 'venta' });
+DevolucionVenta.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+DevolucionVenta.hasMany(DevolucionVentaDetalle, { foreignKey: 'devolucionId', as: 'detalles' });
+DevolucionVentaDetalle.belongsTo(DevolucionVenta, { foreignKey: 'devolucionId' });
+DevolucionVentaDetalle.belongsTo(VentaDetalle, { foreignKey: 'ventaDetalleId', as: 'linea' });
+
+// Modificadores de platos.
+Empresa.hasMany(Modificador, { foreignKey: 'empresaId' });
+Modificador.belongsTo(Empresa, { foreignKey: 'empresaId' });
+Modificador.hasMany(ModificadorItem, { foreignKey: 'modificadorId', as: 'items' });
+ModificadorItem.belongsTo(Modificador, { foreignKey: 'modificadorId' });
+ModificadorItem.belongsTo(Producto, { foreignKey: 'insumoId', as: 'insumo' });
+
 // Solo de lectura desde el backoffice (ver logController) — belongsTo basta,
 // no hace falta el lado hasMany en Usuario/Empresa.
 Usuario.hasMany(LogEvento, { foreignKey: 'usuarioId' });
@@ -98,5 +177,5 @@ LogEvento.belongsTo(Empresa, { foreignKey: 'empresaId' });
 module.exports = {
   sequelize, Empresa, Role, Usuario, Modulo, Departamento, Municipio, ActividadCiiu, Sesion,
   Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle,
-  LogEvento,
+  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle, RolEmpresa, UsuarioEmpresa,
 };

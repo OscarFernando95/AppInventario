@@ -3,6 +3,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { UserPlus, Search, Users as UsersIcon } from 'lucide-react';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import { usePermisos } from '../../hooks/usePermisos';
+import { useAuthStore } from '../../store/authStore';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
 import PageHeader from '../../components/ui/PageHeader';
@@ -10,7 +12,13 @@ import Field from '../../components/ui/Field';
 import { TableCard, THead, Th, Tr, Td } from '../../components/ui/Table';
 import { TableState } from '../../components/ui/DataState';
 
-const EMPTY = { nombre: '', username: '', contrasena: '', rolId: 3 }; // 3 = FRONT_USER
+// El rol se elige en un solo campo: `base:<rolId>` (Operativo = 3, Administrador = 2) o `propio:<id>` (rol de la empresa).
+const EMPTY = { nombre: '', username: '', contrasena: '', rol: 'base:3' };
+
+const cuerpoDeRol = (rol) => {
+  const [tipo, id] = rol.split(':');
+  return tipo === 'propio' ? { rolEmpresaId: Number(id) } : { rolId: Number(id) };
+};
 
 const AdminUsuarios = () => {
   const queryClient = useQueryClient();
@@ -18,7 +26,21 @@ const AdminUsuarios = () => {
   const [formError, setFormError] = useState(null);
   const [busqueda, setBusqueda] = useState('');
 
+  const { can, puedeEntrar } = usePermisos();
+  const miId = useAuthStore((s) => s.user?.id);
   const { data: usuarios = [], isLoading, isError, error, refetch } = useEmpresaQuery(['usuarios-empresa'], '/usuarios');
+
+  // Roles propios de la empresa (solo si contrató "Roles y permisos"). Sin ellos quedan los dos roles base de siempre.
+  const conRoles = puedeEntrar('Roles y permisos');
+  const { data: catalogoRoles } = useEmpresaQuery(['roles'], '/roles', { enabled: conRoles });
+  const propios = catalogoRoles?.propios || [];
+  const misPermisos = new Set(catalogoRoles?.mis_permisos || []);
+  const opcionesDeRol = [
+    { valor: 'base:3', nombre: 'Usuario Operativo', permitido: true },
+    { valor: 'base:2', nombre: 'Administrador Delegado', permitido: !conRoles || (catalogoRoles?.base || []).find((r) => r.clave === 'FRONT_ADMIN')?.permisos.every((p) => misPermisos.has(p)) },
+    ...propios.map((r) => ({ valor: `propio:${r.id}`, nombre: r.nombre, permitido: r.permisos.every((p) => misPermisos.has(p)) })),
+  ];
+  const valorDeRol = (u) => (u.rolEmpresaId ? `propio:${u.rolEmpresaId}` : `base:${u.rolId}`);
 
   // El buscador existía en la UI pero no tenía estado ni onChange: era una caja
   // de texto que no filtraba nada. Ahora filtra por nombre y username.
@@ -42,10 +64,18 @@ const AdminUsuarios = () => {
     onError: (err) => setFormError(apiError(err, 'No se pudo crear el usuario')),
   });
 
+  const [errorRol, setErrorRol] = useState(null);
+  const cambiarRol = useMutation({
+    mutationFn: ({ id, rol }) => api.put(`/usuarios/${id}`, cuerpoDeRol(rol)),
+    onSuccess: () => { setErrorRol(null); queryClient.invalidateQueries({ queryKey: ['empresa'] }); },
+    onError: (err) => setErrorRol(apiError(err, 'No se pudo cambiar el rol')),
+  });
+
   const handleSubmit = (e) => {
     e.preventDefault();
     setFormError(null);
-    crear.mutate(formData);
+    const { rol, ...resto } = formData;
+    crear.mutate({ ...resto, ...cuerpoDeRol(rol) });
   };
 
   return (
@@ -93,10 +123,9 @@ const AdminUsuarios = () => {
               <input type="password" className="input-field" value={formData.contrasena} onChange={(e) => setFormData({ ...formData, contrasena: e.target.value })} />
             </Field>
 
-            <Field label="Nivel de Seguridad">
-              <select className="input-field" value={formData.rolId} onChange={(e) => setFormData({ ...formData, rolId: parseInt(e.target.value, 10) })}>
-                <option value={3}>Usuario Operativo</option>
-                <option value={2}>Administrador Delegado</option>
+            <Field label="Nivel de Seguridad" hint={conRoles && can('roles.gestionar') ? 'Los roles propios se crean en «Roles y permisos».' : undefined}>
+              <select className="input-field" value={formData.rol} onChange={(e) => setFormData({ ...formData, rol: e.target.value })}>
+                {opcionesDeRol.map((o) => <option key={o.valor} value={o.valor} disabled={!o.permitido}>{o.nombre}</option>)}
               </select>
             </Field>
 
@@ -108,6 +137,7 @@ const AdminUsuarios = () => {
 
         <div className="xl:col-span-2 space-y-3">
           <h3 className="text-xl font-semibold text-slate-800">Directorio Activo</h3>
+          <FormError message={errorRol} onDismiss={() => setErrorRol(null)} />
           <TableCard>
             <THead>
               <Th>Nombre</Th>
@@ -138,11 +168,17 @@ const AdminUsuarios = () => {
                   </Td>
                   <Td className="text-slate-500 text-sm whitespace-nowrap">@{u.username}</Td>
                   <Td>
-                    <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${
-                      u.Role?.nombre?.includes('Admin') ? 'bg-brand-100 text-brand-800' : 'bg-slate-100 text-slate-700'
-                    }`}>
-                      {u.Role?.nombre}
-                    </span>
+                    {u.id === miId || u.Role?.tipo === 'BACKOFFICE_ADMIN' ? (
+                      <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap bg-brand-100 text-brand-800">{u.rol_nombre}</span>
+                    ) : (
+                      <select
+                        className="input-field py-1.5 text-sm w-auto" aria-label={`Rol de ${u.nombre}`}
+                        value={valorDeRol(u)} disabled={cambiarRol.isPending}
+                        onChange={(e) => { setErrorRol(null); cambiarRol.mutate({ id: u.id, rol: e.target.value }); }}
+                      >
+                        {opcionesDeRol.map((o) => <option key={o.valor} value={o.valor} disabled={!o.permitido}>{o.nombre}</option>)}
+                      </select>
+                    )}
                   </Td>
                 </Tr>
               ))}

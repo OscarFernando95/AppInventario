@@ -1,6 +1,10 @@
 const { Op } = require('sequelize');
-const { Compra, Venta, Producto } = require('../models');
+const { Compra, Venta, Gasto } = require('../models');
 const TtlCache = require('../utils/ttlCache');
+const { cargarProductosConReceta } = require('../services/inventarioDb');
+const { analizarProductos } = require('../services/reposicion');
+const { resumenCartera } = require('../services/cajaService');
+const { tiene } = require('../middlewares/auth');
 
 // El dashboard agrega SUM/COUNT sobre ventas y compras; cambia poco entre
 // visitas seguidas. Se cachea 60 s por empresa.
@@ -8,10 +12,34 @@ const dashboardCache = new TtlCache(Number(process.env.DASHBOARD_CACHE_TTL_MS ||
 
 exports.invalidateDashboard = (empresaId) => dashboardCache.delete(String(empresaId));
 
+/**
+ * El resumen se calcula una vez por empresa (caché), pero cada usuario solo recibe lo de los módulos a los
+ * que su rol entra: sin Compras no ve lo comprado; lo que se debe a proveedores exige además cartera.pagar.
+ */
+function paraUsuario(req, p) {
+  const bloqueado = (modulo) => req.empresaModulos.has(modulo) && !req.accesoModulos.has(modulo);
+  const salida = { ...p };
+  if (bloqueado('Ventas')) salida.ventasMes = null;
+  if (bloqueado('Compras')) salida.comprasMes = null;
+  if (bloqueado('Gastos')) salida.gastosMes = null;
+  if (bloqueado('Inventario')) salida.productosBajoStock = [];
+  if (p.cartera) {
+    const cobrar = req.accesoModulos.has('Cuentas por cobrar');
+    const pagar = req.accesoModulos.has('Cuentas por pagar') && tiene(req, 'cartera.pagar');
+    salida.cartera = (cobrar || pagar)
+      ? {
+        por_cobrar: cobrar ? p.cartera.por_cobrar : null, vencido_cobrar: cobrar ? p.cartera.vencido_cobrar : null,
+        por_pagar: pagar ? p.cartera.por_pagar : null, vencido_pagar: pagar ? p.cartera.vencido_pagar : null,
+      }
+      : null;
+  }
+  return salida;
+}
+
 exports.getDashboardData = async (req, res) => {
   const key = String(req.empresaId);
   const cached = dashboardCache.get(key);
-  if (cached) return res.json(cached);
+  if (cached) return res.json(paraUsuario(req, cached));
 
   const where = { empresaId: req.empresaId };
 
@@ -22,19 +50,42 @@ exports.getDashboardData = async (req, res) => {
   const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
   const enMesActual = { fecha: { [Op.gte]: monthStart, [Op.lt]: monthEnd } };
 
-  const [totalProductos, ventasMes, comprasMes, productosBajoStock] = await Promise.all([
-    Producto.count({ where }),
-    Venta.sum('total', { where: { ...where, ...enMesActual } }),
+  const [ventasMes, comprasMes, gastosMes, productos] = await Promise.all([
+    // Ventas netas: lo vendido menos lo que los clientes devolvieron de esas ventas.
+    Venta.findAll({ where: { ...where, estado: 'ACTIVA', ...enMesActual }, attributes: ['total', 'total_devuelto'], raw: true })
+      .then((vs) => vs.reduce((a, v) => a + Number(v.total) - Number(v.total_devuelto), 0)),
     Compra.sum('total', { where: { ...where, ...enMesActual } }),
-    Producto.findAll({ where: { ...where, stock_actual: { [Op.lt]: 10 } }, limit: 10 }),
+    Gasto.sum('monto', { where: { ...where, estado: 'ACTIVO', ...enMesActual } }),
+    cargarProductosConReceta(req.empresaId),
   ]);
 
+  // Alertas de stock mínimo de TODOS los tipos de producto (los más urgentes primero).
+  const analisis = analizarProductos(productos);
+  const productosBajoStock = productos
+    .filter((p) => analisis.get(p.id).alerta)
+    .map((p) => ({
+      id: p.id,
+      nombre_producto: p.nombre_producto,
+      tipo: p.tipo,
+      unidad_medida: p.unidad_medida,
+      stock_actual: Number(p.stock_actual),
+      disponible: analisis.get(p.id).disponible,
+      stock_minimo: Number(p.stock_minimo),
+      estado_stock: analisis.get(p.id).estado,
+    }))
+    .sort((x, y) => (x.estado_stock !== 'AGOTADO') - (y.estado_stock !== 'AGOTADO') || x.disponible / x.stock_minimo - y.disponible / y.stock_minimo)
+    .slice(0, 10);
+
   const payload = {
-    totalProductos,
+    totalProductos: productos.length,
     ventasMes: ventasMes || 0,
     comprasMes: comprasMes || 0,
+    gastosMes: gastosMes || 0,
     productosBajoStock,
+    // Lo que deben los clientes y lo que se debe a proveedores (solo con esos módulos).
+    cartera: (req.empresaModulos?.has('Cuentas por cobrar') || req.empresaModulos?.has('Cuentas por pagar'))
+      ? await resumenCartera(req.empresaId) : null,
   };
   dashboardCache.set(key, payload);
-  res.json(payload);
+  res.json(paraUsuario(req, payload));
 };

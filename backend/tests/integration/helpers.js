@@ -38,11 +38,15 @@ async function seedBase(models) {
     { id: 2, nombre: 'Administrador de Empresa', tipo: 'FRONT_ADMIN' },
     { id: 3, nombre: 'Usuario Operativo', tipo: 'FRONT_USER' },
   ]);
-  const modulos = await Modulo.bulkCreate(
-    ['Inventario', 'Ventas', 'Compras', 'Proveedores', 'Informes', 'Clientes', 'Servicios', 'Pedidos']
+  // Recetas y Caja existen en el catálogo pero NO se asignan a la empresa base:
+  // Caja obliga a abrir caja antes de vender y rompería los tests de ventas.
+  // Los tests de restaurante/caja los activan a mano.
+  const todos = await Modulo.bulkCreate(
+    ['Inventario', 'Ventas', 'Compras', 'Proveedores', 'Informes', 'Clientes', 'Servicios', 'Pedidos', 'Recetas', 'Caja', 'Gastos', 'Cuentas por cobrar', 'Cuentas por pagar', 'Roles y permisos']
       .map((nombre_codigo, i) => ({ id: i + 1, nombre_codigo })),
     { returning: true }
   );
+  const modulos = todos.filter((m) => !['Recetas', 'Caja', 'Cuentas por cobrar', 'Cuentas por pagar', 'Roles y permisos'].includes(m.nombre_codigo));
 
   const empresa = await Empresa.create({ nombre: 'TestCo', nit: '900123456', tipo_empresa: 'SIMPLE' });
   await empresa.setModulos(modulos.map((m) => m.id));

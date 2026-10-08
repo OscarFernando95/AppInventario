@@ -19,6 +19,21 @@ const Venta = sequelize.define('Venta', {
     type: DataTypes.INTEGER,
     allowNull: true, // Opcional, puede ser un cliente casual sin registro
   },
+  // ACTIVA | ANULADA. Una venta anulada se conserva en el historial pero no cuenta en
+  // totales, informes, caja ni balance.
+  estado: { type: DataTypes.STRING(10), allowNull: false, defaultValue: 'ACTIVA' },
+  anulada_en: { type: DataTypes.DATE, allowNull: true },
+  anulada_por: { type: DataTypes.INTEGER, allowNull: true },
+  motivo_anulacion: { type: DataTypes.TEXT, allowNull: true },
+  // Ventas a crédito: lo que el cliente aún debe y a cuántos días se concedió (fecha_vencimiento = fecha + días).
+  saldo_pendiente: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0 },
+  // Acumulado de lo devuelto por el cliente (devoluciones parciales); la venta original no cambia.
+  total_devuelto: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0 },
+  dias_credito: { type: DataTypes.INTEGER, allowNull: true },
+  cajaId: {
+    type: DataTypes.INTEGER,
+    allowNull: true, // solo si la empresa tiene el módulo Caja
+  },
   fecha: {
     type: DataTypes.DATE,
     allowNull: false,

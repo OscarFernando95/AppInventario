@@ -42,3 +42,20 @@ export const formatNIT = (nit) => {
   const formatted = body.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   return `${formatted}-${dv}`;
 };
+
+/** Fecha (legible, es-CO) en que vence un crédito concedido hoy a `dias` días. */
+export const vencimientoEn = (dias) => {
+  const d = new Date();
+  d.setDate(d.getDate() + (Number(dias) || 0));
+  return d.toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+/**
+ * Fecha de HOY (o de `d`) como YYYY-MM-DD en hora LOCAL — el formato de un
+ * <input type="date">. `toISOString()` da la fecha en UTC: en Colombia, pasadas
+ * las 19:00, devolvería el día de mañana.
+ */
+export const fechaLocal = (d = new Date()) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};

@@ -1,6 +1,6 @@
 # AppInventario
 
-Aplicación web para gestión de inventario, ventas, compras, proveedores, clientes, pedidos y servicios, con soporte multiempresa (multi-tenant) y roles de usuario.
+Aplicación web para gestión de inventario, ventas, compras, proveedores, clientes, pedidos y servicios, con soporte multiempresa (multi-tenant) y roles de usuario. Incluye un modo restaurante/cafetería (insumos y recetas que descuentan ingredientes al vender) y flujo de caja (apertura/cierre con PDF). Los módulos contratables están "amarrados": p. ej. Ventas requiere Inventario y Clientes (ver `backend/src/services/modulos.js`).
 
 ## Stack tecnológico
 
@@ -121,3 +121,9 @@ arrancar el contenedor `backend` (ver `backend/entrypoint.sh`).
 El despliegue en el PC servidor de la oficina (IP fija, firewall del puerto 80,
 autoarranque de Docker, backups automáticos y actualización de versiones) está
 documentado paso a paso en [`GUIA_INSTALACION.md`](./GUIA_INSTALACION.md).
+
+## Pruebas
+
+- Backend: `cd backend && npm test` (unitarias) y `npm run test:integration` (necesita `docker compose up -d db`).
+- Frontend: `cd frontend && npm test`.
+- Navegador (flujos completos): ver [`e2e/README.md`](e2e/README.md).
