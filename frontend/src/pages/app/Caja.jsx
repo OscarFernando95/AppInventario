@@ -324,6 +324,7 @@ const Caja = () => {
                 ['Pagos a proveedores (compras a crédito)', '−', 'pagos_proveedores', 'text-red-700'],
                 ['Gastos', '−', 'gastos', 'text-red-700'],
                 ['Retiros de caja', '−', 'retiros', 'text-red-700'],
+                ['Devoluciones a clientes', '−', 'devoluciones', 'text-red-700'],
               ].map(([nombre, signo, clave, tono]) => (
                 <tr key={clave}>
                   <td className="py-2 text-slate-700">{nombre}</td>
@@ -339,7 +340,7 @@ const Caja = () => {
             </tbody>
           </table>
           <p className="text-xs text-slate-500">
-            Dinero actual = capital inicial + ventas de contado + abonos − compras de contado − pagos a proveedores − gastos − retiros. Los pagos en efectivo de la caja ya están dentro de esos rubros.
+            Dinero actual = capital inicial + ventas de contado + abonos − compras de contado − pagos a proveedores − gastos − retiros − devoluciones. Los pagos en efectivo de la caja ya están dentro de esos rubros.
             {balance.cartera && (balance.cartera.por_cobrar > 0 || balance.cartera.por_pagar > 0) && (
               <> Aún no es dinero: te deben <strong>{formatCOP(balance.cartera.por_cobrar)}</strong>{balance.cartera.vencido_cobrar > 0 && <> ({formatCOP(balance.cartera.vencido_cobrar)} vencido)</>} y debes <strong>{formatCOP(balance.cartera.por_pagar)}</strong>{balance.cartera.vencido_pagar > 0 && <> ({formatCOP(balance.cartera.vencido_pagar)} vencido)</>}.</>
             )}

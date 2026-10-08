@@ -1,28 +1,26 @@
 # Mejoras pendientes
 
 ## Negocio
-1. **Devolución parcial.** Hoy solo se anula la venta completa. Falta devolver parte de una venta (1 de 3 ítems),
-   ajustando total, inventario y caja, y dejando una nota crédito cuando exista facturación electrónica.
-2. **Permisos por usuario.** Hoy hay solo administrador y operativo; un cajero puede ver costos y márgenes
+1. **Permisos por usuario.** Hoy hay solo administrador y operativo; un cajero puede ver costos y márgenes
    (Recetas). Definir por usuario quién ve costos, abre caja, anula, etc.
 
 ## Restaurante
-3. **Mesas y cuentas abiertas.** Abrir una cuenta por mesa, agregar pedidos y cobrar al final, con división
+2. **Mesas y cuentas abiertas.** Abrir una cuenta por mesa, agregar pedidos y cobrar al final, con división
    de cuenta y propina.
-4. **Comanda a cocina** (pantalla o impresión del pedido).
-5. **Informe de desviaciones:** lo que debió gastarse según las recetas contra lo que falta al contar
+3. **Comanda a cocina** (pantalla o impresión del pedido).
+4. **Informe de desviaciones:** lo que debió gastarse según las recetas contra lo que falta al contar
    (consumo teórico vs. conteo físico).
-6. **Domicilios:** solicitudes a través de la app, domiciliarios que aceptan, geolocalización y rastreo en
+5. **Domicilios:** solicitudes a través de la app, domiciliarios que aceptan, geolocalización y rastreo en
    tiempo real del domicilio. *(en pausa)*
-7. **Preparaciones por lotes:** registrar "hoy preparé 2 litros" con su propio stock (hoy una preparación se
+6. **Preparaciones por lotes:** registrar "hoy preparé 2 litros" con su propio stock (hoy una preparación se
    descuenta al vender el plato que la usa).
 
 ## Operación y seguridad
-8. **Copias de seguridad automáticas** con una restauración probada.
-9. **Segundo factor de autenticación** y registro de inicios de sesión (la auditoría gerencial no muestra
+7. **Copias de seguridad automáticas** con una restauración probada.
+8. **Segundo factor de autenticación** y registro de inicios de sesión (la auditoría gerencial no muestra
     quién entró ni cuándo).
-10. **Recuperar contraseña** (verificar si existe).
-11. **Pruebas automáticas en cada cambio** (por ejemplo, GitHub Actions) y fusionar la rama
+9. **Recuperar contraseña** (verificar si existe).
+10. **Pruebas automáticas en cada cambio** (por ejemplo, GitHub Actions) y fusionar la rama
     `feature/restaurantes-caja-gastos` a `main`.
 
 ## Pendientes pequeños

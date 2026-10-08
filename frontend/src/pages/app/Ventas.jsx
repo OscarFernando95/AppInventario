@@ -3,11 +3,12 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import JSZip from 'jszip';
 import api from '../../api/axios';
 import { Link } from 'react-router-dom';
-import { Ban, Wallet, ShoppingCart, Trash2, Search, CheckCircle, Tag, Users, UserPlus, X, Percent, Eye, Receipt, Box, Briefcase, Minus, Plus, PackageOpen, FileDown, FileArchive } from 'lucide-react';
+import { Undo2, Ban, Wallet, ShoppingCart, Trash2, Search, CheckCircle, Tag, Users, UserPlus, X, Percent, Eye, Receipt, Box, Briefcase, Minus, Plus, PackageOpen, FileDown, FileArchive } from 'lucide-react';
 import { formatCOP, formatDocumento, formatCantidad, vencimientoEn } from '../../utils/format';
 import { generateInvoicePDF } from '../../utils/generateInvoicePDF';
 import { useAuthStore } from '../../store/authStore';
 import { unidadCorta } from '../../utils/unidades';
+import { generateDevolucionPDF } from '../../utils/generateDevolucionPDF';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
@@ -66,12 +67,41 @@ const Ventas = () => {
 
   // ── Anulación: el administrador anula en el acto; los demás envían una solicitud que él resuelve ──
   const { data: pendientes = [] } = useEmpresaQuery(['anulaciones', 'pendientes'], '/anulaciones');
+  const abrirDevolucion = (venta) => {
+    setErrorDev(null);
+    setDevolviendo(venta);
+    // Por omisión se reingresan los productos (no los platos preparados); el dinero sale de la caja si se cobró en efectivo.
+    const reingresar = {};
+    (venta.VentaDetalles || []).forEach((d) => { reingresar[d.id] = !!d.productoId && d.Producto?.tipo === 'VENTA'; });
+    setDevForm({
+      cantidades: {}, reingresar, motivo: '',
+      reembolso: conCajaDev && venta.forma_pago === '1' && venta.medio_pago === '10' ? 'CAJA' : 'OTRO',
+    });
+  };
+
   const [anulando, setAnulando] = useState(null); // venta que se va a anular / solicitar
   const [motivoAnulacion, setMotivoAnulacion] = useState('');
   const [rechazando, setRechazando] = useState(null); // solicitud que se va a rechazar
   const [comentarioRechazo, setComentarioRechazo] = useState('');
+  // ── Devolución parcial: el administrador devuelve parte de una venta (hoy solo él) ──
+  const conCajaDev = modulos.includes('Caja');
+  const [devolviendo, setDevolviendo] = useState(null); // venta de la que se devuelve
+  const [devForm, setDevForm] = useState({ cantidades: {}, reingresar: {}, motivo: '', reembolso: 'OTRO' });
+  const [errorDev, setErrorDev] = useState(null);
+  const [devolucionHecha, setDevolucionHecha] = useState(null); // { devolucion, venta } para ofrecer la nota en PDF
   const [avisoAnulacion, setAvisoAnulacion] = useState(null);
   const [errorAnulacion, setErrorAnulacion] = useState(null);
+
+  const registrarDevolucion = useMutation({
+    mutationFn: ({ id, payload }) => api.post(`/ventas/${id}/devoluciones`, payload),
+    onSuccess: (res, vars) => {
+      invalidar();
+      setDevolviendo(null);
+      setErrorDev(null);
+      setDevolucionHecha({ devolucion: res.data.devolucion, venta: vars.venta });
+    },
+    onError: (err) => setErrorDev(apiError(err, 'No se pudo registrar la devolución')),
+  });
 
   const anularVenta = useMutation({
     mutationFn: ({ id, motivo }) => api.post(`/ventas/${id}/anular`, { motivo }),
@@ -156,6 +186,9 @@ const Ventas = () => {
   const [itemSearch, setItemSearch] = useState('');
   const [activeTab, setActiveTab] = useState('P'); // 'P' or 'S'
   const [viewDetalle, setViewDetalle] = useState(null);
+  const { data: devolucionesDeVenta = [] } = useEmpresaQuery(
+    ['ventas', 'devoluciones', viewDetalle?.id], `/ventas/${viewDetalle?.id}/devoluciones`, { enabled: !!viewDetalle && Number(viewDetalle.total_devuelto) > 0 }
+  );
   const [formError, setFormError] = useState(null);
   // Venta recién emitida: se muestra un modal de éxito con la opción de
   // descargar la factura BAJO DEMANDA (antes se descargaba sola al emitir).
@@ -513,6 +546,9 @@ const Ventas = () => {
           {ventas.map(v => {
             const anulada = v.estado === 'ANULADA';
             const conSolicitud = !anulada && v.anulaciones?.length > 0;
+            const devuelto = Number(v.total_devuelto || 0);
+            const devTotal = devuelto >= Number(v.total) - 0.005;
+            const devParcial = devuelto > 0.005 && !devTotal;
             return (
             <Tr key={v.id} className={anulada ? 'opacity-60' : ''}>
               <Td align="center">
@@ -539,6 +575,10 @@ const Ventas = () => {
                   <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800" title={v.motivo_anulacion || undefined}>ANULADA</span>
                 ) : conSolicitud ? (
                   <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 whitespace-nowrap">Anulación pedida</span>
+                ) : devTotal ? (
+                  <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-violet-100 text-violet-800">DEVUELTA</span>
+                ) : devParcial ? (
+                  <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 whitespace-nowrap" title={`Devuelto ${formatCOP(devuelto)}`}>DEV. PARCIAL</span>
                 ) : (
                   <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800">ACTIVA</span>
                 )}
@@ -548,7 +588,17 @@ const Ventas = () => {
                   <button onClick={() => setViewDetalle(v)} className="btn-icon" aria-label={`Ver detalle de la factura ${v.id}`}>
                     <Eye className="w-5 h-5"/>
                   </button>
-                  {!anulada && !conSolicitud && (
+                  {esAdmin && !anulada && !conSolicitud && !devTotal && (
+                    <button
+                      onClick={() => abrirDevolucion(v)}
+                      className="btn-icon text-amber-700"
+                      aria-label={`Devolver productos de la factura ${v.id}`}
+                      title="Devolver productos"
+                    >
+                      <Undo2 className="w-5 h-5"/>
+                    </button>
+                  )}
+                  {!anulada && !conSolicitud && !devuelto && (
                     <button
                       onClick={() => { setErrorAnulacion(null); setMotivoAnulacion(''); setAnulando(v); }}
                       className="btn-icon text-red-700"
@@ -871,6 +921,21 @@ const Ventas = () => {
                    )}
                 </div>
               </div>
+              {devolucionesDeVenta.length > 0 && (
+                <div className="mx-6 mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 space-y-1.5">
+                  <strong>Devoluciones ({formatCOP(viewDetalle.total_devuelto)} en total)</strong>
+                  {devolucionesDeVenta.map((dv) => (
+                    <div key={dv.id} className="flex flex-wrap items-center justify-between gap-2">
+                      <span>
+                        DEV-{String(dv.id).padStart(4, '0')} · {formatCOP(dv.total)} · {new Date(dv.fecha).toLocaleDateString('es-CO')} · {dv.motivo}
+                      </span>
+                      <button type="button" className="btn-secondary gap-1 text-xs" onClick={() => generateDevolucionPDF(dv, viewDetalle, activeEmpresa)}>
+                        <FileDown className="w-3.5 h-3.5" aria-hidden="true" /> Nota PDF
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
               {viewDetalle.estado === 'ANULADA' && (
                 <div className="mx-6 mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
                   <strong>Venta anulada</strong>
@@ -928,6 +993,140 @@ const Ventas = () => {
         </Modal>
       )}
 
+
+
+      {/* ── Devolver productos de una venta ── */}
+      {devolviendo && (() => {
+        const lineas = (devolviendo.VentaDetalles || []).map((d) => {
+          const disponible = Math.round((Number(d.cantidad) - Number(d.cantidad_devuelta || 0)) * 1000) / 1000;
+          const cantidad = Number(devForm.cantidades[d.id]) || 0;
+          const unitario = Number(d.precio_unitario) * (1 - Number(devolviendo.descuento_global || 0) / 100);
+          return { d, disponible, cantidad, valor: Math.round(cantidad * unitario * 100) / 100 };
+        });
+        const total = Math.round(lineas.reduce((a, l) => a + l.valor, 0) * 100) / 100;
+        const aCredito = devolviendo.forma_pago === '2';
+        const reducido = aCredito ? Math.min(Number(devolviendo.saldo_pendiente), total) : 0;
+        const dinero = Math.round((total - reducido) * 100) / 100;
+        const enviar = (e) => {
+          e.preventDefault();
+          const items = lineas.filter((l) => l.cantidad > 0).map((l) => ({ ventaDetalleId: l.d.id, cantidad: l.cantidad, reingresar: !!devForm.reingresar[l.d.id] }));
+          if (items.length === 0) return setErrorDev('Indica cuántas unidades se devuelven.');
+          if (lineas.some((l) => l.cantidad > l.disponible + 0.0005)) return setErrorDev('Una cantidad supera lo que se puede devolver.');
+          if (devForm.motivo.trim().length < 3) return setErrorDev('Indica el motivo de la devolución.');
+          registrarDevolucion.mutate({
+            id: devolviendo.id, venta: devolviendo,
+            payload: { items, motivo: devForm.motivo.trim(), reembolso: dinero > 0 ? devForm.reembolso : undefined },
+          });
+        };
+        return (
+          <Modal
+            open onClose={() => setDevolviendo(null)} size="2xl" title="Devolver productos"
+            description={`Factura #FACT-${String(devolviendo.id).padStart(4, '0')} · ${devolviendo.Cliente?.nombre || 'Cliente casual'} · ${formatCOP(devolviendo.total)}`}
+          >
+            <form onSubmit={enviar} className="space-y-4">
+              <FormError message={errorDev} onDismiss={() => setErrorDev(null)} />
+              <div className="overflow-x-auto rounded-xl border border-slate-200">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
+                    <tr>
+                      <th scope="col" className="px-3 py-2 font-semibold">Producto</th>
+                      <th scope="col" className="px-3 py-2 font-semibold text-center">Vendido</th>
+                      <th scope="col" className="px-3 py-2 font-semibold text-center">Ya devuelto</th>
+                      <th scope="col" className="px-3 py-2 font-semibold text-center w-28">Devolver</th>
+                      <th scope="col" className="px-3 py-2 font-semibold text-center">¿Vuelve al inventario?</th>
+                      <th scope="col" className="px-3 py-2 font-semibold text-right">Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {lineas.map(({ d, disponible, valor }) => {
+                      const nombre = d.Producto?.nombre_producto || d.Servicio?.nombre || 'Ítem';
+                      return (
+                        <tr key={d.id} className={disponible <= 0 ? 'opacity-50' : ''}>
+                          <td className="px-3 py-2 font-medium text-slate-800">{nombre}</td>
+                          <td className="px-3 py-2 text-center">{formatCantidad(d.cantidad)}</td>
+                          <td className="px-3 py-2 text-center text-slate-500">{formatCantidad(d.cantidad_devuelta)}</td>
+                          <td className="px-3 py-2 text-center">
+                            <input
+                              type="number" min="0" max={disponible} step="any" disabled={disponible <= 0}
+                              aria-label={`Cantidad a devolver de ${nombre}`} className="input-field text-center py-1.5"
+                              value={devForm.cantidades[d.id] ?? ''} placeholder="0"
+                              onChange={(e) => setDevForm({ ...devForm, cantidades: { ...devForm.cantidades, [d.id]: e.target.value } })}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            {d.productoId ? (
+                              <input
+                                type="checkbox" aria-label={`Reingresar ${nombre} al inventario`} disabled={disponible <= 0}
+                                className="w-4 h-4 rounded border-slate-300 text-brand-700 focus:ring-brand-600"
+                                checked={!!devForm.reingresar[d.id]}
+                                onChange={(e) => setDevForm({ ...devForm, reingresar: { ...devForm.reingresar, [d.id]: e.target.checked } })}
+                              />
+                            ) : <span className="text-xs text-slate-400">Servicio</span>}
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold whitespace-nowrap">{valor > 0 ? formatCOP(valor) : '—'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-slate-500">Un plato ya preparado normalmente no vuelve al inventario (se desecha); un producto en buen estado sí.</p>
+
+              <Field label="Motivo" required>
+                <input className="input-field" maxLength={500} placeholder="Llegó frío, producto defectuoso, error del cliente…" value={devForm.motivo} onChange={(e) => setDevForm({ ...devForm, motivo: e.target.value })} />
+              </Field>
+
+              <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 space-y-1.5 text-sm" role="status" aria-label="Resumen de la devolución">
+                <div className="flex justify-between"><span className="text-slate-600">Total a devolver</span><strong>{formatCOP(total)}</strong></div>
+                {aCredito && reducido > 0 && (
+                  <div className="flex justify-between text-slate-600"><span>Se descuenta de lo que el cliente debe</span><span>{formatCOP(reducido)}</span></div>
+                )}
+                {dinero > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-slate-600">Dinero que vuelve al cliente: <strong className="text-slate-800">{formatCOP(dinero)}</strong></span>
+                    <select
+                      aria-label="Cómo se devuelve el dinero" className="input-field w-auto py-1.5 text-xs"
+                      value={devForm.reembolso} onChange={(e) => setDevForm({ ...devForm, reembolso: e.target.value })}
+                    >
+                      {conCajaDev && <option value="CAJA">Efectivo de mi caja</option>}
+                      <option value="OTRO">Por otro medio (tarjeta, transferencia…)</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" className="btn-secondary" onClick={() => setDevolviendo(null)}>Cancelar</button>
+                <button type="submit" className="btn-primary px-6" disabled={registrarDevolucion.isPending}>
+                  {registrarDevolucion.isPending ? 'Registrando…' : 'Registrar devolución'}
+                </button>
+              </div>
+            </form>
+          </Modal>
+        );
+      })()}
+
+      <Modal open={!!devolucionHecha} onClose={() => setDevolucionHecha(null)} title="Devolución registrada" size="md">
+        {devolucionHecha && (
+          <div className="space-y-4">
+            <p className="flex items-center gap-2 text-emerald-700 font-semibold">
+              <CheckCircle className="w-5 h-5" aria-hidden="true" /> DEV-{String(devolucionHecha.devolucion.id).padStart(4, '0')} · {formatCOP(devolucionHecha.devolucion.total)}
+            </p>
+            <ul className="text-sm text-slate-700 space-y-1">
+              {Number(devolucionHecha.devolucion.credito_reducido) > 0 && <li>Se descontaron {formatCOP(devolucionHecha.devolucion.credito_reducido)} de lo que el cliente debía.</li>}
+              {Number(devolucionHecha.devolucion.dinero_devuelto) > 0 && (
+                <li>Se devolvieron {formatCOP(devolucionHecha.devolucion.dinero_devuelto)} {devolucionHecha.devolucion.reembolso === 'CAJA' ? 'del efectivo de tu caja' : 'por otro medio'}.</li>
+              )}
+            </ul>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="btn-secondary" onClick={() => setDevolucionHecha(null)}>Cerrar</button>
+              <button type="button" className="btn-primary gap-2" onClick={() => generateDevolucionPDF(devolucionHecha.devolucion, devolucionHecha.venta, activeEmpresa)}>
+                <FileDown className="w-4 h-4" aria-hidden="true" /> Descargar nota de devolución
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* ── Anular venta / solicitar anulación ── */}
       <Modal
