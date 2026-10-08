@@ -4,7 +4,7 @@ import JSZip from 'jszip';
 import api from '../../api/axios';
 import { Link } from 'react-router-dom';
 import { Ban, Wallet, ShoppingCart, Trash2, Search, CheckCircle, Tag, Users, UserPlus, X, Percent, Eye, Receipt, Box, Briefcase, Minus, Plus, PackageOpen, FileDown, FileArchive } from 'lucide-react';
-import { formatCOP, formatDocumento, formatCantidad } from '../../utils/format';
+import { formatCOP, formatDocumento, formatCantidad, vencimientoEn } from '../../utils/format';
 import { generateInvoicePDF } from '../../utils/generateInvoicePDF';
 import { useAuthStore } from '../../store/authStore';
 import { unidadCorta } from '../../utils/unidades';
@@ -161,7 +161,7 @@ const Ventas = () => {
   // descargar la factura BAJO DEMANDA (antes se descargaba sola al emitir).
   const [ventaEmitida, setVentaEmitida] = useState(null);
 
-  const [formData, setFormData] = useState({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' });
+  const [formData, setFormData] = useState({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10', dias_credito: '30' });
   const [activeDiscountIdx, setActiveDiscountIdx] = useState(null);
   const [globalDiscount, setGlobalDiscount] = useState(0);
   const [newClientData, setNewClientData] = useState({ nombre: '', documento: '', telefono: '', email: '', direccion: '' });
@@ -339,7 +339,7 @@ const Ventas = () => {
     onSuccess: (res) => {
       invalidar();
       setShowModal(false);
-      setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' });
+      setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10', dias_credito: '30' });
       setClientSearch('');
       setItemSearch('');
       setGlobalDiscount(0);
@@ -365,6 +365,8 @@ const Ventas = () => {
       clienteId: parseInt(formData.clienteId),
       descuento_global: globalDiscount || 0,
       forma_pago: formData.forma_pago,
+      // A crédito: plazo en días (el servidor calcula el vencimiento y deja el total por cobrar).
+      dias_credito: formData.forma_pago === '2' ? (Number(formData.dias_credito) || 0) : undefined,
       medio_pago: formData.medio_pago,
       detalles: formData.detalles.map(d => ({
         productoId: d.productoId,
@@ -394,7 +396,7 @@ const Ventas = () => {
                   : `Descargar ${seleccionadas.size} factura(s)`}
               </button>
             )}
-            <button className="btn-primary gap-2" disabled={sinCaja} title={sinCaja ? 'Abre caja para poder vender' : undefined} onClick={() => { setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10' }); setGlobalDiscount(0); setShowNewClient(false); setClientSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); }}>
+            <button className="btn-primary gap-2" disabled={sinCaja} title={sinCaja ? 'Abre caja para poder vender' : undefined} onClick={() => { setFormData({ clienteId: '', detalles: [], forma_pago: '1', medio_pago: '10', dias_credito: '30' }); setGlobalDiscount(0); setShowNewClient(false); setClientSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); }}>
               <Tag className="w-5 h-5" aria-hidden="true" /> Iniciar POS (Caja)
             </button>
           </div>
@@ -780,7 +782,7 @@ const Ventas = () => {
                          <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Forma de Pago</label>
                          <select className="input-field text-xs font-bold bg-white" value={formData.forma_pago} onChange={e=>setFormData({...formData, forma_pago: e.target.value})}>
                            <option value="1">Contado</option>
-                           <option value="2">Crédito</option>
+                           {modulos.includes('Cuentas por cobrar') && <option value="2">A crédito</option>}
                          </select>
                        </div>
                        <div>
@@ -794,6 +796,19 @@ const Ventas = () => {
                          </select>
                        </div>
                      </div>
+                     {formData.forma_pago === '2' && (
+                       <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 space-y-1">
+                         <label htmlFor="pos-dias-credito" className="block text-[10px] font-bold text-amber-900 uppercase tracking-wider">Plazo (días)</label>
+                         <input
+                           id="pos-dias-credito" type="number" min="0" max="365" className="input-field text-xs font-bold bg-white"
+                           value={formData.dias_credito} onChange={(e) => setFormData({ ...formData, dias_credito: e.target.value })}
+                         />
+                         <p className="text-[11px] text-amber-900">
+                           Queda por cobrar {formatCOP(getTotal())} y vence el {vencimientoEn(formData.dias_credito)}.
+                           El cliente abona después en Cuentas por cobrar.
+                         </p>
+                       </div>
+                     )}
                   </div>
 
                   <div className="flex justify-between items-end pt-2">

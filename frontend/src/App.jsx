@@ -23,6 +23,7 @@ import Recetas from './pages/app/Recetas';
 import Ajustes from './pages/app/Ajustes';
 import Gastos from './pages/app/Gastos';
 import Reposicion from './pages/app/Reposicion';
+import { CuentasCobrar, CuentasPagar } from './pages/app/Cartera';
 import Informes from './pages/app/Informes';
 import Auditoria from './pages/app/Auditoria';
 
@@ -118,6 +119,8 @@ const App = () => {
           <Route path="recetas" element={<ModuloRoute modulo="Recetas"><Recetas /></ModuloRoute>} />
           <Route path="reposicion" element={<ModuloRoute modulo="Inventario"><Reposicion /></ModuloRoute>} />
           <Route path="ajustes" element={<ModuloRoute modulo="Inventario"><Ajustes /></ModuloRoute>} />
+          <Route path="cuentas-por-cobrar" element={<ModuloRoute modulo="Cuentas por cobrar"><CuentasCobrar /></ModuloRoute>} />
+          <Route path="cuentas-por-pagar" element={<ModuloRoute modulo="Cuentas por pagar"><SoloFrontAdmin><CuentasPagar /></SoloFrontAdmin></ModuloRoute>} />
           <Route path="gastos" element={<ModuloRoute modulo="Gastos"><Gastos /></ModuloRoute>} />
           <Route path="caja" element={<ModuloRoute modulo="Caja"><Caja /></ModuloRoute>} />
           <Route path="pedidos" element={<ModuloRoute modulo="Pedidos"><Pedidos /></ModuloRoute>} />

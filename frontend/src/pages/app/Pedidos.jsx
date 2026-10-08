@@ -6,6 +6,7 @@ import { PackageOpen, Users, Plus, ShoppingCart, Trash2, Search, CheckCircle, Tr
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { useAuthStore } from '../../store/authStore';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import { vencimientoEn } from '../../utils/format';
 import { unidadCorta, etiquetaPresentacion, presentacionDe, aPresentacion, aUnidadBase, lineaVista } from '../../utils/unidades';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
@@ -54,6 +55,9 @@ const Pedidos = () => {
   const conCaja = modulos.includes('Caja');
   const { data: cajaActual } = useEmpresaQuery(['caja', 'actual'], '/caja/actual', { enabled: conCaja });
   const [pagarDeCaja, setPagarDeCaja] = useState(false);
+  // Al recibir la mercancía: de contado o a crédito (módulo Cuentas por pagar → deuda con el proveedor).
+  const conCartera = modulos.includes('Cuentas por pagar');
+  const [condicionPago, setCondicionPago] = useState({ forma: 'CONTADO', dias: '30' });
   const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
 
   const actualizarFiltro = (patch) => {
@@ -229,6 +233,7 @@ const Pedidos = () => {
   // CHECK IN LOGIC
   const openCheckIn = (pedido) => {
     setFormError(null);
+    setCondicionPago({ forma: 'CONTADO', dias: '30' });
     setCheckInDetalles(pedido.PedidoDetalles.map(d => {
       const pedida = Number(d.cantidad_pedida);
       const recibida = Number(d.cantidad_recibida || 0);
@@ -294,7 +299,9 @@ const Pedidos = () => {
 
   const submitCheckIn = () => {
     recepcionar.mutate({
-      pago_desde_caja: conCaja && cajaActual && pagarDeCaja ? true : undefined,
+      pago_desde_caja: conCaja && cajaActual && pagarDeCaja && condicionPago.forma === 'CONTADO' ? true : undefined,
+      forma_pago: conCartera && condicionPago.forma === 'CREDITO' ? 'CREDITO' : undefined,
+      dias_credito: conCartera && condicionPago.forma === 'CREDITO' ? (Number(condicionPago.dias) || 0) : undefined,
       detalles_recibidos: checkInDetalles.map(d => ({
         productoId: d.productoId,
         cantidad: d.cantidad_llegada,
@@ -627,7 +634,36 @@ const Pedidos = () => {
                  </table>
                </div>
 
-               {conCaja && (
+               {conCartera && (
+                  <fieldset className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+                    <legend className="px-1 text-xs font-semibold uppercase tracking-wider text-slate-500">Condiciones de pago</legend>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label className="flex items-center gap-2">
+                        <input type="radio" name="condicion-pago" checked={condicionPago.forma === 'CONTADO'} onChange={() => setCondicionPago({ ...condicionPago, forma: 'CONTADO' })} className="text-brand-700 focus:ring-brand-600" />
+                        De contado
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input type="radio" name="condicion-pago" checked={condicionPago.forma === 'CREDITO'} onChange={() => setCondicionPago({ ...condicionPago, forma: 'CREDITO' })} className="text-brand-700 focus:ring-brand-600" />
+                        A crédito
+                      </label>
+                      {condicionPago.forma === 'CREDITO' && (
+                        <label className="flex items-center gap-2 text-xs text-slate-600">
+                          Plazo
+                          <input
+                            type="number" min="0" max="365" aria-label="Plazo del crédito en días"
+                            className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-bold"
+                            value={condicionPago.dias} onChange={(e) => setCondicionPago({ ...condicionPago, dias: e.target.value })}
+                          />
+                          días
+                        </label>
+                      )}
+                    </div>
+                    {condicionPago.forma === 'CREDITO' && (
+                      <p className="mt-2 text-xs text-slate-500">Queda una deuda con el proveedor que vence el {vencimientoEn(condicionPago.dias)}; se paga en Cuentas por pagar.</p>
+                    )}
+                  </fieldset>
+                )}
+               {conCaja && condicionPago.forma === 'CONTADO' && (
                  <label className={`flex items-start gap-2 mb-4 rounded-xl border p-3 text-sm ${cajaActual ? 'border-slate-200 bg-slate-50 cursor-pointer' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>
                    <input
                      type="checkbox" className="mt-0.5 w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"

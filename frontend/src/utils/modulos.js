@@ -11,19 +11,19 @@ export const TIPOS_NEGOCIO = [
     value: 'COMERCIO',
     label: 'Comercio',
     descripcion: 'Tienda de ropa, minimercado, ferretería…',
-    sugeridos: ['Inventario', 'Proveedores', 'Clientes', 'Compras', 'Pedidos', 'Ventas', 'Gastos', 'Informes'],
+    sugeridos: ['Inventario', 'Proveedores', 'Clientes', 'Compras', 'Pedidos', 'Ventas', 'Gastos', 'Cuentas por cobrar', 'Cuentas por pagar', 'Informes'],
   },
   {
     value: 'RESTAURANTE',
     label: 'Restaurante / cafetería',
     descripcion: 'Platos que consumen ingredientes del inventario.',
-    sugeridos: ['Inventario', 'Proveedores', 'Clientes', 'Compras', 'Pedidos', 'Ventas', 'Recetas', 'Caja', 'Gastos', 'Informes'],
+    sugeridos: ['Inventario', 'Proveedores', 'Clientes', 'Compras', 'Pedidos', 'Ventas', 'Recetas', 'Caja', 'Gastos', 'Cuentas por pagar', 'Informes'],
   },
   {
     value: 'SERVICIOS',
     label: 'Servicios',
     descripcion: 'Consultoría, talleres, salones…',
-    sugeridos: ['Inventario', 'Clientes', 'Servicios', 'Ventas', 'Caja', 'Gastos', 'Informes'],
+    sugeridos: ['Inventario', 'Clientes', 'Servicios', 'Ventas', 'Caja', 'Gastos', 'Cuentas por cobrar', 'Informes'],
   },
 ];
 

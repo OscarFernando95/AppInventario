@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import api from '../../api/axios';
-import { Wallet, LockKeyhole, Unlock, FileDown, Receipt, Banknote, TrendingUp, TrendingDown, History, CheckCircle2, ArrowUpFromLine, Scale } from 'lucide-react';
+import { HandCoins, Wallet, LockKeyhole, Unlock, FileDown, Receipt, Banknote, TrendingUp, TrendingDown, History, CheckCircle2, ArrowUpFromLine, Scale } from 'lucide-react';
 import { formatCOP } from '../../utils/format';
 import { etiquetaPago } from '../../utils/mediosPago';
 import { CATEGORIAS_GASTO } from '../../utils/gastos';
@@ -59,6 +59,7 @@ const Caja = () => {
 
   const { data: cajaActual, isLoading: cargandoActual } = useEmpresaQuery(['caja', 'actual'], '/caja/actual');
   const conGastos = (activeEmpresa?.modulos || []).includes('Gastos');
+  const conCobrar = (activeEmpresa?.modulos || []).includes('Cuentas por cobrar');
 
   // Base sugerida al abrir: lo contado en el último cierre (o el capital inicial si es la primera caja).
   const { data: baseSugerida } = useEmpresaQuery(['caja', 'base-sugerida'], '/caja/base-sugerida', { enabled: showAbrir });
@@ -223,10 +224,11 @@ const Caja = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
+          <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${conCobrar ? 'xl:grid-cols-6' : 'xl:grid-cols-5'}`}>
             <Stat icon={Banknote} label="Base inicial" value={formatCOP(cajaActual.monto_inicial)} />
             <Stat icon={Receipt} label={`Ventas (${resumenActual.num_ventas})`} value={formatCOP(resumenActual.total_ventas)} tone="bg-emerald-50 text-emerald-700" />
             <Stat icon={TrendingUp} label="Ventas en efectivo" value={formatCOP(resumenActual.ventas_efectivo)} tone="bg-amber-50 text-amber-700" />
+            {conCobrar && <Stat icon={HandCoins} label="Abonos en efectivo" value={formatCOP(resumenActual.abonos_efectivo)} tone="bg-sky-50 text-sky-700" />}
             <Stat icon={TrendingDown} label="Egresos de caja" value={formatCOP(resumenActual.total_egresos)} tone="bg-red-50 text-red-700" />
             <Stat icon={Wallet} label="Efectivo esperado" value={formatCOP(resumenActual.efectivo_esperado)} tone="bg-brand-100 text-brand-800" />
           </div>
@@ -238,7 +240,7 @@ const Caja = () => {
                 {cajaActual.movimientos.map((m) => (
                   <li key={m.id} className="flex justify-between gap-3 py-2">
                     <span className="text-slate-600 min-w-0 truncate">
-                      <span className="text-[10px] font-semibold uppercase tracking-wide bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 mr-2">{{ RETIRO: 'Retiro', GASTO: 'Gasto', COMPRA: 'Compra', DEVOLUCION: 'Devolución' }[m.tipo]}</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-wide bg-slate-100 text-slate-600 rounded px-1.5 py-0.5 mr-2">{{ RETIRO: 'Retiro', GASTO: 'Gasto', COMPRA: 'Compra', DEVOLUCION: 'Devolución', PAGO_PROV: 'Pago proveedor' }[m.tipo]}</span>
                       {m.concepto}
                     </span>
                     <span className="font-semibold text-red-700 whitespace-nowrap">−{formatCOP(m.monto)}</span>
@@ -317,7 +319,9 @@ const Caja = () => {
             <tbody className="divide-y divide-slate-100">
               {[
                 ['Ventas cobradas (contado)', '+', 'ventas', 'text-emerald-700'],
-                ['Compras de mercancía', '−', 'compras', 'text-red-700'],
+                ['Abonos de clientes (ventas a crédito)', '+', 'abonos', 'text-emerald-700'],
+                ['Compras de contado', '−', 'compras', 'text-red-700'],
+                ['Pagos a proveedores (compras a crédito)', '−', 'pagos_proveedores', 'text-red-700'],
                 ['Gastos', '−', 'gastos', 'text-red-700'],
                 ['Retiros de caja', '−', 'retiros', 'text-red-700'],
               ].map(([nombre, signo, clave, tono]) => (
@@ -335,8 +339,10 @@ const Caja = () => {
             </tbody>
           </table>
           <p className="text-xs text-slate-500">
-            Dinero actual = capital inicial + ventas de contado − compras − gastos − retiros. Los pagos en efectivo de la caja ya están dentro de compras y gastos.
-            {balance.acumulado.ventas_credito > 0 && <> Ventas a crédito por cobrar (no incluidas): <strong>{formatCOP(balance.acumulado.ventas_credito)}</strong>.</>}
+            Dinero actual = capital inicial + ventas de contado + abonos − compras de contado − pagos a proveedores − gastos − retiros. Los pagos en efectivo de la caja ya están dentro de esos rubros.
+            {balance.cartera && (balance.cartera.por_cobrar > 0 || balance.cartera.por_pagar > 0) && (
+              <> Aún no es dinero: te deben <strong>{formatCOP(balance.cartera.por_cobrar)}</strong>{balance.cartera.vencido_cobrar > 0 && <> ({formatCOP(balance.cartera.vencido_cobrar)} vencido)</>} y debes <strong>{formatCOP(balance.cartera.por_pagar)}</strong>{balance.cartera.vencido_pagar > 0 && <> ({formatCOP(balance.cartera.vencido_pagar)} vencido)</>}.</>
+            )}
             {' '}Efectivo en cajas abiertas ahora: <strong>{formatCOP(balance.efectivo_en_cajas)}</strong>.
           </p>
         </section>
@@ -508,6 +514,7 @@ const Caja = () => {
                   ['Base inicial', formatCOP(detalleCierre.monto_inicial)],
                   [`Ventas del turno (${detalleCierre.resumen.num_ventas})`, formatCOP(detalleCierre.resumen.total_ventas)],
                   ['Ventas en efectivo', formatCOP(detalleCierre.resumen.ventas_efectivo)],
+                  ...(Number(detalleCierre.resumen.abonos_efectivo) > 0 ? [['Abonos de clientes en efectivo', `+${formatCOP(detalleCierre.resumen.abonos_efectivo)}`]] : []),
                   ['Egresos de caja (retiros y pagos)', `−${formatCOP(detalleCierre.resumen.total_egresos)}`],
                 ].map(([k, v]) => (
                   <div key={k} className="flex justify-between px-4 py-2.5"><dt className="text-slate-600">{k}</dt><dd className="font-semibold text-slate-800">{v}</dd></div>
@@ -566,6 +573,9 @@ const Caja = () => {
             </p>
             <dl className="rounded-xl bg-slate-50 border border-slate-200 divide-y divide-slate-200 text-sm">
               <div className="flex justify-between px-4 py-2.5"><dt className="text-slate-600">Total vendido</dt><dd className="font-semibold">{formatCOP(cerradaOk.total_ventas)}</dd></div>
+              {Number(cerradaOk.abonos_efectivo) > 0 && (
+                <div className="flex justify-between px-4 py-2.5"><dt className="text-slate-600">Abonos en efectivo</dt><dd className="font-semibold">+{formatCOP(cerradaOk.abonos_efectivo)}</dd></div>
+              )}
               <div className="flex justify-between px-4 py-2.5"><dt className="text-slate-600">Egresos de caja</dt><dd className="font-semibold">−{formatCOP(cerradaOk.total_egresos)}</dd></div>
               <div className="flex justify-between px-4 py-2.5"><dt className="text-slate-600">Efectivo esperado</dt><dd className="font-semibold">{formatCOP(cerradaOk.efectivo_esperado)}</dd></div>
               <div className="flex justify-between px-4 py-2.5"><dt className="text-slate-600">Efectivo contado</dt><dd className="font-semibold">{formatCOP(cerradaOk.monto_contado)}</dd></div>

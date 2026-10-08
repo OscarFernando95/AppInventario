@@ -98,6 +98,29 @@ const DashboardUser = () => {
         </p>
       </div>
 
+      {dash?.cartera && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          {(activeEmpresa?.modulos || []).includes('Cuentas por cobrar') && (
+            <button type="button" onClick={() => navigate('/app/cuentas-por-cobrar')} className="card-container p-5 text-left hover:shadow-md transition-shadow">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Te deben</p>
+              <p className="text-3xl font-bold text-slate-800 mt-1">{formatCOP(dash.cartera.por_cobrar)}</p>
+              <p className={`text-sm mt-1 ${dash.cartera.vencido_cobrar > 0 ? 'font-semibold text-red-700' : 'text-slate-500'}`}>
+                {dash.cartera.vencido_cobrar > 0 ? `${formatCOP(dash.cartera.vencido_cobrar)} vencido` : 'Nada vencido'}
+              </p>
+            </button>
+          )}
+          {(activeEmpresa?.modulos || []).includes('Cuentas por pagar') && user?.rol === 'FRONT_ADMIN' && (
+            <button type="button" onClick={() => navigate('/app/cuentas-por-pagar')} className="card-container p-5 text-left hover:shadow-md transition-shadow">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Debes</p>
+              <p className="text-3xl font-bold text-slate-800 mt-1">{formatCOP(dash.cartera.por_pagar)}</p>
+              <p className={`text-sm mt-1 ${dash.cartera.vencido_pagar > 0 ? 'font-semibold text-red-700' : 'text-slate-500'}`}>
+                {dash.cartera.vencido_pagar > 0 ? `${formatCOP(dash.cartera.vencido_pagar)} vencido` : 'Nada vencido'}
+              </p>
+            </button>
+          )}
+        </div>
+      )}
+
       {(dash?.productosBajoStock?.length ?? 0) > 0 && (activeEmpresa?.modulos || []).includes('Inventario') && (
         <div role="status" className="flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
           <AlertTriangle className="w-5 h-5 shrink-0" aria-hidden="true" />

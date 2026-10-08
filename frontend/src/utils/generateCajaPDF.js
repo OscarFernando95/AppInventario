@@ -21,6 +21,8 @@ export const generateCajaPDF = (caja, options = {}) => {
   const resumen = caja.resumen || { num_ventas: 0, total_ventas: 0, ventas_efectivo: 0, efectivo_esperado: 0, medios: [] };
   const ventas = caja.ventas || [];
   const movimientos = caja.movimientos || [];
+  const abonos = caja.abonos || [];
+  const totalAbonos = Number(resumen.abonos_efectivo || 0);
   const totalEgresos = Number(resumen.total_egresos || 0);
   const cerrada = caja.estado === 'CERRADA';
 
@@ -157,6 +159,7 @@ export const generateCajaPDF = (caja, options = {}) => {
   const cuadre = [
     ['Base inicial', formatCOP(caja.monto_inicial)],
     ['(+) Ventas en efectivo', formatCOP(resumen.ventas_efectivo)],
+    ...(totalAbonos > 0 ? [['(+) Abonos de clientes en efectivo', formatCOP(totalAbonos)]] : []),
     ['(−) Egresos de caja (retiros y pagos)', totalEgresos > 0 ? `-${formatCOP(totalEgresos)}` : formatCOP(0)],
     ['(=) Efectivo esperado', formatCOP(resumen.efectivo_esperado)],
   ];
@@ -167,6 +170,7 @@ export const generateCajaPDF = (caja, options = {}) => {
       formatCOP(diferencia),
     ]);
   }
+  const idxEsperado = cuadre.findIndex((f) => f[0].startsWith('(=)'));
   autoTable(doc, {
     startY: y,
     margin: { left: margin, right: margin },
@@ -175,7 +179,7 @@ export const generateCajaPDF = (caja, options = {}) => {
     styles: { fontSize: 10, textColor: textDark, cellPadding: 2.5 },
     columnStyles: { 0: { fontStyle: 'bold' }, 1: { halign: 'right' } },
     didParseCell: (data) => {
-      if (data.row.index === 3) data.cell.styles.fillColor = lightBg;
+      if (data.row.index === idxEsperado) data.cell.styles.fillColor = lightBg;
       if (cerrada && data.row.index === cuadre.length - 1) {
         data.cell.styles.fontStyle = 'bold';
         data.cell.styles.textColor = diferencia === 0 ? verde : rojo;
@@ -205,7 +209,7 @@ export const generateCajaPDF = (caja, options = {}) => {
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...primary);
     doc.text('EGRESOS DE CAJA', margin, y);
-    const tipos = { RETIRO: 'Retiro', GASTO: 'Gasto', COMPRA: 'Compra', DEVOLUCION: 'Devolución' };
+    const tipos = { RETIRO: 'Retiro', GASTO: 'Gasto', COMPRA: 'Compra', DEVOLUCION: 'Devolución', PAGO_PROV: 'Pago proveedor' };
     autoTable(doc, {
       startY: y + 3,
       margin: { left: margin, right: margin },
@@ -216,6 +220,27 @@ export const generateCajaPDF = (caja, options = {}) => {
       headStyles: { fillColor: primary, textColor: white },
       alternateRowStyles: { fillColor: lightBg },
       columnStyles: { 3: { halign: 'right' } },
+    });
+    y = doc.lastAutoTable.finalY + 8;
+  }
+
+  // ──── Abonos de clientes ────
+  if (abonos.length > 0) {
+    if (y > pageH - 60) { doc.addPage(); y = margin + 4; }
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...primary);
+    doc.text('ABONOS DE CLIENTES EN EFECTIVO', margin, y);
+    autoTable(doc, {
+      startY: y + 3,
+      margin: { left: margin, right: margin },
+      head: [['Hora', 'Venta', { content: 'Monto', styles: { halign: 'right' } }]],
+      body: abonos.map((a) => [fmtHora(a.fecha), `FACT-${String(a.ventaId).padStart(4, '0')}`, formatCOP(a.monto)]),
+      theme: 'striped',
+      styles: { fontSize: 8.5, textColor: textDark, cellPadding: 2 },
+      headStyles: { fillColor: primary, textColor: white },
+      alternateRowStyles: { fillColor: lightBg },
+      columnStyles: { 2: { halign: 'right' } },
     });
     y = doc.lastAutoTable.finalY + 8;
   }

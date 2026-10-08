@@ -45,6 +45,8 @@ describe('tipos de negocio', () => {
       { id: 9, nombre_codigo: 'Informes', requiere: ['Ventas'] },
       { id: 10, nombre_codigo: 'Servicios', requiere: [] },
       { id: 11, nombre_codigo: 'Gastos', requiere: [] },
+      { id: 12, nombre_codigo: 'Cuentas por cobrar', requiere: ['Ventas', 'Clientes'] },
+      { id: 13, nombre_codigo: 'Cuentas por pagar', requiere: ['Compras', 'Proveedores'] },
     ];
     for (const tipo of TIPOS_NEGOCIO) {
       const ids = idsPorNombre(tipo.sugeridos, catalogo);

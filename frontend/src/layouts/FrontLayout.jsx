@@ -3,10 +3,13 @@ import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../api/axios';
-import { Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins, PackagePlus } from 'lucide-react';
+import { Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins, PackagePlus, ReceiptText, WalletCards } from 'lucide-react';
 
 // Títulos con tilde para las rutas cuyo nombre se escribe sin ella.
-const TITULOS = { auditoria: 'Auditoría', reposicion: 'Reposición', admin: 'Administración' };
+const TITULOS = {
+  auditoria: 'Auditoría', reposicion: 'Reposición', admin: 'Administración',
+  'cuentas-por-cobrar': 'Cuentas por cobrar', 'cuentas-por-pagar': 'Cuentas por pagar',
+};
 
 const FrontLayout = () => {
   const { user, activeEmpresa, setActiveEmpresa, logout, syncSesion } = useAuthStore();
@@ -64,12 +67,14 @@ const FrontLayout = () => {
     { name: 'Compras', path: '/app/compras', icon: Package },
     { name: 'Ventas', path: '/app/ventas', icon: ShoppingCart },
     { name: 'Caja', path: '/app/caja', icon: Wallet },
+    { name: 'Cuentas por cobrar', path: '/app/cuentas-por-cobrar', icon: ReceiptText },
+    { name: 'Cuentas por pagar', path: '/app/cuentas-por-pagar', icon: WalletCards, soloAdmin: true },
     { name: 'Gastos', path: '/app/gastos', icon: HandCoins },
     { name: 'Informes', path: '/app/informes', icon: FileText },
   ];
 
   const menu = baseMenu.filter(
-    (item) => item.name === 'Dashboard' || (activeEmpresa?.modulos || []).includes(item.modulo || item.name)
+    (item) => item.name === 'Dashboard' || ((activeEmpresa?.modulos || []).includes(item.modulo || item.name) && (!item.soloAdmin || user?.rol === 'FRONT_ADMIN'))
   );
 
   if (user?.rol === 'FRONT_ADMIN') {

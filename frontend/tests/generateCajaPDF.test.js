@@ -18,13 +18,14 @@ const cajaCerrada = {
   usuarioCierre: { nombre: 'Luis' },
   Empresa: { nombre: 'Café Central', nit: '9001234567', contacto: 'Cra 1 #2-3' },
   resumen: {
-    num_ventas: 3, total_ventas: 300000, ventas_efectivo: 100000, total_egresos: 50000, efectivo_esperado: 100000,
+    num_ventas: 3, total_ventas: 300000, ventas_efectivo: 100000, abonos_efectivo: 25000, total_egresos: 50000, efectivo_esperado: 125000,
     medios: [
       { forma_pago: '1', medio_pago: '10', num: 1, total: 100000 },
       { forma_pago: '1', medio_pago: '48', num: 1, total: 100000 },
       { forma_pago: '2', medio_pago: '10', num: 1, total: 100000 },
     ],
   },
+  abonos: [{ id: 1, ventaId: 1, monto: '25000.00', fecha: '2026-10-07T15:00:00.000Z' }],
   movimientos: [
     { id: 1, tipo: 'RETIRO', concepto: 'Consignación al banco', monto: '20000.00', fecha: '2026-10-07T12:00:00.000Z' },
     { id: 2, tipo: 'GASTO', concepto: 'Domiciliario', monto: '30000.00', fecha: '2026-10-07T13:00:00.000Z' },
@@ -50,6 +51,13 @@ describe('generateCajaPDF', () => {
     const { movimientos: _m, ...sinMovs } = cajaCerrada;
     expect(() => generateCajaPDF(sinMovs, opts)).not.toThrow();
     expect(() => generateCajaPDF({ ...cajaCerrada, movimientos: Array.from({ length: 80 }, (_, i) => ({ id: i, tipo: 'GASTO', concepto: `Gasto ${i}`, monto: 100, fecha: '2026-10-07T12:00:00.000Z' })) }, opts)).not.toThrow();
+  });
+
+  it('imprime los abonos en efectivo y funciona sin ellos', () => {
+    expect(generateCajaPDF(cajaCerrada, opts)).toMatch(/^Cierre_/);
+    const { abonos: _a, ...sinAbonos } = cajaCerrada;
+    expect(() => generateCajaPDF({ ...sinAbonos, resumen: { ...cajaCerrada.resumen, abonos_efectivo: 0 } }, opts)).not.toThrow();
+    expect(() => generateCajaPDF({ ...cajaCerrada, abonos: Array.from({ length: 80 }, (_, i) => ({ id: i, ventaId: i + 1, monto: 100, fecha: '2026-10-07T15:00:00.000Z' })) }, opts)).not.toThrow();
   });
 
   it('no revienta sin ventas, sin empresa ni observaciones', () => {

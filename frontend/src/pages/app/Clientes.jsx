@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { Users, Plus, Edit, Mail, Phone, MapPin, IdCard } from 'lucide-react';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import { useAuthStore } from '../../store/authStore';
 import { useTextFilter } from '../../hooks/useTextFilter';
 import DaneLocationFields from '../../components/DaneLocationFields';
 import FormError from '../../components/FormError';
@@ -23,6 +24,7 @@ const EMPTY = {
 const Clientes = () => {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
+  const conCredito = (useAuthStore((s) => s.activeEmpresa?.modulos) || []).includes('Cuentas por cobrar');
   const [formData, setFormData] = useState(EMPTY);
   const [editId, setEditId] = useState(null);
   const [formError, setFormError] = useState(null);
@@ -61,7 +63,8 @@ const Clientes = () => {
     setFormData({
       nombre: c.nombre, documento: c.documento, email: c.email, telefono: c.telefono, direccion: c.direccion,
       tipo_documento: c.tipo_documento || '13', dv: c.dv || '', tipo_persona: c.tipo_persona || '2', regimen_fiscal: c.regimen_fiscal || 'R-99-PN',
-      departamento_dane: c.departamento_dane || '', municipio_dane: c.municipio_dane || ''
+      departamento_dane: c.departamento_dane || '', municipio_dane: c.municipio_dane || '',
+      cupo_credito: c.cupo_credito != null ? String(Number(c.cupo_credito)) : '',
     });
     setShowModal(true);
   };
@@ -177,6 +180,15 @@ const Clientes = () => {
               <Field label="Teléfono">
                 <input className="input-field" value={formData.telefono || ''} onChange={(e) => setFormData({ ...formData, telefono: e.target.value })} />
               </Field>
+
+              {conCredito && (
+                <Field label="Cupo de crédito ($)" hint="Lo máximo que puede deber en ventas a crédito. Vacío = sin tope.">
+                  <input
+                    type="number" min="0" step="0.01" className="input-field" placeholder="Sin tope"
+                    value={formData.cupo_credito ?? ''} onChange={(e) => setFormData({ ...formData, cupo_credito: e.target.value })}
+                  />
+                </Field>
+              )}
             </div>
 
             <div className="space-y-4">

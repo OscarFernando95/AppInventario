@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
 import { PackageOpen, Users, Plus, ShoppingCart, Trash2, Tag, Search, CheckCircle, Truck, UserPlus, X, Box, Wallet, Eye, Receipt } from 'lucide-react';
-import { formatCOP, formatCantidad } from '../../utils/format';
+import { formatCOP, formatCantidad, vencimientoEn } from '../../utils/format';
 import { useAuthStore } from '../../store/authStore';
 import { unidadCorta, etiquetaPresentacion, presentacionDe, aPresentacion, aUnidadBase, lineaVista } from '../../utils/unidades';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
@@ -46,6 +46,9 @@ const Compras = () => {
   const conCaja = modulos.includes('Caja');
   const { data: cajaActual } = useEmpresaQuery(['caja', 'actual'], '/caja/actual', { enabled: conCaja });
   const [pagarDeCaja, setPagarDeCaja] = useState(true);
+  // Contado o a crédito (módulo Cuentas por pagar): a crédito queda una deuda con el proveedor.
+  const conCartera = modulos.includes('Cuentas por pagar');
+  const [condicionPago, setCondicionPago] = useState({ forma: 'CONTADO', dias: '30' });
   const invalidar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
 
   const actualizarFiltro = (patch) => {
@@ -205,7 +208,9 @@ const Compras = () => {
     if (formData.detalles.length === 0) return setFormError('La cesta está vacía.');
     registrarCompra.mutate({
       proveedorId: parseInt(formData.proveedorId),
-      pago_desde_caja: conCaja && cajaActual && pagarDeCaja ? true : undefined,
+      pago_desde_caja: conCaja && cajaActual && pagarDeCaja && condicionPago.forma === 'CONTADO' ? true : undefined,
+      forma_pago: conCartera && condicionPago.forma === 'CREDITO' ? 'CREDITO' : undefined,
+      dias_credito: conCartera && condicionPago.forma === 'CREDITO' ? (Number(condicionPago.dias) || 0) : undefined,
       detalles: formData.detalles.map(d => ({
         productoId: d.productoId,
         cantidad: Number(d.cantidad),
@@ -223,7 +228,7 @@ const Compras = () => {
         title="Registro de Ingresos (Compras)"
         description="Abastece tu inventario o registra gastos operacionales y salidas."
         action={
-          <button className="btn-primary gap-2" onClick={() => { setFormData({ proveedorId: '', detalles: [] }); setShowNewProv(false); setProvSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); setShowNewProd(false); }}>
+          <button className="btn-primary gap-2" onClick={() => { setCondicionPago({ forma: 'CONTADO', dias: '30' }); setFormData({ proveedorId: '', detalles: [] }); setShowNewProv(false); setProvSearch(''); setItemSearch(''); setFormError(null); setShowModal(true); setShowNewProd(false); }}>
             <ShoppingCart className="w-5 h-5" aria-hidden="true" /> Iniciar Compra
           </button>
         }
@@ -482,7 +487,36 @@ const Compras = () => {
               </div>
 
               <div className="p-6 bg-white border-t border-slate-200 shadow-[0_-10px_30px_-15px_rgba(0,0,0,0.1)] z-10">
-                {conCaja && (
+                {conCartera && (
+                  <fieldset className="mb-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
+                    <legend className="px-1 text-xs font-semibold uppercase tracking-wider text-slate-500">Condiciones de pago</legend>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label className="flex items-center gap-2">
+                        <input type="radio" name="condicion-pago" checked={condicionPago.forma === 'CONTADO'} onChange={() => setCondicionPago({ ...condicionPago, forma: 'CONTADO' })} className="text-brand-700 focus:ring-brand-600" />
+                        De contado
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <input type="radio" name="condicion-pago" checked={condicionPago.forma === 'CREDITO'} onChange={() => setCondicionPago({ ...condicionPago, forma: 'CREDITO' })} className="text-brand-700 focus:ring-brand-600" />
+                        A crédito
+                      </label>
+                      {condicionPago.forma === 'CREDITO' && (
+                        <label className="flex items-center gap-2 text-xs text-slate-600">
+                          Plazo
+                          <input
+                            type="number" min="0" max="365" aria-label="Plazo del crédito en días"
+                            className="w-20 rounded-lg border border-slate-200 bg-white px-2 py-1 text-sm font-bold"
+                            value={condicionPago.dias} onChange={(e) => setCondicionPago({ ...condicionPago, dias: e.target.value })}
+                          />
+                          días
+                        </label>
+                      )}
+                    </div>
+                    {condicionPago.forma === 'CREDITO' && (
+                      <p className="mt-2 text-xs text-slate-500">Queda una deuda con el proveedor que vence el {vencimientoEn(condicionPago.dias)}; se paga en Cuentas por pagar.</p>
+                    )}
+                  </fieldset>
+                )}
+                {conCaja && condicionPago.forma === 'CONTADO' && (
                   <label className={`flex items-start gap-2 mb-4 rounded-xl border p-3 text-sm ${cajaActual ? 'border-slate-200 bg-slate-50 cursor-pointer' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>
                     <input
                       type="checkbox" className="mt-0.5 w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"
