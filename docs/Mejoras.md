@@ -4,14 +4,16 @@
 Lista completa de lo que falta alrededor de mesas, cocina, inventario y reportes (agrupada por tema para elegir).
 
 ### Sala y servicio
-- **Menú del mesero:** categorías (entradas, fuertes, bebidas…) y orden propio en vez de una lista con búsqueda; foto del plato;
-  marcar un plato «agotado por hoy» a mano; modificadores obligatorios (punto de cocción, término); combos y menú del día;
-  precios por horario (happy hour).
-- **Tiempos de servicio:** pedir por tiempos (entrada, fuerte, postre) y «disparar» el siguiente cuando el cliente lo pida; alerta en
-  cocina cuando un plato supera su tiempo objetivo; sonido en cocina cuando llega una comanda nueva.
-- **Pedir desde el celular o tablet del mesero** (revisar el uso táctil) y, más adelante, que el cliente pida escaneando un QR de la mesa.
-- **Lista de espera** (clientes sin reserva), vista de reservas por día y semana, bloqueo de mesas y tiempo promedio de ocupación.
-- **Pre-cuenta imprimible** («la cuenta, por favor») sin cobrar, y cuenta a nombre de un cliente o habitación.
+Lo de menú, tiempos de servicio, lista de espera, reservas por día/semana, bloqueos, ocupación, pre-cuenta, cuenta a nombre de
+cliente, pedido numerado y venta de mostrador ya está hecho (cada uno con su interruptor en **Opciones**). Falta:
+- **Autopedido por QR:** que el cliente pida desde su celular escaneando el código de la mesa (el mesero aprueba o va directo a cocina).
+- **Menú del día / rotativo:** platos que solo se ofrecen ciertos días o franjas, y programar con anticipación el agotado.
+- **Ofertas por horario más finas:** por día de la semana y fechas (festivos), y 2×1 o «lleva 3 paga 2», no solo porcentaje.
+- **Agotado automático:** marcar «agotado» solo cuando el inventario no alcanza para la receta (hoy se calcula al mostrar, pero no avisa).
+- **Pantalla de turnos para el cliente** (cafetería): «Pedido 12 listo», con la tablet o TV del mostrador.
+- **Pre-cuenta digital:** enviarla por WhatsApp/correo o mostrarla con un QR de pago, y dividirla por propina.
+- **Cargo a habitación / cuenta corriente:** acumular varias cuentas de un mismo cliente o habitación y cobrarlas juntas al final.
+- **Tablet del mesero:** revisión de tamaños táctiles y de gestos (arrastrar en el plano) en dispositivos reales.
 
 ### Cobro e impuestos
 - **Impuesto al consumo (INC 8 %)** además del IVA, que es lo que cobran muchos restaurantes en Colombia.
@@ -61,5 +63,5 @@ Lista completa de lo que falta alrededor de mesas, cocina, inventario y reportes
 - **Informes:** exportar a Excel, gráficos (ventas por hora y por día, platos más rentables) y comparativos
   contra el mes anterior.
 - **Tiquete térmico con cajón monedero** (depende de la marca y el modelo de la impresora y del cajón).
-- **Pantalla en tablet o celular:** las pruebas de navegador solo corren en pantalla grande; revisar el POS en tablet.
+- **Pantalla en tablet o celular:** las pruebas de navegador corren en pantalla de escritorio (y una de tablet para las mesas); revisar el POS y el resto de pantallas en tablet.
 - **Catálogos grandes:** la lista de productos se carga completa; paginarla si hay miles.

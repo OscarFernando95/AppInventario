@@ -32,13 +32,15 @@ describe('opciones de tiempos, alertas y sonido: catálogo', () => {
     expect(() => aplicarCambios({}, { cocina_sonido: true }, ['Ventas', 'Mesas'])).toThrow(/necesita el módulo Cocina/);
   });
 
-  it('los perfiles no encienden nada de esto', () => {
-    for (const p of ['minimo', 'cafeteria', 'restaurante']) {
+  it('solo el perfil «restaurante» enciende los tiempos y las alertas de cocina', () => {
+    for (const p of ['minimo', 'cafeteria']) {
       const ef = efectivas(valoresDePerfil(p, TODO), TODO);
       expect(ef.tiempos_servicio).toBe(false);
       expect(ef.cocina_alertas).toBe(false);
       expect(ef.cocina_sonido).toBe(false);
     }
+    const ef = efectivas(valoresDePerfil('restaurante', TODO), TODO);
+    expect(ef).toMatchObject({ tiempos_servicio: true, cocina_alertas: true, cocina_sonido: true });
   });
 });
 

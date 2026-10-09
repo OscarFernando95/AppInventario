@@ -32,6 +32,12 @@ const OPCIONES = [
   { clave: 'precios_horario', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: MENU, etiqueta: 'Precios por horario', descripcion: 'Happy hour y ofertas por día y hora: el precio baja solo mientras la oferta rige.' },
   { clave: 'modificadores_grupos', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: ['Recetas'], etiqueta: 'Grupos de modificadores obligatorios', descripcion: 'Agrupar los extras en grupos (punto de cocción, tipo de leche, tamaño) y exigir que se elija uno antes de pedir el plato.' },
   { clave: 'combos', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: MENU, etiqueta: 'Combos', descripcion: 'Vender varios productos juntos a un precio (café + croissant): descuenta el inventario de cada componente.' },
+  // ── Cuenta y mostrador (nuevas: apagadas) ───────────────────────────────────────────────
+  { clave: 'precuenta', grupo: 'Cuenta y mostrador', tipo: 'bool', defecto: false, modulos: ['Mesas'], etiqueta: 'Pre-cuenta imprimible', descripcion: '«La cuenta, por favor»: imprimir lo consumido antes de cobrar, sin registrar el pago.' },
+  { clave: 'cuenta_cliente', grupo: 'Cuenta y mostrador', tipo: 'bool', defecto: false, modulos: ['Mesas'], etiqueta: 'Cuenta a nombre de un cliente o habitación', descripcion: 'Abrir la cuenta a nombre de un cliente o de una referencia (habitación, grupo); al cobrar ya viene el cliente.' },
+  { clave: 'pedido_numerado', grupo: 'Cuenta y mostrador', tipo: 'bool', defecto: false, modulos: ['Mesas'], etiqueta: 'Pedidos numerados', descripcion: 'Las cuentas para llevar se numeran solas cada día («Pedido 1», «Pedido 2»…) sin tener que escribir un nombre.' },
+  { clave: 'pos_cliente_opcional', grupo: 'Cuenta y mostrador', tipo: 'bool', defecto: false, modulos: MENU, etiqueta: 'Venta de mostrador sin cliente', descripcion: 'El punto de venta (Ventas) no exige elegir un cliente: vende a «consumidor final». A crédito sí lo pide.' },
+
   // ── Lista de espera, bloqueos, ocupación y calendario (nuevas: nacen apagadas) ─────────────
   { clave: 'lista_espera', grupo: 'Mesas', tipo: 'bool', defecto: false, modulos: ['Mesas'], etiqueta: 'Lista de espera', descripcion: 'Anotar a los clientes sin reserva que esperan mesa, avisarles por WhatsApp y sentarlos cuando se libere una.' },
   { clave: 'bloqueo_mesas', grupo: 'Mesas', tipo: 'bool', defecto: false, modulos: ['Mesas'], etiqueta: 'Bloqueo de mesas', descripcion: 'Sacar una mesa de servicio por un rato (evento, mantenimiento): no se puede abrir cuenta ni reservarla.' },
@@ -51,8 +57,14 @@ const POR_CLAVE = new Map(OPCIONES.map((o) => [o.clave, o]));
 /** Perfiles: conjuntos de opciones listos para aplicar (los que no aparecen quedan en su valor por omisión). */
 const PERFILES = [
   { clave: 'minimo', etiqueta: 'Lo básico', descripcion: 'Todo lo opcional apagado.', valores: { reservas: false, plano: false, unir_cuentas: false, cuenta_por_persona: false, propina: false } },
-  { clave: 'cafeteria', etiqueta: 'Cafetería (mostrador)', descripcion: 'Para atender rápido en mostrador, con poco o ningún servicio a mesa.', valores: { reservas: false, plano: false, unir_cuentas: false, cuenta_por_persona: false, propina: true } },
-  { clave: 'restaurante', etiqueta: 'Restaurante completo', descripcion: 'Servicio a mesa con todo lo disponible.', valores: {} },
+  { clave: 'cafeteria', etiqueta: 'Cafetería (mostrador)', descripcion: 'Para atender rápido en mostrador, con poco o ningún servicio a mesa.', valores: { reservas: false, plano: false, unir_cuentas: false, cuenta_por_persona: false, propina: true, menu_categorias: true, menu_fotos: true, agotados_manuales: true, combos: true, pedido_numerado: true, pos_cliente_opcional: true } },
+  {
+    clave: 'restaurante', etiqueta: 'Restaurante completo', descripcion: 'Servicio a mesa con lo esencial de sala y cocina encendido (los horarios de oferta y la cuenta a nombre de cliente se prenden aparte).',
+    valores: {
+      menu_categorias: true, menu_fotos: true, agotados_manuales: true, modificadores_grupos: true, combos: true, precuenta: true,
+      lista_espera: true, bloqueo_mesas: true, tiempo_ocupacion: true, reservas_calendario: true, tiempos_servicio: true, cocina_alertas: true, cocina_sonido: true,
+    },
+  },
 ];
 
 const esEntero = (v) => Number.isInteger(v);

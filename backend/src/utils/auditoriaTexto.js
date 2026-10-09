@@ -224,6 +224,7 @@ const EVENTOS = {
   grupo_modificadores_creado: { modulo: 'Menú', accion: () => 'Creó un grupo de modificadores', descripcion: (d) => `${ref(d.nombre, d.grupoId)}${d.obligatorio ? ' · obligatorio' : ''}` },
   grupo_modificadores_actualizado: { modulo: 'Menú', accion: (d) => (d.activo === false ? 'Desactivó un grupo de modificadores' : 'Modificó un grupo de modificadores'), descripcion: (d) => ref(d.nombre, d.grupoId) },
   grupo_modificadores_eliminado: { modulo: 'Menú', accion: () => 'Eliminó un grupo de modificadores', descripcion: (d) => ref(d.nombre, d.grupoId) },
+  precuenta_impresa: { modulo: 'Mesas', accion: () => 'Imprimió la pre-cuenta', descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`} · ${cop(d.total)}` },
   estaciones_cambiadas: { modulo: 'Mesas', accion: () => 'Cambió las estaciones de preparación', descripcion: (d) => d.estaciones },
   propina_pesos_cambiados: { modulo: 'Mesas', accion: () => 'Cambió el reparto de propinas', descripcion: (d) => `Pesos de ${plural(d.personas || 0, 'persona', 'personas')}` },
   plano_actualizado: { modulo: 'Mesas', accion: () => 'Acomodó el plano del local', descripcion: (d) => plural(d.mesas || 0, 'mesa', 'mesas') },

@@ -70,8 +70,15 @@ describe('perfiles', () => {
     expect(ef).toMatchObject({ reservas: false, plano: false, unir_cuentas: false, cuenta_por_persona: false, propina: true });
   });
 
-  it('«restaurante» deja todo en su valor por omisión; uno desconocido falla', () => {
-    expect(valoresDePerfil('restaurante', MESAS)).toEqual({});
+  it('«cafetería» enciende lo de mostrador (pedido numerado, cliente opcional) sin tocar lo de sala', () => {
+    const ef = efectivas(valoresDePerfil('cafeteria', MESAS), MESAS);
+    expect(ef).toMatchObject({ pedido_numerado: true, pos_cliente_opcional: true, menu_categorias: true, lista_espera: false, tiempos_servicio: false });
+  });
+
+  it('«restaurante» enciende lo esencial de sala y cocina, y todo es válido; uno desconocido falla', () => {
+    const CON_COCINA = [...MESAS, 'Cocina'];
+    const ef = efectivas(valoresDePerfil('restaurante', CON_COCINA), CON_COCINA);
+    expect(ef).toMatchObject({ reservas: true, plano: true, lista_espera: true, tiempos_servicio: true, cocina_alertas: true, precuenta: true, pedido_numerado: false, cuenta_cliente: false });
     expect(() => valoresDePerfil('marciano', MESAS)).toThrow(/no existe/);
   });
 

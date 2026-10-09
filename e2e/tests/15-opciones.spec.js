@@ -58,6 +58,25 @@ test.describe('Opciones: cada función se prende y se apaga sin afectar al resto
     await expect(page.getByRole('switch', { name: /^Plano del local/ })).toBeChecked();
     await page.goto('/app/mesas');
     await expect(page.getByRole('radio', { name: 'Plano' })).toBeAttached();
+    // «Restaurante» enciende además lo esencial de sala y cocina (lista de espera, tiempos, pre-cuenta…).
+    await page.goto('/app/opciones');
+    await expect(page.getByRole('switch', { name: /^Lista de espera/ })).toBeChecked();
+    await expect(page.getByRole('switch', { name: /^Pre-cuenta/ })).toBeChecked();
+    await expect(page.getByRole('switch', { name: /^Pedidos numerados/ })).not.toBeChecked();
+  });
+
+  test('«Lo básico» apaga todo; las funciones de siempre se vuelven a prender para seguir con los demás flujos', async ({ page }) => {
+    await entrar(page, CAFE.admin, CAFE.clave);
+    await page.goto('/app/opciones');
+    await page.getByRole('button', { name: /Lo básico/ }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Aplicar perfil' }).click();
+    await expect(page.getByRole('switch', { name: /^Lista de espera/ })).not.toBeChecked();
+    await expect(page.getByRole('switch', { name: /^Reservas/ }).first()).not.toBeChecked();
+    for (const nombre of ['Reservas', 'Plano del local', 'Unir cuentas', 'Pedir y cobrar por persona', 'Propina al cobrar']) {
+      const sw = page.getByRole('switch', { name: new RegExp(`^${nombre}`) }).first();
+      await sw.click();
+      await expect(sw).toBeChecked();
+    }
   });
 
   test('la auditoría deja constancia del cambio de opciones', async ({ page }) => {

@@ -1,7 +1,7 @@
 'use strict';
 
 const { Op } = require('sequelize');
-const { sequelize, Cuenta, CuentaItem, Comanda, Mesa, Producto, Servicio, Empresa, PrecioHorario } = require('../models');
+const { sequelize, Cuenta, CuentaItem, Comanda, Mesa, Producto, Servicio, Empresa, PrecioHorario, Cliente } = require('../models');
 const { ValidationError, ForbiddenError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { buildListWhere } = require('../utils/listFilters');
@@ -47,9 +47,28 @@ exports.getCuenta = async (req, res) => {
   res.json(cuenta);
 };
 
+/** Cliente de la cuenta (solo con «cuenta a nombre de»): debe ser de la empresa. */
+async function validarClienteDeCuenta(req, clienteId, t) {
+  if (!clienteId) return;
+  const n = await Cliente.count({ where: { id: clienteId, empresaId: req.empresaId }, transaction: t });
+  if (!n) throw new ValidationError('Cliente inválido.');
+}
+
 exports.abrirCuenta = async (req, res) => {
-  const { mesaId, etiqueta, comensales, nota } = req.body;
+  const { mesaId, comensales, nota } = req.body;
+  let { etiqueta } = req.body;
+  const ef = await opcionesDe(req);
+  const clienteId = ef.cuenta_cliente ? (req.body.clienteId || null) : null;
+  const referencia = ef.cuenta_cliente ? (req.body.referencia || null) : null;
   const id = await sequelize.transaction(async (t) => {
+    await validarClienteDeCuenta(req, clienteId, t);
+    if (!mesaId && !etiqueta) {
+      // «Pedidos numerados»: la cuenta para llevar sin nombre toma el siguiente número del día.
+      if (!(req.body.numerar && ef.pedido_numerado)) throw new ValidationError('Elige una mesa o escribe a quién va la cuenta (para llevar).');
+      const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+      const n = await Cuenta.count({ where: { empresaId: req.empresaId, mesaId: null, abierta_en: { [Op.gte]: hoy } }, transaction: t });
+      etiqueta = `Pedido ${n + 1}`;
+    }
     if (mesaId) {
       const mesa = await Mesa.findOne({ where: { id: mesaId, empresaId: req.empresaId }, transaction: t });
       if (!mesa || !mesa.activa) throw new ValidationError('Mesa inválida o inactiva.');
@@ -60,7 +79,7 @@ exports.abrirCuenta = async (req, res) => {
     try {
       const cuenta = await Cuenta.create({
         empresaId: req.empresaId, mesaId: mesaId || null, etiqueta: etiqueta || null, usuarioId: req.userId,
-        comensales: comensales || null, nota: nota || null, abierta_en: new Date(),
+        comensales: comensales || null, nota: nota || null, abierta_en: new Date(), clienteId, referencia,
       }, { transaction: t });
       return cuenta.id;
     } catch (err) {
@@ -77,6 +96,10 @@ exports.updateCuenta = async (req, res) => {
     if (!cuenta) return false;
     const cambios = {};
     for (const campo of ['comensales', 'nota', 'etiqueta']) if (req.body[campo] !== undefined) cambios[campo] = req.body[campo];
+    if ((await opcionesDe(req)).cuenta_cliente) {
+      for (const campo of ['clienteId', 'referencia']) if (req.body[campo] !== undefined) cambios[campo] = req.body[campo];
+      await validarClienteDeCuenta(req, cambios.clienteId, t);
+    }
     if (cambios.etiqueta === null && !cuenta.mesaId) throw new ValidationError('Una cuenta sin mesa necesita su etiqueta.');
     await cuenta.update(cambios, { transaction: t });
     return true;
@@ -393,4 +416,31 @@ exports.cobrar = async (req, res) => {
     await t.rollback();
     throw err;
   }
+};
+
+/**
+ * Pre-cuenta («la cuenta, por favor»): lo consumido y aún sin cobrar, con la propina sugerida, para imprimirlo. No cobra
+ * nada ni cambia la cuenta; solo deja constancia de que se imprimió.
+ */
+exports.precuenta = async (req, res) => {
+  const cuenta = await detalleDeCuenta(req.empresaId, req.params.id);
+  if (!cuenta) return noEncontrada(res);
+  if (cuenta.estado !== 'ABIERTA') throw new ValidationError('Solo se imprime la pre-cuenta de una cuenta abierta.');
+  const pendientes = cuenta.items.filter((i) => i.estado === 'ACTIVO' && !i.ventaId);
+  if (pendientes.length === 0) throw new ValidationError('No hay nada por cobrar en esta cuenta.');
+
+  const ef = await opcionesDe(req);
+  const empresa = await Empresa.findByPk(req.empresaId, { attributes: ['nombre', 'nit', 'propina_sugerida_pct'] });
+  const total = cuenta.totales.pendiente;
+  const pct = ef.propina ? Number(empresa.propina_sugerida_pct) : 0;
+  const propina = pct > 0 ? Math.round((total * pct) / 100 / 100) * 100 : 0;
+  auditar(req, 'precuenta_impresa', { cuentaId: cuenta.id, cuenta: cuenta.nombre, total });
+  res.json({
+    empresa: { nombre: empresa.nombre, nit: empresa.nit },
+    cuenta: cuenta.nombre, referencia: cuenta.referencia, cliente: cuenta.cliente, mesero: cuenta.mesero?.nombre, comensales: cuenta.comensales,
+    abierta_en: cuenta.abierta_en, impresa_en: new Date(),
+    items: pendientes.map((i) => ({ nombre: i.nombre, cantidad: i.cantidad, precio_unitario: i.precio_unitario, subtotal: i.subtotal, modificadores: i.modificadores.map((m) => m.nombre), componentes: i.componentes, comensal: i.comensal })),
+    por_comensal: cuenta.por_comensal.filter((g) => g.pendiente > 0),
+    total, propina_sugerida: propina > 0 ? { pct, valor: propina, total_con_propina: total + propina } : null,
+  });
 };

@@ -20,6 +20,8 @@ import Modal, { ModalActions } from '../ui/Modal';
 import Field from '../ui/Field';
 import { TableState } from '../ui/DataState';
 
+const DATOS_VACIOS = { comensales: '', etiqueta: '', clienteId: '', referencia: '' };
+
 /** ¿La mesa está bloqueada ahora mismo? (`bloqueo` solo viene con la opción «Bloqueo de mesas» encendida). */
 const estaBloqueada = (m) => !!m.bloqueo?.vigente;
 
@@ -348,6 +350,10 @@ const Tablero = ({ onAbrir, consulta }) => {
   const conPlano = opcion('plano', true);
   const conListaEspera = opcion('lista_espera', false);
   const conBloqueo = opcion('bloqueo_mesas', false);
+  const conClienteCuenta = opcion('cuenta_cliente', false);
+  const numerar = opcion('pedido_numerado', false);
+  const modulos = useAuthStore((s) => s.activeEmpresa?.modulos) || [];
+  const { data: clientes = [] } = useEmpresaQuery(['clientes'], '/clientes', { enabled: conClienteCuenta && modulos.includes('Clientes') });
   const ahora = useAhora();
   const qc = useQueryClient();
   const { data, isLoading, isError, error, refetch } = consulta;
@@ -357,7 +363,7 @@ const Tablero = ({ onAbrir, consulta }) => {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['empresa'] }),
   });
   const [nueva, setNueva] = useState(null); // { mesa } | { llevar: true }
-  const [datos, setDatos] = useState({ comensales: '', etiqueta: '' });
+  const [datos, setDatos] = useState(DATOS_VACIOS);
   const [formError, setFormError] = useState(null);
   const [config, setConfig] = useState(false);
   const [vista, setVistaEstado] = useState(() => { try { return localStorage.getItem('mesas-vista') === 'plano' ? 'plano' : 'lista'; } catch { return 'lista'; } });
@@ -365,17 +371,20 @@ const Tablero = ({ onAbrir, consulta }) => {
 
   const abrir = useMutation({
     mutationFn: (payload) => api.post('/cuentas', payload),
-    onSuccess: (res) => { qc.invalidateQueries({ queryKey: ['empresa'] }); setNueva(null); setDatos({ comensales: '', etiqueta: '' }); onAbrir(res.data.id); },
+    onSuccess: (res) => { qc.invalidateQueries({ queryKey: ['empresa'] }); setNueva(null); setDatos(DATOS_VACIOS); onAbrir(res.data.id); },
     onError: (err) => { setFormError(apiError(err, 'No se pudo abrir la cuenta')); qc.invalidateQueries({ queryKey: ['empresa'] }); },
   });
-  const cerrarModal = () => { setNueva(null); setFormError(null); setDatos({ comensales: '', etiqueta: '' }); };
+  const cerrarModal = () => { setNueva(null); setFormError(null); setDatos(DATOS_VACIOS); };
   const handleAbrir = (e) => {
     e.preventDefault();
     setFormError(null);
-    if (nueva.llevar && !datos.etiqueta.trim()) return setFormError('Escribe a quién va la cuenta (p. ej. «Para llevar · Juan»).');
+    if (nueva.llevar && !numerar && !datos.etiqueta.trim()) return setFormError('Escribe a quién va la cuenta (p. ej. «Para llevar · Juan»).');
     abrir.mutate({
       mesaId: nueva.mesa?.id,
-      etiqueta: nueva.llevar ? datos.etiqueta.trim() : undefined,
+      etiqueta: nueva.llevar && datos.etiqueta.trim() ? datos.etiqueta.trim() : undefined,
+      numerar: nueva.llevar && numerar && !datos.etiqueta.trim() ? true : undefined,
+      clienteId: conClienteCuenta && datos.clienteId ? Number(datos.clienteId) : undefined,
+      referencia: conClienteCuenta && datos.referencia.trim() ? datos.referencia.trim() : undefined,
       comensales: datos.comensales ? Number(datos.comensales) : undefined,
     });
   };
@@ -498,9 +507,24 @@ const Tablero = ({ onAbrir, consulta }) => {
         <form onSubmit={handleAbrir} className="space-y-4">
           <FormError message={formError} onDismiss={() => setFormError(null)} />
           {nueva?.llevar && (
-            <Field label="¿A nombre de quién?" required>
+            <Field label={numerar ? '¿A nombre de quién? (opcional)' : '¿A nombre de quién?'} required={!numerar} hint={numerar ? 'Si lo dejas vacío, se numera solo («Pedido 1», «Pedido 2»…).' : undefined}>
               <input className="input-field" autoFocus maxLength={80} placeholder="Para llevar · Juan" value={datos.etiqueta} onChange={(e) => setDatos({ ...datos, etiqueta: e.target.value })} />
             </Field>
+          )}
+          {conClienteCuenta && (
+            <>
+              {modulos.includes('Clientes') && (
+                <Field label="Cliente (opcional)">
+                  <select className="input-field" value={datos.clienteId} onChange={(e) => setDatos({ ...datos, clienteId: e.target.value })}>
+                    <option value="">Sin cliente</option>
+                    {clientes.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  </select>
+                </Field>
+              )}
+              <Field label="Referencia (opcional)">
+                <input className="input-field" maxLength={80} placeholder="Habitación 204, Cabaña 3…" value={datos.referencia} onChange={(e) => setDatos({ ...datos, referencia: e.target.value })} />
+              </Field>
+            </>
           )}
           <Field label="Comensales (opcional)">
             <input type="number" min="1" className="input-field" autoFocus={!nueva?.llevar} value={datos.comensales} onChange={(e) => setDatos({ ...datos, comensales: e.target.value })} />

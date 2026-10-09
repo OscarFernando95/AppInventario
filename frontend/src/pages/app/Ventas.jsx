@@ -12,6 +12,7 @@ import { unidadCorta } from '../../utils/unidades';
 import { generateDevolucionPDF } from '../../utils/generateDevolucionPDF';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import { useMenu } from '../../hooks/useMenu';
+import { useOpciones } from '../../hooks/useOpciones';
 import SelectorModificadores from '../../components/SelectorModificadores';
 import { faltaElegir, hayOferta } from '../../utils/grupos';
 import { ordenarProductos, categoriasConProductos, deCategoria, precioVigente, tieneOferta } from '../../utils/menu';
@@ -194,6 +195,7 @@ const Ventas = () => {
   const [itemSearch, setItemSearch] = useState('');
   const [activeTab, setActiveTab] = useState('P'); // 'P' or 'S'
   const menu = useMenu(); // categorías, fotos, agotados y ofertas (solo si sus opciones están encendidas)
+  const clienteOpcional = useOpciones().opcion('pos_cliente_opcional');
   const [categoriaSel, setCategoriaSel] = useState(undefined); // undefined = todas
   const [viewDetalle, setViewDetalle] = useState(null);
   const { data: devolucionesDeVenta = [] } = useEmpresaQuery(
@@ -415,10 +417,11 @@ const Ventas = () => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!formData.clienteId) return setFormError('Debes seleccionar un cliente para registrar la venta.');
+    // Con «venta de mostrador sin cliente» (cafetería) el cliente es opcional; a crédito siempre hace falta.
+    if (!formData.clienteId && (!clienteOpcional || formData.forma_pago === '2')) return setFormError('Debes seleccionar un cliente para registrar la venta.');
     if (formData.detalles.length === 0) return setFormError('El carrito está vacío.');
     emitirVenta.mutate({
-      clienteId: parseInt(formData.clienteId),
+      clienteId: formData.clienteId ? parseInt(formData.clienteId) : undefined,
       descuento_global: globalDiscount || 0,
       forma_pago: formData.forma_pago,
       // A crédito: plazo en días (el servidor calcula el vencimiento y deja el total por cobrar).
@@ -656,7 +659,7 @@ const Ventas = () => {
                {/* ZONA CLIENTE */}
                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-6">
                  <div className="flex justify-between items-end mb-3">
-                   <label className="text-sm font-bold text-slate-700 flex items-center gap-2"><Users className="w-4 h-4"/> 1. Identificar Cliente <span className="text-red-700">*</span></label>
+                   <label className="text-sm font-bold text-slate-700 flex items-center gap-2"><Users className="w-4 h-4"/> 1. Identificar Cliente {clienteOpcional ? <span className="text-xs font-normal text-slate-500">(opcional)</span> : <span className="text-red-700">*</span>}</label>
                    {!showNewClient && <button className="text-xs font-bold text-brand-700 hover:text-brand-800 flex items-center gap-1" onClick={()=>setShowNewClient(true)}><UserPlus className="w-3.5 h-3.5"/> Alta rápida</button>}
                  </div>
 

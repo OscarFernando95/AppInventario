@@ -187,6 +187,7 @@ Mesa.belongsTo(Empresa, { foreignKey: 'empresaId' });
 Mesa.hasMany(Cuenta, { foreignKey: 'mesaId', as: 'cuentas' });
 Cuenta.belongsTo(Mesa, { foreignKey: 'mesaId', as: 'mesa' });
 Cuenta.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'mesero' });
+Cuenta.belongsTo(Cliente, { foreignKey: 'clienteId', as: 'cliente' });
 Cuenta.hasMany(CuentaItem, { foreignKey: 'cuentaId', as: 'items' });
 CuentaItem.belongsTo(Cuenta, { foreignKey: 'cuentaId', as: 'cuenta' });
 CuentaItem.belongsTo(Producto, { foreignKey: 'productoId', as: 'producto' });

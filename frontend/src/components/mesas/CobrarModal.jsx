@@ -40,7 +40,7 @@ const CobrarModal = ({ cuenta, propinaPct = 10, persona = null, onClose, onCobra
   // Se abre con todo seleccionado, o solo con lo de una persona si se cobra «por persona».
   const [seleccion, setSeleccion] = useState(() => Object.fromEntries(pendientes.filter((i) => persona == null || i.comensal === persona).map((i) => [i.id, i.cantidad])));
   const personas = conPersonas ? [...new Set(pendientes.map((i) => i.comensal).filter((c) => c != null))].sort((a, b) => a - b) : [];
-  const [form, setForm] = useState({ clienteId: '', forma_pago: '1', medio_pago: '10', dias_credito: '30', descuento: '', propina: '0', propinaOtro: '', partes: '' });
+  const [form, setForm] = useState({ clienteId: cuenta.cliente?.id ? String(cuenta.cliente.id) : '', forma_pago: '1', medio_pago: '10', dias_credito: '30', descuento: '', propina: '0', propinaOtro: '', partes: '' });
   const [formError, setFormError] = useState(null);
 
   const { data: clientes = [] } = useEmpresaQuery(['clientes'], '/clientes', { enabled: modulos.includes('Clientes') });

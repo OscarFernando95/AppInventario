@@ -8,6 +8,7 @@ import { formatCOP, formatCantidad } from '../../utils/format';
 import { apiError } from '../../utils/apiError';
 import { generateInvoicePDF } from '../../utils/generateInvoicePDF';
 import { imprimirComanda } from '../../utils/comandaTicket';
+import { imprimirPrecuenta } from '../../utils/precuentaTicket';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useOpciones } from '../../hooks/useOpciones';
@@ -84,10 +85,10 @@ const FilaItem = ({ item, comandaPorId, puedeAnular, acciones, bloqueado, comens
             puedeAnular && <button type="button" className="text-xs font-semibold text-red-700 hover:underline" onClick={() => acciones.anular(item)}>Anular</button>
           ) : (
             <span className="flex items-center gap-0.5">
-              <button type="button" className="btn-icon" aria-label={`Menos ${item.nombre}`} onClick={() => (item.cantidad > 1 ? acciones.cantidad(item, item.cantidad - 1) : acciones.quitar(item))}><Minus className="w-4 h-4" /></button>
-              <button type="button" className="btn-icon" aria-label={`Más ${item.nombre}`} onClick={() => acciones.cantidad(item, item.cantidad + 1)}><Plus className="w-4 h-4" /></button>
-              <button type="button" className="btn-icon" aria-label={`Quitar ${item.nombre}`} onClick={() => acciones.quitar(item)}><Trash2 className="w-4 h-4" /></button>
-              <button type="button" className="btn-icon" aria-label={`Nota para ${item.nombre}`} onClick={() => acciones.nota(item)}><MessageSquareText className="w-4 h-4" /></button>
+              <button type="button" className="btn-icon min-h-10 min-w-10" aria-label={`Menos ${item.nombre}`} onClick={() => (item.cantidad > 1 ? acciones.cantidad(item, item.cantidad - 1) : acciones.quitar(item))}><Minus className="w-4 h-4" /></button>
+              <button type="button" className="btn-icon min-h-10 min-w-10" aria-label={`Más ${item.nombre}`} onClick={() => acciones.cantidad(item, item.cantidad + 1)}><Plus className="w-4 h-4" /></button>
+              <button type="button" className="btn-icon min-h-10 min-w-10" aria-label={`Quitar ${item.nombre}`} onClick={() => acciones.quitar(item)}><Trash2 className="w-4 h-4" /></button>
+              <button type="button" className="btn-icon min-h-10 min-w-10" aria-label={`Nota para ${item.nombre}`} onClick={() => acciones.nota(item)}><MessageSquareText className="w-4 h-4" /></button>
             </span>
           )
         )}
@@ -110,6 +111,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
   const conUnir = opcion('unir_cuentas', true);
   const porPersona = opcion('cuenta_por_persona', true);
   const porTiempos = opcion('tiempos_servicio', false);
+  const conPrecuenta = opcion('precuenta', false);
   const conCocina = modulos.includes('Cocina');
 
   const claveCuenta = ['empresa', empresaId ?? null, 'cuentas', cuentaId];
@@ -193,6 +195,12 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
     }
   };
 
+  const precuenta = useMutation({
+    mutationFn: () => api.post(`/cuentas/${cuentaId}/precuenta`),
+    onSuccess: (res) => imprimirPrecuenta(res.data),
+    onError: fallar,
+  });
+
   const reimprimir = async (comandaId) => {
     try {
       const { data } = await api.get(`/comandas/${comandaId}`);
@@ -243,6 +251,8 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
           <p className="text-sm text-slate-500 flex flex-wrap gap-x-3">
             <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" aria-hidden="true" /> abierta hace {hace(cuenta.abierta_en, ahora)}</span>
             <span>Atiende: {cuenta.mesero?.nombre}</span>
+            {cuenta.referencia && <span>{cuenta.referencia}</span>}
+            {cuenta.cliente && <span>Cliente: {cuenta.cliente.nombre}</span>}
             {cuenta.comensales ? <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" aria-hidden="true" /> {cuenta.comensales}</span> : null}
           </p>
         </div>
@@ -343,6 +353,11 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
                   <Receipt className="w-4 h-4" aria-hidden="true" /> Cobrar
                 </button>
               </div>
+              {conPrecuenta && (
+                <button type="button" className="btn-secondary gap-2 w-full" disabled={pendientesCobro.length === 0 || precuenta.isPending} onClick={() => { setError(null); precuenta.mutate(); }}>
+                  <Printer className="w-4 h-4" aria-hidden="true" /> {precuenta.isPending ? 'Preparando…' : 'Pre-cuenta'}
+                </button>
+              )}
             </div>
           )}
 

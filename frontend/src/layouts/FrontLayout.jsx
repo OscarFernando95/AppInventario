@@ -201,7 +201,7 @@ const FrontLayout = () => {
               onClick={() => setMenuOpen(true)}
               aria-label="Abrir menú"
               aria-expanded={menuOpen}
-              className="btn-icon lg:hidden"
+              className="btn-icon min-h-11 min-w-11 lg:hidden"
             >
               <Menu className="w-5 h-5" />
             </button>

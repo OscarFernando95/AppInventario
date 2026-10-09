@@ -38,12 +38,19 @@ const cuentaAbrir = z.object({
   etiqueta: z.string().trim().max(80).optional().nullable().transform((v) => v || undefined),
   comensales: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().min(1).max(500).optional()),
   nota: textoOpc,
-}).refine((d) => d.mesaId || d.etiqueta, { message: 'Elige una mesa o escribe a quién va la cuenta (para llevar).' });
+  // Con «pedidos numerados» una cuenta para llevar sin nombre toma el siguiente número del día.
+  numerar: z.boolean().optional(),
+  // Con «cuenta a nombre de»: cliente y/o referencia (habitación, grupo).
+  clienteId: idOpc,
+  referencia: z.string().trim().max(80).optional().nullable().transform((v) => v || undefined),
+}).refine((d) => d.mesaId || d.etiqueta || d.numerar, { message: 'Elige una mesa o escribe a quién va la cuenta (para llevar).' });
 
 const cuentaUpdate = z.object({
   comensales: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().int().min(1).max(500).nullish()),
   nota: z.string().trim().max(500).nullish().transform((v) => (v === undefined ? undefined : (v || null))),
   etiqueta: z.string().trim().max(80).nullish().transform((v) => (v === undefined ? undefined : (v || null))),
+  clienteId: z.preprocess((v) => (v === '' ? null : v), idRef.nullish()),
+  referencia: z.string().trim().max(80).nullish().transform((v) => (v === undefined ? undefined : (v || null))),
 });
 
 const cuentaListQuery = z.object({

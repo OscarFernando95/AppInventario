@@ -9,6 +9,9 @@ const Cuenta = sequelize.define('Cuenta', {
   mesaId: { type: DataTypes.INTEGER, allowNull: true },
   etiqueta: { type: DataTypes.STRING(80), allowNull: true },
   usuarioId: { type: DataTypes.INTEGER, allowNull: false },
+  // A nombre de un cliente y/o de una referencia libre (habitación, grupo): solo con la opción «Cuenta a nombre de».
+  clienteId: { type: DataTypes.INTEGER, allowNull: true },
+  referencia: { type: DataTypes.STRING(80), allowNull: true },
   comensales: { type: DataTypes.INTEGER, allowNull: true },
   nota: { type: DataTypes.TEXT, allowNull: true },
   estado: { type: DataTypes.STRING(10), allowNull: false, defaultValue: 'ABIERTA' },

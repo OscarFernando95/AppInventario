@@ -2,7 +2,7 @@
 
 const { Op } = require('sequelize');
 const {
-  Cuenta, CuentaItem, Comanda, Mesa, Producto, Servicio, Modificador, Usuario, Venta, ComboItem,
+  Cuenta, CuentaItem, Comanda, Mesa, Producto, Servicio, Modificador, Usuario, Venta, ComboItem, Cliente,
 } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { registrarVenta } = require('./ventaService');
@@ -79,6 +79,7 @@ function itemJson(item, modsPorId) {
 const INCLUDE_CUENTA = [
   { model: Mesa, as: 'mesa', attributes: ['id', 'nombre', 'capacidad'] },
   { model: Usuario, as: 'mesero', attributes: ['id', 'nombre'] },
+  { model: Cliente, as: 'cliente', attributes: ['id', 'nombre'], required: false },
 ];
 
 /** Cuenta + ítems + comandas + ventas generadas + totales, lista para pintar. */
@@ -108,7 +109,7 @@ async function detalleDeCuenta(empresaId, cuentaId, transaction) {
   return {
     ...porTiempos,
     id: j.id, estado: j.estado, mesa: j.mesa, etiqueta: j.etiqueta, nombre: nombreDeCuenta(j), mesero: j.mesero,
-    comensales: j.comensales, nota: j.nota, abierta_en: j.abierta_en, cerrada_en: j.cerrada_en, motivo_cancelacion: j.motivo_cancelacion,
+    cliente: j.cliente || null, referencia: j.referencia || null, comensales: j.comensales, nota: j.nota, abierta_en: j.abierta_en, cerrada_en: j.cerrada_en, motivo_cancelacion: j.motivo_cancelacion,
     items, comandas: j.comandas.map((c) => (c.tiempo == null ? c : { ...c, tiempo_nombre: nombreDeTiempo(tiempos.nombres, c.tiempo) })), ventas: j.ventas.map((v) => ({ ...v, total: Number(v.total), propina: Number(v.propina) })),
     totales: totalesDeCuenta(items.map((i) => ({ ...i, precio: i.precio_unitario }))),
     por_comensal: totalesPorComensal(items.map((i) => ({ ...i, precio: i.precio_unitario }))),
@@ -240,7 +241,8 @@ async function cobrarCuenta(req, t, cuentaId, body) {
     precio_promo: item.precio_promo ?? undefined, // precio de horario con que se pidió (la venta lo respeta)
   }));
   const { venta, calc, clienteNombre, aCredito, diasCredito, numItems } = await registrarVenta(req, t, {
-    clienteId: body.clienteId,
+    // Una cuenta a nombre de un cliente se cobra a ese cliente salvo que se indique otro.
+    clienteId: body.clienteId ?? cuenta.clienteId ?? undefined,
     detalles,
     descuento_global: body.descuento_global,
     forma_pago: body.forma_pago,
