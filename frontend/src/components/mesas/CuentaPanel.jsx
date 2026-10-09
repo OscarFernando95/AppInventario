@@ -10,6 +10,7 @@ import { generateInvoicePDF } from '../../utils/generateInvoicePDF';
 import { imprimirComanda } from '../../utils/comandaTicket';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import { usePermisos } from '../../hooks/usePermisos';
+import { useOpciones } from '../../hooks/useOpciones';
 import { useAuthStore } from '../../store/authStore';
 import { useAhora, hace } from '../../hooks/useAhora';
 import FormError from '../FormError';
@@ -90,6 +91,9 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
   const modulos = activeEmpresa?.modulos || [];
   const ahora = useAhora();
   const puedeAnular = can('mesas.anular_items');
+  const { opcion } = useOpciones();
+  const conUnir = opcion('unir_cuentas', true);
+  const porPersona = opcion('cuenta_por_persona', true);
   const conCocina = modulos.includes('Cocina');
 
   const claveCuenta = ['empresa', empresaId ?? null, 'cuentas', cuentaId];
@@ -220,7 +224,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
         {abierta && (
           <div className="ml-auto flex flex-wrap gap-2">
             <button type="button" className="btn-secondary gap-2" onClick={() => { setMesaDestino(''); setDialogo({ tipo: 'mover' }); }}><ArrowRightLeft className="w-4 h-4" aria-hidden="true" /> Cambiar mesa</button>
-            <button type="button" className="btn-secondary gap-2" disabled={otrasCuentas.length === 0} title={otrasCuentas.length === 0 ? 'No hay otra cuenta abierta' : undefined} onClick={() => { setMesaDestino(''); setDialogo({ tipo: 'unir' }); }}><Combine className="w-4 h-4" aria-hidden="true" /> Unir con otra cuenta</button>
+            {conUnir && <button type="button" className="btn-secondary gap-2" disabled={otrasCuentas.length === 0} title={otrasCuentas.length === 0 ? 'No hay otra cuenta abierta' : undefined} onClick={() => { setMesaDestino(''); setDialogo({ tipo: 'unir' }); }}><Combine className="w-4 h-4" aria-hidden="true" /> Unir con otra cuenta</button>}
             <button type="button" className="btn-secondary gap-2 hover:bg-red-50 hover:text-red-700" onClick={() => { setTexto(''); setDialogo({ tipo: 'cancelar' }); }}><Ban className="w-4 h-4" aria-hidden="true" /> Cancelar cuenta</button>
           </div>
         )}
@@ -238,7 +242,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
         {abierta ? (
           <section aria-label="Catálogo" className="card-container p-4">
             <h4 className="text-sm font-semibold text-slate-700 mb-3">Agregar a la cuenta</h4>
-            {cuenta.comensales > 1 && (
+            {porPersona && cuenta.comensales > 1 && (
               <div role="radiogroup" aria-label="Pedir para" className="flex flex-wrap items-center gap-1.5 mb-3 text-xs">
                 <span className="text-slate-500 mr-1">Pedir para:</span>
                 {[null, ...Array.from({ length: cuenta.comensales }, (_, k) => k + 1)].map((n) => (
@@ -259,7 +263,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
             <p className="py-8 text-center text-sm text-slate-500">Aún no hay nada pedido.</p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {cuenta.items.map((i) => <FilaItem key={i.id} item={i} comandaPorId={comandaPorId} puedeAnular={puedeAnular} acciones={acciones} bloqueado={!abierta} comensales={cuenta.comensales || 0} onReasignar={reasignar} />)}
+              {cuenta.items.map((i) => <FilaItem key={i.id} item={i} comandaPorId={comandaPorId} puedeAnular={puedeAnular} acciones={acciones} bloqueado={!abierta} comensales={porPersona ? (cuenta.comensales || 0) : 0} onReasignar={reasignar} />)}
             </ul>
           )}
 
@@ -268,7 +272,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
             <div className="flex justify-between text-lg"><dt className="font-semibold text-slate-800">{cuenta.totales.cobrado > 0 ? 'Falta por cobrar' : 'Total'}</dt><dd className="font-bold text-slate-900">{formatCOP(cuenta.totales.pendiente)}</dd></div>
           </dl>
 
-          {cuenta.por_comensal.some((g) => g.comensal != null) && (
+          {porPersona && cuenta.por_comensal.some((g) => g.comensal != null) && (
             <div className="mt-3 pt-3 border-t border-slate-200">
               <h5 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5">Por persona</h5>
               <ul className="space-y-1 text-sm">

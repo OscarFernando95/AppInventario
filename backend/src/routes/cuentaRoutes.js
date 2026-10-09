@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const cuentaController = require('../controllers/cuentaController');
 const { verifyToken, requireModulo } = require('../middlewares/auth');
+const { requireOpcion } = require('../middlewares/opciones');
 const asyncHandler = require('../middlewares/asyncHandler');
 const validate = require('../middlewares/validate');
 const { z } = require('../schemas/common');
@@ -31,7 +32,7 @@ router.post('/:id/items/:itemId/anular', validate({ params: itemParams, body: it
 
 router.post('/:id/enviar', validate({ params: idParam }), asyncHandler(cuentaController.enviarACocina));
 router.post('/:id/mover', validate({ params: idParam, body: cuentaMover }), asyncHandler(cuentaController.moverCuenta));
-router.post('/:id/unir', validate({ params: idParam, body: cuentaUnir }), asyncHandler(cuentaController.unirCuentas));
+router.post('/:id/unir', requireOpcion('unir_cuentas'), validate({ params: idParam, body: cuentaUnir }), asyncHandler(cuentaController.unirCuentas));
 router.post('/:id/cancelar', validate({ params: idParam, body: cuentaCancelar }), asyncHandler(cuentaController.cancelarCuenta));
 router.post('/:id/cobrar', validate({ params: idParam, body: cuentaCobrar }), asyncHandler(cuentaController.cobrar));
 

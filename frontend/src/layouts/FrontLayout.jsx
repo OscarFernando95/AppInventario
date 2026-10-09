@@ -4,7 +4,7 @@ import { useAuthStore } from '../store/authStore';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../api/axios';
 import { usePermisos } from '../hooks/usePermisos';
-import { KeyRound, Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins, PackagePlus, ReceiptText, WalletCards, Armchair, CookingPot } from 'lucide-react';
+import { KeyRound, Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins, PackagePlus, ReceiptText, WalletCards, Armchair, CookingPot, SlidersHorizontal } from 'lucide-react';
 
 // Títulos con tilde para las rutas cuyo nombre se escribe sin ella.
 const TITULOS = {
@@ -83,6 +83,8 @@ const FrontLayout = () => {
   );
 
   if (can('usuarios.gestionar')) menu.push({ name: 'Administración', path: '/app/admin', icon: Settings });
+  // Las opciones de restaurante/cafetería solo existen para empresas que tienen Mesas o Recetas (una de comercio no las ve).
+  if (can('opciones.gestionar') && (puedeEntrar('Mesas') || puedeEntrar('Recetas'))) menu.push({ name: 'Opciones', path: '/app/opciones', icon: SlidersHorizontal });
   if (can('roles.gestionar') && puedeEntrar('Roles y permisos')) menu.push({ name: 'Roles y permisos', path: '/app/roles', icon: KeyRound });
   if (can('auditoria.ver')) menu.push({ name: 'Auditoría', path: '/app/auditoria', icon: ScrollText });
 

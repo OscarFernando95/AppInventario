@@ -75,6 +75,7 @@ app.use('/api/ajustes', require('./routes/ajusteRoutes'));
 app.use('/api/modificadores', require('./routes/modificadorRoutes'));
 app.use('/api/recetas', require('./routes/recetaRoutes'));
 app.use('/api/produccion', require('./routes/produccionRoutes'));
+app.use('/api/opciones', require('./routes/opcionRoutes'));
 app.use('/api/mesas', require('./routes/mesaRoutes'));
 app.use('/api/cuentas', require('./routes/cuentaRoutes'));
 app.use('/api/reservas', require('./routes/reservaRoutes'));

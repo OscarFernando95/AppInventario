@@ -7,6 +7,7 @@ import { formatCOP, formatCantidad } from '../../utils/format';
 import { MEDIOS_PAGO } from '../../utils/mediosPago';
 import { apiError } from '../../utils/apiError';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import { useOpciones } from '../../hooks/useOpciones';
 import { useAuthStore } from '../../store/authStore';
 import FormError from '../FormError';
 import Modal, { ModalActions } from '../ui/Modal';
@@ -29,13 +30,16 @@ const opcionesDePropina = (pct) => [
 const CobrarModal = ({ cuenta, propinaPct = 10, persona = null, onClose, onCobrado }) => {
   const qc = useQueryClient();
   const modulos = useAuthStore((s) => s.activeEmpresa?.modulos) || [];
+  const { opcion } = useOpciones();
+  const conPropina = opcion('propina', true);
+  const conPersonas = opcion('cuenta_por_persona', true);
   const conCaja = modulos.includes('Caja');
   const conCredito = modulos.includes('Cuentas por cobrar');
 
   const pendientes = useMemo(() => cuenta.items.filter((i) => i.estado === 'ACTIVO' && !i.ventaId), [cuenta.items]);
   // Se abre con todo seleccionado, o solo con lo de una persona si se cobra «por persona».
   const [seleccion, setSeleccion] = useState(() => Object.fromEntries(pendientes.filter((i) => persona == null || i.comensal === persona).map((i) => [i.id, i.cantidad])));
-  const personas = [...new Set(pendientes.map((i) => i.comensal).filter((c) => c != null))].sort((a, b) => a - b);
+  const personas = conPersonas ? [...new Set(pendientes.map((i) => i.comensal).filter((c) => c != null))].sort((a, b) => a - b) : [];
   const [form, setForm] = useState({ clienteId: '', forma_pago: '1', medio_pago: '10', dias_credito: '30', descuento: '', propina: '0', propinaOtro: '', partes: '' });
   const [formError, setFormError] = useState(null);
 
@@ -46,7 +50,7 @@ const CobrarModal = ({ cuenta, propinaPct = 10, persona = null, onClose, onCobra
   const consumo = pendientes.reduce((a, i) => a + (Number(seleccion[i.id]) || 0) * i.precio_unitario, 0);
   const descuento = Math.min(100, Math.max(0, Number(form.descuento) || 0));
   const neto = consumo * (1 - descuento / 100);
-  const propina = form.propina === 'OTRO' ? Math.max(0, Number(form.propinaOtro) || 0) : propinaDe(neto, Number(form.propina));
+  const propina = !conPropina ? 0 : form.propina === 'OTRO' ? Math.max(0, Number(form.propinaOtro) || 0) : propinaDe(neto, Number(form.propina));
   const aPagar = neto + propina;
   const partes = Math.max(0, Math.floor(Number(form.partes) || 0));
   const seleccionados = pendientes.filter((i) => Number(seleccion[i.id]) > 0);
@@ -158,7 +162,7 @@ const CobrarModal = ({ cuenta, propinaPct = 10, persona = null, onClose, onCobra
           )}
         </div>
 
-        <fieldset>
+        {conPropina && <fieldset>
           <legend className="text-sm font-semibold text-slate-700 mb-2">Propina voluntaria</legend>
           <div role="radiogroup" className="flex flex-wrap gap-2 items-center">
             {opcionesDePropina(propinaPct).map(([valor, etiqueta]) => (
@@ -172,11 +176,11 @@ const CobrarModal = ({ cuenta, propinaPct = 10, persona = null, onClose, onCobra
             )}
           </div>
           <p className="mt-1.5 text-xs text-slate-500">La propina no es parte de la venta ni de los ingresos: se muestra aparte y se entrega al personal.</p>
-        </fieldset>
+        </fieldset>}
 
         <dl className="rounded-xl bg-slate-50 border border-slate-200 divide-y divide-slate-200 text-sm">
           <div className="flex justify-between px-4 py-2.5"><dt className="text-slate-600">Consumo{descuento ? ` (−${descuento} %)` : ''}</dt><dd className="font-semibold">{formatCOP(neto)}</dd></div>
-          <div className="flex justify-between px-4 py-2.5"><dt className="text-slate-600">Propina</dt><dd className="font-semibold">{formatCOP(propina)}</dd></div>
+          {conPropina && <div className="flex justify-between px-4 py-2.5"><dt className="text-slate-600">Propina</dt><dd className="font-semibold">{formatCOP(propina)}</dd></div>}
           <div className="flex justify-between px-4 py-3 bg-brand-50"><dt className="font-semibold text-brand-800">Total a pagar</dt><dd className="text-lg font-bold text-brand-800">{formatCOP(aPagar)}</dd></div>
         </dl>
 

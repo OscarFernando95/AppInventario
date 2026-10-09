@@ -8,6 +8,7 @@ import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useAhora, hace } from '../../hooks/useAhora';
 import { useAuthStore } from '../../store/authStore';
+import { useOpciones } from '../../hooks/useOpciones';
 import { enlaceWhatsApp, mensajeReserva } from '../../utils/avisos';
 import PlanoEditor, { ASPECTO_PLANO } from './PlanoEditor';
 import FormError from '../FormError';
@@ -70,6 +71,7 @@ const ConfigurarMesas = ({ abierto, onClose }) => {
   });
   const pctActual = data?.config?.propina_sugerida_pct;
   const conCaja = useAuthStore((st) => (st.activeEmpresa?.modulos || []).includes('Caja'));
+  const conPlano = useOpciones().opcion('plano', true);
   const [estaciones, setEstaciones] = useState(null); // lista en edición (null = la guardada)
   const estacionesEdit = estaciones ?? data?.config?.estaciones ?? ['Cocina'];
   const [nuevaEstacion, setNuevaEstacion] = useState('');
@@ -159,10 +161,10 @@ const ConfigurarMesas = ({ abierto, onClose }) => {
           </div>
         )}
 
-        <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 border border-slate-200 p-3">
+        {conPlano && <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 border border-slate-200 p-3">
           <p className="text-sm text-slate-700"><strong>Plano del local:</strong> acomoda las mesas donde están en tu local.</p>
           <button type="button" className="btn-secondary gap-2" disabled={mesas.filter((m) => m.activa).length === 0} onClick={() => setPlano(true)}><Shapes className="w-4 h-4" aria-hidden="true" /> Acomodar plano</button>
-        </div>
+        </div>}
 
         <table className="w-full text-sm">
           <tbody>
@@ -324,6 +326,9 @@ const Reservas = ({ mesas, onSentada }) => {
 /** Tablero de mesas: libres y ocupadas, con la cuenta de cada una, y las cuentas para llevar. */
 const Tablero = ({ onAbrir, consulta }) => {
   const { can } = usePermisos();
+  const { opcion } = useOpciones();
+  const conReservas = opcion('reservas', true);
+  const conPlano = opcion('plano', true);
   const ahora = useAhora();
   const qc = useQueryClient();
   const { data, isLoading, isError, error, refetch } = consulta;
@@ -362,7 +367,7 @@ const Tablero = ({ onAbrir, consulta }) => {
           <strong>{ocupadas}</strong> de {mesas.length} mesas ocupadas{llevar.length ? ` · ${llevar.length} para llevar` : ''}. Se actualiza solo.
         </p>
         <div className="flex flex-wrap gap-2">
-          <div role="radiogroup" aria-label="Vista del tablero" className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5 text-sm">
+          {conPlano && <div role="radiogroup" aria-label="Vista del tablero" className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5 text-sm">
             {[['lista', 'Tarjetas', LayoutGrid], ['plano', 'Plano', MapaIcono]].map(([v, etiqueta, icono]) => {
               const Icono = icono;
               return (
@@ -372,7 +377,7 @@ const Tablero = ({ onAbrir, consulta }) => {
                 </label>
               );
             })}
-          </div>
+          </div>}
           {can('mesas.gestionar') && <button type="button" className="btn-secondary gap-2" onClick={() => setConfig(true)}><Settings2 className="w-4 h-4" aria-hidden="true" /> Configurar mesas</button>}
           <button type="button" className="btn-primary gap-2" onClick={() => { setFormError(null); setNueva({ llevar: true }); }}><ShoppingBag className="w-4 h-4" aria-hidden="true" /> Cuenta para llevar</button>
         </div>
@@ -384,7 +389,7 @@ const Tablero = ({ onAbrir, consulta }) => {
         </tbody></table></div>
       )}
 
-      {vista === 'plano' && mesas.length > 0 && (
+      {conPlano && vista === 'plano' && mesas.length > 0 && (
         <div className="space-y-3">
           <div
             role="group" aria-label="Plano del local"
@@ -414,7 +419,7 @@ const Tablero = ({ onAbrir, consulta }) => {
         </div>
       )}
 
-      <div className={`grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 ${vista === 'plano' ? 'hidden' : ''}`}>
+      <div className={`grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 ${conPlano && vista === 'plano' ? 'hidden' : ''}`}>
         {mesas.map((m) => (m.cuenta ? (
           <TarjetaCuenta key={m.id} cuenta={m.cuenta} ahora={ahora} onAbrir={onAbrir} icono={Armchair} titulo={m.nombre} />
         ) : (
@@ -445,7 +450,7 @@ const Tablero = ({ onAbrir, consulta }) => {
         </div>
       )}
 
-      <Reservas mesas={mesas} onSentada={onAbrir} />
+      {conReservas && <Reservas mesas={mesas} onSentada={onAbrir} />}
 
       <Modal open={!!nueva} onClose={cerrarModal} title={nueva?.llevar ? 'Cuenta para llevar' : `Abrir cuenta · ${nueva?.mesa?.nombre ?? ''}`} size="md">
         <form onSubmit={handleAbrir} className="space-y-4">

@@ -29,6 +29,7 @@ import Auditoria from './pages/app/Auditoria';
 import Roles from './pages/app/Roles';
 import Mesas from './pages/app/Mesas';
 import Cocina from './pages/app/Cocina';
+import Opciones from './pages/app/Opciones';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { isAuthenticated, user } = useAuthStore();
@@ -131,6 +132,7 @@ const App = () => {
           <Route path="pedidos" element={<ModuloRoute modulo="Pedidos"><Pedidos /></ModuloRoute>} />
           <Route path="informes" element={<ModuloRoute modulo="Informes"><Informes /></ModuloRoute>} />
           <Route path="admin" element={<ConPermiso permiso="usuarios.gestionar"><AdminUsuarios /></ConPermiso>} />
+          <Route path="opciones" element={<ConPermiso permiso="opciones.gestionar"><Opciones /></ConPermiso>} />
           <Route path="roles" element={<ModuloRoute modulo="Roles y permisos"><ConPermiso permiso="roles.gestionar"><Roles /></ConPermiso></ModuloRoute>} />
           <Route path="auditoria" element={<ConPermiso permiso="auditoria.ver"><Auditoria /></ConPermiso>} />
         </Route>

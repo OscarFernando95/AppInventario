@@ -200,6 +200,11 @@ const EVENTOS = {
     descripcion: (d) => `De ${d.desde} a ${d.hacia}`,
   },
   propina_sugerida_cambiada: { modulo: 'Mesas', accion: () => 'Cambió la propina sugerida', descripcion: (d) => (Number(d.pct) > 0 ? `Ahora ${num(d.pct)} %` : 'Ya no se sugiere propina') },
+  opciones_cambiadas: {
+    modulo: 'Mesas',
+    accion: (d) => (d.perfil ? 'Aplicó un perfil de opciones' : 'Cambió las opciones del restaurante'),
+    descripcion: (d) => [d.perfil ? `perfil «${d.perfil}»` : null, d.activadas ? `activó: ${d.activadas}` : null, d.desactivadas ? `apagó: ${d.desactivadas}` : null, d.ajustadas ? `ajustó: ${d.ajustadas}` : null].filter(Boolean).join(' · ') || 'Sin cambios',
+  },
   estaciones_cambiadas: { modulo: 'Mesas', accion: () => 'Cambió las estaciones de preparación', descripcion: (d) => d.estaciones },
   propina_pesos_cambiados: { modulo: 'Mesas', accion: () => 'Cambió el reparto de propinas', descripcion: (d) => `Pesos de ${plural(d.personas || 0, 'persona', 'personas')}` },
   plano_actualizado: { modulo: 'Mesas', accion: () => 'Acomodó el plano del local', descripcion: (d) => plural(d.mesas || 0, 'mesa', 'mesas') },

@@ -22,6 +22,7 @@ const CATALOGO = [
   { codigo: 'inventario.conteo', grupo: 'Inventario', etiqueta: 'Registrar el conteo físico', descripcion: 'Ajusta el inventario al contar.' },
   { codigo: 'costos.ver', grupo: 'Costos', etiqueta: 'Ver costos y márgenes', descripcion: 'Costo de productos y platos, margen y rentabilidad.' },
   { codigo: 'auditoria.ver', grupo: 'Administración', etiqueta: 'Ver la auditoría', descripcion: 'Quién hizo qué y cuándo.' },
+  { codigo: 'opciones.gestionar', grupo: 'Administración', etiqueta: 'Configurar las opciones del restaurante', descripcion: 'Prender o apagar las funciones de mesas, menú, cocina y mostrador, y aplicar perfiles (cafetería, restaurante).' },
   { codigo: 'usuarios.gestionar', grupo: 'Administración', etiqueta: 'Gestionar el personal', descripcion: 'Crear y editar usuarios, solo con roles que no superen los suyos.' },
   { codigo: 'roles.gestionar', grupo: 'Administración', etiqueta: 'Gestionar roles y permisos', descripcion: 'Crear roles propios, solo con permisos que él mismo tiene.' },
 ];

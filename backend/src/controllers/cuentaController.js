@@ -10,6 +10,7 @@ const { tiene } = require('../middlewares/auth');
 const { invalidateDashboard } = require('./reporteController');
 const { invalidateInforme } = require('./informeController');
 const { cargarModificadoresLinea } = require('../services/ventaService');
+const { opcionesDe } = require('../middlewares/opciones');
 const { TIPOS_NO_VENDIBLES } = require('../services/recetas');
 const {
   nombreDeCuenta, detalleDeCuenta, cuentasAbiertas, detalleDeComanda, cuentaAbiertaBloqueada, cobrarCuenta,
@@ -88,7 +89,9 @@ function validarComensal(cuenta, comensal) {
 const mismosExtras = (a, b) => JSON.stringify([...(a || [])].sort((x, y) => x - y)) === JSON.stringify([...(b || [])].sort((x, y) => x - y));
 
 exports.agregarItem = async (req, res) => {
-  const { productoId, servicioId, cantidad, modificadores, nota, comensal } = req.body;
+  const { productoId, servicioId, cantidad, modificadores, nota } = req.body;
+  // Con «pedir por persona» apagado el ítem no se asigna a nadie (aunque llegue el dato).
+  const comensal = (await opcionesDe(req)).cuenta_por_persona ? req.body.comensal : undefined;
   const ok = await sequelize.transaction(async (t) => {
     const cuenta = await cuentaAbiertaBloqueada(req, t, req.params.id);
     if (!cuenta) return false;
@@ -148,7 +151,7 @@ exports.editarItem = async (req, res) => {
     const cambios = {};
     if (req.body.cantidad !== undefined) cambios.cantidad = req.body.cantidad;
     if (req.body.nota !== undefined) cambios.nota = req.body.nota;
-    if (req.body.comensal !== undefined) { validarComensal(cuenta, req.body.comensal); cambios.comensal = req.body.comensal; }
+    if (req.body.comensal !== undefined && (await opcionesDe(req)).cuenta_por_persona) { validarComensal(cuenta, req.body.comensal); cambios.comensal = req.body.comensal; }
     await item.update(cambios, { transaction: t });
     return true;
   });
@@ -307,6 +310,8 @@ exports.cancelarCuenta = async (req, res) => {
 };
 
 exports.cobrar = async (req, res) => {
+  // Con la propina apagada nunca se cobra (aunque llegue el dato).
+  if (!(await opcionesDe(req)).propina) req.body.propina = 0;
   const t = await sequelize.transaction();
   try {
     const r = await cobrarCuenta(req, t, req.params.id, req.body);
