@@ -34,7 +34,7 @@ test.describe('Café E2E: mesas, comandas a cocina, división de cuenta y propin
     const dialogo = page.getByRole('dialog', { name: 'Configurar mesas' });
     for (const nombre of ['Mesa 1', 'Mesa 2']) {
       await dialogo.getByLabel('Nueva mesa').fill(nombre);
-      await dialogo.getByRole('button', { name: 'Agregar' }).click();
+      await dialogo.getByRole('button', { name: 'Agregar', exact: true }).click();
       await expect(dialogo.getByText(nombre, { exact: true })).toBeVisible();
     }
     await dialogo.getByRole('button', { name: 'Listo' }).click();
