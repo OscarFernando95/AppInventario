@@ -17,6 +17,9 @@ import FormError from '../FormError';
 import Modal, { ModalActions } from '../ui/Modal';
 import Field from '../ui/Field';
 import ProductPicker from './ProductPicker';
+import SelectorModificadores from '../SelectorModificadores';
+import { faltaElegir, hayOferta } from '../../utils/grupos';
+import { useMenu } from '../../hooks/useMenu';
 import CobrarModal from './CobrarModal';
 
 const ESTADO_COMANDA = {
@@ -55,6 +58,7 @@ const FilaItem = ({ item, comandaPorId, puedeAnular, acciones, bloqueado, comens
             {Array.from({ length: comensales }, (_, k) => k + 1).map((n) => <option key={n} value={n}>Persona {n}</option>)}
           </select>
         ) : (item.comensal ? <span className="mt-1 inline-block text-[11px] font-semibold bg-slate-100 text-slate-700 rounded px-1.5 py-0.5">Persona {item.comensal}</span> : null)}
+        {item.componentes?.length > 0 && <p className="text-xs text-slate-500">Incluye: {item.componentes.map((c) => `${c.cantidad > 1 ? `${c.cantidad} × ` : ''}${c.nombre}`).join(', ')}</p>}
         {item.nota && <p className="text-xs font-medium text-amber-800 flex items-center gap-1"><MessageSquareText className="w-3 h-3" aria-hidden="true" /> {item.nota}</p>}
         <p className="mt-0.5 text-[11px] text-slate-500 flex flex-wrap gap-x-2 items-center">
           <span>{formatCOP(item.precio_unitario)} c/u</span>
@@ -92,6 +96,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
   const ahora = useAhora();
   const puedeAnular = can('mesas.anular_items');
   const { opcion } = useOpciones();
+  const menuOpc = useMenu();
   const conUnir = opcion('unir_cuentas', true);
   const porPersona = opcion('cuenta_por_persona', true);
   const conCocina = modulos.includes('Cocina');
@@ -150,7 +155,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
     onError: fallar,
   });
 
-  const modsDe = (o) => (o.tipo === 'RECETA' ? modificadores : []);
+  const modsDe = (o) => (o.tipo === 'RECETA' && hayOferta(o.producto, modificadores, menuOpc.grupos) ? modificadores : []);
   const elegir = (o) => {
     setError(null);
     setAviso(null);
@@ -339,19 +344,13 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
       <Modal open={!!pidiendo} onClose={() => setPidiendo(null)} title={pidiendo ? pidiendo.opcion.nombre : ''} size="md">
         {pidiendo && (
           <form onSubmit={confirmarPedido} className="space-y-4">
-            <fieldset className="space-y-2">
-              <legend className="text-sm font-semibold text-slate-700 mb-1">Extras y cambios</legend>
-              {modificadores.map((m) => (
-                <label key={m.id} className="flex items-center gap-2 text-sm text-slate-700">
-                  <input
-                    type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"
-                    checked={pidiendo.mods.includes(m.id)}
-                    onChange={(e) => setPidiendo({ ...pidiendo, mods: e.target.checked ? [...pidiendo.mods, m.id] : pidiendo.mods.filter((x) => x !== m.id) })}
-                  />
-                  {m.nombre}{Number(m.precio_extra) > 0 && <span className="text-slate-500"> (+{formatCOP(m.precio_extra)})</span>}
-                </label>
-              ))}
-            </fieldset>
+            <SelectorModificadores
+              plato={pidiendo.opcion.producto} modificadores={modificadores} grupos={menuOpc.grupos}
+              valor={pidiendo.mods} onChange={(mods) => setPidiendo({ ...pidiendo, mods })}
+            />
+            {faltaElegir(pidiendo.opcion.producto, modificadores, menuOpc.grupos, pidiendo.mods) && (
+              <p role="status" className="text-sm font-medium text-amber-800">{faltaElegir(pidiendo.opcion.producto, modificadores, menuOpc.grupos, pidiendo.mods)}</p>
+            )}
             <div className="grid grid-cols-[6rem_1fr] gap-3">
               <Field label="Cantidad">
                 <input type="number" min="1" className="input-field" value={pidiendo.cantidad} onChange={(e) => setPidiendo({ ...pidiendo, cantidad: Math.max(1, Number(e.target.value) || 1) })} />
@@ -362,7 +361,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
             </div>
             <ModalActions>
               <button type="button" className="btn-secondary" onClick={() => setPidiendo(null)}>Cancelar</button>
-              <button type="submit" className="btn-primary px-6">Agregar</button>
+              <button type="submit" className="btn-primary px-6" disabled={!!faltaElegir(pidiendo.opcion.producto, modificadores, menuOpc.grupos, pidiendo.mods)}>Agregar</button>
             </ModalActions>
           </form>
         )}

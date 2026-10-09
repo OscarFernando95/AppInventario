@@ -19,6 +19,7 @@ export function htmlComanda(comanda, { empresa, reimpresion = false } = {}) {
   const items = (comanda.items || []).map((i) => `
     <li class="item${i.anulado ? ' anulado' : ''}">
       <div class="linea"><span class="cant">${esc(cant(i.cantidad))}×</span> <span class="nombre">${esc(i.nombre)}</span>${i.comensal ? ` <span class="tag">P${esc(i.comensal)}</span>` : ''}${i.anulado ? ' <span class="tag">ANULADO</span>' : ''}</div>
+      ${(i.componentes || []).map((c) => `<div class="detalle">• ${esc(cant(c.cantidad))} ${esc(c.nombre)}</div>`).join('')}
       ${(i.modificadores || []).map((m) => `<div class="detalle">+ ${esc(m)}</div>`).join('')}
       ${i.nota ? `<div class="nota">» ${esc(i.nota)}</div>` : ''}
     </li>`).join('');

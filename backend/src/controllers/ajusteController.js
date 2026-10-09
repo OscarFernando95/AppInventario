@@ -20,7 +20,7 @@ const FILTROS = (query) => buildListWhere(query, { fecha: 'fecha', igualdad: ['t
 
 /** Solo los productos con stock propio se ajustan (no platos ni preparaciones, salvo las que se producen por lotes). */
 function exigirConStock(producto) {
-  if (TIPOS_CON_RECETA.includes(producto.tipo) && !esPorLotes(producto)) {
+  if ((TIPOS_CON_RECETA.includes(producto.tipo) && !esPorLotes(producto)) || producto.tipo === 'COMBO') {
     throw new ValidationError(`"${producto.nombre_producto}" no tiene stock propio (se descuenta de sus ingredientes).`);
   }
 }

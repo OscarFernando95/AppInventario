@@ -80,6 +80,8 @@ const modificadorItem = z.object({ insumoId: idRef, cantidad: cantidadConSigno }
 const modificador = z.object({
   nombre: z.string().trim().min(1).max(100),
   precio_extra: z.coerce.number().min(0).max(99_999_999).transform((n) => Math.round(n * 100) / 100).optional(),
+  // Grupo al que pertenece (solo con la opción de grupos encendida; vacío = extra suelto).
+  grupoId: z.preprocess((v) => (v === '' ? null : v), idRef.nullish()),
   activo: z.boolean().optional(),
   // Con signo: positiva agrega ingrediente ("extra shot"), negativa lo quita ("sin azúcar").
   items: z.array(modificadorItem).max(30).optional(),

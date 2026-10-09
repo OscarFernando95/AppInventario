@@ -12,6 +12,7 @@ import PageHeader from '../../components/ui/PageHeader';
 import Tabs from '../../components/ui/Tabs';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useAuthStore } from '../../store/authStore';
+import { useMenu } from '../../hooks/useMenu';
 import { imprimirEtiquetaLote } from '../../utils/etiquetaLote';
 import Modal, { ModalActions } from '../../components/ui/Modal';
 import Field from '../../components/ui/Field';
@@ -144,8 +145,127 @@ const Rentabilidad = () => {
   );
 };
 
+/* ───────────────────────── Grupos de modificadores ───────────────────────── */
+const Grupos = () => {
+  const qc = useQueryClient();
+  const { data: grupos = [], isLoading, isError, error, refetch } = useEmpresaQuery(['menu', 'grupos', 'todos'], '/menu/grupos');
+  const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
+  const [abierto, setAbierto] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [form, setForm] = useState(EMPTY_GRUPO);
+  const [formError, setFormError] = useState(null);
+  const platos = productos.filter((p) => p.tipo === 'RECETA');
+  const porId = new Map(productos.map((p) => [p.id, p]));
+  const cerrar = () => { setAbierto(false); setEditId(null); setForm(EMPTY_GRUPO); setFormError(null); };
+  const refrescar = () => qc.invalidateQueries({ queryKey: ['empresa'] });
+
+  const guardar = useMutation({
+    mutationFn: (payload) => (editId ? api.put(`/menu/grupos/${editId}`, payload) : api.post('/menu/grupos', payload)),
+    onSuccess: () => { refrescar(); cerrar(); },
+    onError: (err) => setFormError(apiError(err, 'No se pudo guardar el grupo')),
+  });
+  const eliminar = useMutation({ mutationFn: (id) => api.delete(`/menu/grupos/${id}`), onSuccess: refrescar });
+
+  const abrirEdicion = (g) => {
+    setEditId(g.id);
+    setForm({ nombre: g.nombre, obligatorio: g.obligatorio, max_selecciones: g.max_selecciones == null ? '' : String(g.max_selecciones), todos: g.todos, productoIds: g.productoIds, activo: g.activo });
+    setFormError(null);
+    setAbierto(true);
+  };
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!form.nombre.trim()) return setFormError('Indica el nombre del grupo.');
+    guardar.mutate({
+      nombre: form.nombre.trim(), obligatorio: form.obligatorio, max_selecciones: form.max_selecciones === '' ? null : Number(form.max_selecciones),
+      todos: form.todos, productoIds: form.todos ? [] : form.productoIds, activo: form.activo,
+    });
+  };
+
+  return (
+    <section aria-label="Grupos de modificadores" className="card-container p-5 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-800">Grupos de modificadores</h3>
+          <p className="text-sm text-slate-500 max-w-2xl">Agrupa extras que se eligen juntos (punto de cocción, tipo de leche, tamaño). Un grupo obligatorio no deja pedir el plato sin elegir uno. Asigna cada modificador a su grupo más abajo.</p>
+        </div>
+        <button type="button" className="btn-secondary gap-2" onClick={() => { setForm(EMPTY_GRUPO); setEditId(null); setFormError(null); setAbierto(true); }}><Plus className="w-4 h-4" aria-hidden="true" /> Nuevo grupo</button>
+      </div>
+      <TableCard>
+        <THead><Th>Grupo</Th><Th>Reglas</Th><Th>Aplica a</Th><Th align="center" className="w-24">Acciones</Th></THead>
+        <tbody>
+          <TableState colSpan={4} isLoading={isLoading} isError={isError} error={error} onRetry={refetch} isEmpty={grupos.length === 0} emptyIcon={ChefHat} emptyTitle="Aún no hay grupos" emptyHint="Crea el primero con «Nuevo grupo»." />
+          {grupos.map((g) => (
+            <Tr key={g.id}>
+              <Td className={`font-medium ${g.activo ? 'text-slate-800' : 'text-slate-400 line-through'}`}>{g.nombre}</Td>
+              <Td className="text-sm">{g.obligatorio ? 'Obligatorio' : 'Opcional'} · {g.max_selecciones == null ? 'elige los que quiera' : g.max_selecciones === 1 ? 'elige uno' : `hasta ${g.max_selecciones}`}</Td>
+              <Td className="text-sm text-slate-600">{g.todos ? 'Todos los platos' : (g.productoIds.map((id) => porId.get(id)?.nombre_producto).filter(Boolean).join(', ') || <span className="text-slate-400">Ningún plato</span>)}</Td>
+              <Td align="center" className="whitespace-nowrap">
+                <button type="button" className="btn-icon" aria-label={`Editar el grupo ${g.nombre}`} onClick={() => abrirEdicion(g)}><Edit className="w-4 h-4" /></button>
+                <button type="button" className="btn-icon" aria-label={`Eliminar el grupo ${g.nombre}`} onClick={() => eliminar.mutate(g.id)}><Trash2 className="w-4 h-4" /></button>
+              </Td>
+            </Tr>
+          ))}
+        </tbody>
+      </TableCard>
+
+      <Modal open={abierto} onClose={cerrar} title={editId ? 'Editar grupo' : 'Nuevo grupo'} size="lg">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <FormError message={formError} onDismiss={() => setFormError(null)} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field label="Nombre del grupo" required><input className="input-field" maxLength={60} placeholder="Punto de cocción" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} /></Field>
+            <Field label="Cuántos se pueden elegir">
+              <select className="input-field" value={form.max_selecciones} onChange={(e) => setForm({ ...form, max_selecciones: e.target.value })}>
+                <option value="1">Solo uno</option>
+                <option value="2">Hasta 2</option>
+                <option value="3">Hasta 3</option>
+                <option value="">Los que quiera</option>
+              </select>
+            </Field>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600" checked={form.obligatorio} onChange={(e) => setForm({ ...form, obligatorio: e.target.checked })} />
+            Obligatorio: hay que elegir al menos uno antes de pedir el plato
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600" checked={form.todos} onChange={(e) => setForm({ ...form, todos: e.target.checked })} />
+            Aplica a todos los platos
+          </label>
+          {!form.todos && (
+            <fieldset className="rounded-xl border border-slate-200 p-3 space-y-2">
+              <legend className="px-2 text-sm font-semibold text-brand-800">Platos a los que aplica</legend>
+              <SearchableSelect
+                options={platos.filter((p) => !form.productoIds.includes(p.id)).map((p) => ({ value: String(p.id), label: p.nombre_producto, keywords: p.codigo }))}
+                value="" onChange={(v) => v && setForm({ ...form, productoIds: [...form.productoIds, Number(v)] })} placeholder="Buscar plato…" allowClear={false}
+              />
+              <ul className="flex flex-wrap gap-2">
+                {form.productoIds.map((id) => (
+                  <li key={id} className="flex items-center gap-1 rounded-full bg-slate-100 pl-3 pr-1 py-1 text-sm">
+                    {porId.get(id)?.nombre_producto}
+                    <button type="button" className="btn-icon p-1" aria-label={`Quitar ${porId.get(id)?.nombre_producto}`} onClick={() => setForm({ ...form, productoIds: form.productoIds.filter((x) => x !== id) })}>×</button>
+                  </li>
+                ))}
+              </ul>
+            </fieldset>
+          )}
+          {editId && (
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600" checked={form.activo} onChange={(e) => setForm({ ...form, activo: e.target.checked })} />
+              Activo
+            </label>
+          )}
+          <ModalActions>
+            <button type="button" className="btn-secondary" onClick={cerrar}>Cancelar</button>
+            <button type="submit" className="btn-primary px-6" disabled={guardar.isPending}>{guardar.isPending ? 'Guardando…' : 'Guardar grupo'}</button>
+          </ModalActions>
+        </form>
+      </Modal>
+    </section>
+  );
+};
+
 /* ───────────────────────── Modificadores ───────────────────────── */
-const EMPTY_MOD = { nombre: '', precio_extra: '', activo: true, items: [] };
+const EMPTY_MOD = { nombre: '', precio_extra: '', activo: true, grupoId: '', items: [] };
+const EMPTY_GRUPO = { nombre: '', obligatorio: false, max_selecciones: '1', todos: false, productoIds: [], activo: true };
 
 const resumenItems = (items = []) => items
   .map((i) => `${Number(i.cantidad) > 0 ? '+' : '−'}${formatCantidad(Math.abs(Number(i.cantidad)))} ${unidadCorta(i.insumo?.unidad_medida)} ${i.insumo?.nombre_producto || ''}`.trim())
@@ -155,6 +275,7 @@ const Modificadores = () => {
   const queryClient = useQueryClient();
   const { data: mods = [], isLoading, isError, error, refetch } = useEmpresaQuery(['modificadores', 'todos'], '/modificadores?todos=1');
   const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
+  const menu = useMenu();
 
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -183,6 +304,7 @@ const Modificadores = () => {
       nombre: m.nombre,
       precio_extra: Number(m.precio_extra) ? String(Number(m.precio_extra)) : '',
       activo: m.activo,
+      grupoId: m.grupoId ? String(m.grupoId) : '',
       // En pantalla: acción (agrega/quita) + cantidad positiva; al guardar se vuelve a firmar.
       items: m.items.map((i) => ({
         insumoId: String(i.insumoId), accion: Number(i.cantidad) < 0 ? 'quita' : 'agrega', cantidad: String(Math.abs(Number(i.cantidad))),
@@ -204,6 +326,7 @@ const Modificadores = () => {
       nombre: form.nombre.trim(),
       precio_extra: Number(form.precio_extra) || 0,
       activo: form.activo,
+      ...(menu.conGrupos ? { grupoId: form.grupoId === '' ? null : Number(form.grupoId) } : {}),
       items: form.items.map((i) => ({ insumoId: Number(i.insumoId), cantidad: (i.accion === 'quita' ? -1 : 1) * Number(i.cantidad) })),
     });
   };
@@ -218,6 +341,8 @@ const Modificadores = () => {
           <Plus className="w-5 h-5" aria-hidden="true" /> Nuevo modificador
         </button>
       </div>
+
+      {menu.conGrupos && <Grupos />}
 
       <TableCard>
         <THead>
@@ -234,7 +359,7 @@ const Modificadores = () => {
           />
           {mods.map((m) => (
             <Tr key={m.id}>
-              <Td className="font-medium text-slate-800">{m.nombre}</Td>
+              <Td className="font-medium text-slate-800">{m.nombre}{menu.conGrupos && m.grupoId && <span className="ml-2 text-[11px] font-semibold bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{menu.grupos.find((g) => g.id === m.grupoId)?.nombre}</span>}</Td>
               <Td align="right" className="whitespace-nowrap">{Number(m.precio_extra) > 0 ? `+${formatCOP(m.precio_extra)}` : 'Sin costo'}</Td>
               <Td className="text-sm text-slate-600">{resumenItems(m.items) || <span className="text-slate-400">Solo precio</span>}</Td>
               <Td align="center">
@@ -261,6 +386,15 @@ const Modificadores = () => {
               <input type="number" min="0" step="0.01" className="input-field" placeholder="0" value={form.precio_extra} onChange={(e) => setForm({ ...form, precio_extra: e.target.value })} />
             </Field>
           </div>
+
+          {menu.conGrupos && (
+            <Field label="Grupo" hint="Vacío = extra suelto. Los de un grupo se eligen juntos al pedir (p. ej. el punto de cocción).">
+              <select className="input-field sm:w-72" value={form.grupoId} onChange={(e) => setForm({ ...form, grupoId: e.target.value })}>
+                <option value="">Sin grupo (extra suelto)</option>
+                {menu.grupos.map((g) => <option key={g.id} value={g.id}>{g.nombre}</option>)}
+              </select>
+            </Field>
+          )}
 
           <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">
             <legend className="px-2 text-sm font-semibold text-brand-800">Ajuste de ingredientes (por porción)</legend>

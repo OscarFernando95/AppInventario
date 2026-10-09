@@ -30,6 +30,8 @@ const OPCIONES = [
   { clave: 'menu_fotos', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: MENU, etiqueta: 'Fotos de los platos', descripcion: 'Mostrar una foto pequeña de cada plato o producto en el catálogo.' },
   { clave: 'agotados_manuales', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: MENU, etiqueta: 'Agotado por hoy', descripcion: 'Marcar a mano un plato como agotado: no se puede pedir ni vender hasta mañana.' },
   { clave: 'precios_horario', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: MENU, etiqueta: 'Precios por horario', descripcion: 'Happy hour y ofertas por día y hora: el precio baja solo mientras la oferta rige.' },
+  { clave: 'modificadores_grupos', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: ['Recetas'], etiqueta: 'Grupos de modificadores obligatorios', descripcion: 'Agrupar los extras en grupos (punto de cocción, tipo de leche, tamaño) y exigir que se elija uno antes de pedir el plato.' },
+  { clave: 'combos', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: MENU, etiqueta: 'Combos', descripcion: 'Vender varios productos juntos a un precio (café + croissant): descuenta el inventario de cada componente.' },
 ];
 
 const POR_CLAVE = new Map(OPCIONES.map((o) => [o.clave, o]));

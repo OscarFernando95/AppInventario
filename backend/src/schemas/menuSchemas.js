@@ -34,4 +34,15 @@ const precioHorario = reglasDeOferta(precioHorarioBase);
 // En una edición puede llegar solo un campo (p. ej. apagar la oferta): el controlador valida la oferta completa ya mezclada.
 const precioHorarioUpdate = precioHorarioBase.partial();
 
-module.exports = { categoria, categoriaUpdate, categoriasOrden, agotado, precioHorario, precioHorarioUpdate };
+const grupo = z.object({
+  nombre: z.string().trim().min(1, 'Indica el nombre del grupo.').max(60),
+  obligatorio: z.boolean().optional(),
+  max_selecciones: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().int().min(1).max(20).nullish()),
+  todos: z.boolean().optional(),
+  orden: z.coerce.number().int().min(0).max(9999).optional(),
+  activo: z.boolean().optional(),
+  productoIds: z.array(idRef).max(500).optional(),
+});
+const grupoUpdate = grupo.partial();
+
+module.exports = { grupo, grupoUpdate, categoria, categoriaUpdate, categoriasOrden, agotado, precioHorario, precioHorarioUpdate };

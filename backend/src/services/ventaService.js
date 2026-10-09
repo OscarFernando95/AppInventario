@@ -1,12 +1,14 @@
 'use strict';
 
-const { Venta, VentaDetalle, Producto, Servicio, Cliente, Caja, Modificador, ModificadorItem } = require('../models');
+const { Venta, VentaDetalle, Producto, Servicio, Cliente, Caja, Modificador, ModificadorItem, ComboItem } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { calcularVenta } = require('./calculo');
 const { calcularVencimiento, redondear2 } = require('./cartera');
 const { TIPOS_NO_VENDIBLES, redondear3, consumoConModificadores } = require('./recetas');
 const { cargarRecetas } = require('./recetasDb');
 const { opcionesDe } = require('../middlewares/opciones');
+const { validarSeleccion } = require('./grupos');
+const { cargarGrupos } = require('./gruposDb');
 const { fechaISO } = require('./lotes');
 
 // Descuento máximo permitido sobre el precio de lista de una línea (%). Por
@@ -54,6 +56,7 @@ async function cargarModificadoresLinea(ids, empresaId, t) {
     id: m.id,
     nombre: m.nombre,
     precio_extra: Number(m.precio_extra),
+    grupoId: m.grupoId ?? null,
     items: m.items.map((i) => ({ insumoId: i.insumoId, cantidad: Number(i.cantidad) })),
   }));
 }
@@ -68,7 +71,7 @@ async function cargarModificadoresLinea(ids, empresaId, t) {
  * precio de lista. `extras` = { cuentaId, propina } para ventas que salen de una cuenta de mesa.
  * Lanza ValidationError ante cualquier regla de negocio incumplida (el llamador hace rollback).
  */
-async function registrarVenta(req, t, body, { cuentaId = null, propina = 0 } = {}) {
+async function registrarVenta(req, t, body, { cuentaId = null, propina = 0, exigirGrupos = false } = {}) {
   const { clienteId, detalles, descuento_global, forma_pago, medio_pago, dias_credito } = body;
   const aCredito = String(forma_pago) === '2';
   if (aCredito) {
@@ -138,10 +141,32 @@ async function registrarVenta(req, t, body, { cuentaId = null, propina = 0 } = {
       precioBase = Number(prod.precio_unitario);
       nombre = prod.nombre_producto;
       if (ef.agotados_manuales && prod.agotado_dia === fechaISO()) throw new ValidationError(`«${prod.nombre_producto}» está agotado por hoy.`);
-      if (prod.tipo === 'RECETA') {
+      if (prod.tipo === 'COMBO') {
+        // Combo: se vende a su precio y descuenta lo de TODOS sus componentes (platos y productos), de una sola vez.
+        if (!ef.combos) throw new ValidationError(`Los combos no están activados: «${prod.nombre_producto}» no se puede vender.`);
+        const partes = await ComboItem.findAll({ where: { comboId: prod.id }, include: [{ model: Producto, as: 'componente' }], order: [['productoId', 'ASC']], transaction: t });
+        if (partes.length === 0) throw new ValidationError(`El combo "${prod.nombre_producto}" no tiene componentes.`);
+        recetas ??= await cargarRecetas(req.empresaId, { transaction: t });
+        const porCombo = new Map(); // productoId -> cantidad por 1 combo
+        for (const c of partes) {
+          const comp = c.componente;
+          if (!comp || !['VENTA', 'RECETA'].includes(comp.tipo)) throw new ValidationError(`El combo "${prod.nombre_producto}" tiene un componente no válido.`);
+          if (ef.agotados_manuales && comp.agotado_dia === fechaISO()) throw new ValidationError(`«${comp.nombre_producto}» (parte de «${prod.nombre_producto}») está agotado por hoy.`);
+          const consumoComp = comp.tipo === 'RECETA' ? consumoConModificadores(comp.id, recetas, []) : new Map([[comp.id, 1]]);
+          for (const [id, q] of consumoComp) porCombo.set(id, (porCombo.get(id) || 0) + q * Number(c.cantidad));
+        }
+        const r = await descontarConsumo(prod, porCombo, cantidad, t);
+        costoUnitario = r.costoPorcion;
+        consumoLinea = r.consumo;
+      } else if (prod.tipo === 'RECETA') {
         // Plato: descuenta sus ingredientes (sub-recetas y modificadores incluidos);
         // su propio stock no cuenta.
         modsLinea = await cargarModificadoresLinea(item.modificadores, req.empresaId, t);
+        if (exigirGrupos && ef.modificadores_grupos) {
+          // Con grupos de modificadores activados, el mostrador debe elegir los obligatorios (punto de cocción, leche…).
+          const falla = validarSeleccion(prod, await cargarGrupos(req.empresaId, { transaction: t }), modsLinea);
+          if (falla) throw new ValidationError(falla);
+        }
         recetas ??= await cargarRecetas(req.empresaId, { transaction: t });
         extrasMods = modsLinea.reduce((a, m) => a + m.precio_extra, 0);
         precioBase += extrasMods;

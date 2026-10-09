@@ -12,6 +12,8 @@ const { invalidateInforme } = require('./informeController');
 const { cargarModificadoresLinea } = require('../services/ventaService');
 const { opcionesDe } = require('../middlewares/opciones');
 const { promoVigente } = require('../services/precios');
+const { validarSeleccion } = require('../services/grupos');
+const { cargarGrupos } = require('../services/gruposDb');
 const { fechaISO } = require('../services/lotes');
 const { TIPOS_NO_VENDIBLES } = require('../services/recetas');
 const {
@@ -101,9 +103,11 @@ exports.agregarItem = async (req, res) => {
     validarComensal(cuenta, comensal);
 
     let promo = null; // oferta por horario vigente al pedirlo
+    let prod = null;
     if (productoId) {
-      const prod = await Producto.findOne({ where: { id: productoId, empresaId: req.empresaId }, transaction: t });
+      prod = await Producto.findOne({ where: { id: productoId, empresaId: req.empresaId }, transaction: t });
       if (!prod) throw new ValidationError('Producto inválido.');
+      if (prod.tipo === 'COMBO' && !ef.combos) throw new ValidationError(`Los combos no están activados: «${prod.nombre_producto}» no se puede pedir.`);
       if (ef.agotados_manuales && prod.agotado_dia === fechaISO()) throw new ValidationError(`«${prod.nombre_producto}» está agotado por hoy.`);
       if (ef.precios_horario) {
         const reglas = await PrecioHorario.findAll({ where: { empresaId: req.empresaId, activo: true }, raw: true, transaction: t });
@@ -119,7 +123,11 @@ exports.agregarItem = async (req, res) => {
       if (!serv) throw new ValidationError('Servicio inválido.');
     }
     const mods = [...new Set(modificadores || [])];
-    await cargarModificadoresLinea(mods, req.empresaId, t); // existen, activos y de la empresa
+    const elegidos = await cargarModificadoresLinea(mods, req.empresaId, t); // existen, activos y de la empresa
+    if (ef.modificadores_grupos && prod?.tipo === 'RECETA') {
+      const falla = validarSeleccion(prod, await cargarGrupos(req.empresaId, { transaction: t }), elegidos);
+      if (falla) throw new ValidationError(falla);
+    }
 
     const iguales = await CuentaItem.findOne({
       where: { cuentaId: cuenta.id, estado: 'ACTIVO', comandaId: null, ventaId: null, productoId: productoId || null, servicioId: servicioId || null, nota: nota || null, comensal: comensal || null, precio_promo: promo ? promo.precio : null },

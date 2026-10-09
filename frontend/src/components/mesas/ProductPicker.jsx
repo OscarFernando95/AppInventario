@@ -26,9 +26,10 @@ const ProductPicker = ({ productos, servicios, onElegir, deshabilitado }) => {
   });
 
   const vendibles = useMemo(() => {
-    const lista = productos.filter((p) => ['RECETA', 'VENTA', 'COMBO'].includes(p.tipo));
+    // Un combo solo se ofrece con la opción de combos encendida.
+    const lista = productos.filter((p) => ['RECETA', 'VENTA'].includes(p.tipo) || (p.tipo === 'COMBO' && menu.conCombos));
     return menu.conCategorias ? ordenarProductos(lista, menu.categorias) : lista;
-  }, [productos, menu.conCategorias, menu.categorias]);
+  }, [productos, menu.conCategorias, menu.categorias, menu.conCombos]);
 
   const chips = useMemo(() => (menu.conCategorias ? categoriasConProductos(vendibles, menu.categorias) : []), [vendibles, menu.conCategorias, menu.categorias]);
   const hayChips = chips.length > 1;

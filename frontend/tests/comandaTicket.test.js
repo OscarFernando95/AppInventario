@@ -35,6 +35,12 @@ describe('htmlComanda', () => {
     expect(html).not.toContain('<grande>');
   });
 
+  it('un combo muestra de qué se compone', () => {
+    const h = htmlComanda({ ...comanda, items: [{ nombre: 'Almuerzo', cantidad: 1, modificadores: [], componentes: [{ nombre: 'Pizza', cantidad: 1 }, { nombre: 'Gaseosa', cantidad: 2 }] }] });
+    expect(h).toContain('• 1 Pizza');
+    expect(h).toContain('• 2 Gaseosa');
+  });
+
   it('una reimpresión se identifica como copia; sin mesa cae a un texto', () => {
     expect(htmlComanda(comanda, { reimpresion: true })).toContain('(copia)');
     expect(htmlComanda({ ...comanda, cuenta: null })).toContain('Sin mesa');

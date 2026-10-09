@@ -12,6 +12,8 @@ import { unidadCorta } from '../../utils/unidades';
 import { generateDevolucionPDF } from '../../utils/generateDevolucionPDF';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import { useMenu } from '../../hooks/useMenu';
+import SelectorModificadores from '../../components/SelectorModificadores';
+import { faltaElegir, hayOferta } from '../../utils/grupos';
 import { ordenarProductos, categoriasConProductos, deCategoria, precioVigente, tieneOferta } from '../../utils/menu';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
@@ -235,7 +237,7 @@ const Ventas = () => {
   const displayList = useMemo(() => {
     const lower = itemSearch.toLowerCase();
     if (activeTab === 'P') {
-      let filtered = productos.filter(p => !['INSUMO', 'PREPARACION'].includes(p.tipo) && disponible(p) > 0 && !(menu.conAgotados && p.agotado_hoy) && ((p.nombre_producto || '').toLowerCase().includes(lower) || (p.codigo || '').toLowerCase().includes(lower)));
+      let filtered = productos.filter(p => !['INSUMO', 'PREPARACION'].includes(p.tipo) && !(p.tipo === 'COMBO' && !menu.conCombos) && disponible(p) > 0 && !(menu.conAgotados && p.agotado_hoy) && ((p.nombre_producto || '').toLowerCase().includes(lower) || (p.codigo || '').toLowerCase().includes(lower)));
       if (menu.conCategorias) {
         // Con categorías el catálogo sigue el orden del menú (y se puede filtrar por categoría).
         return ordenarProductos(deCategoria(filtered, categoriaSel, menu.categorias), menu.categorias);
@@ -245,14 +247,14 @@ const Ventas = () => {
       let filtered = servicios.filter(s => (s.nombre || '').toLowerCase().includes(lower));
       return filtered.sort((a,b) => (freq.sFreq[b.id] || 0) - (freq.sFreq[a.id] || 0));
     }
-  }, [activeTab, itemSearch, productos, servicios, freq, menu.conAgotados, menu.conCategorias, menu.categorias, categoriaSel]);
+  }, [activeTab, itemSearch, productos, servicios, freq, menu.conCombos, menu.conAgotados, menu.conCategorias, menu.categorias, categoriaSel]);
 
   // Pestañas de categorías: las que tienen algo vendible ahora.
   const chipsCategorias = useMemo(() => {
     if (!menu.conCategorias) return [];
-    const vendibles = productos.filter((p) => !['INSUMO', 'PREPARACION'].includes(p.tipo) && disponible(p) > 0 && !(menu.conAgotados && p.agotado_hoy));
+    const vendibles = productos.filter((p) => !['INSUMO', 'PREPARACION'].includes(p.tipo) && !(p.tipo === 'COMBO' && !menu.conCombos) && disponible(p) > 0 && !(menu.conAgotados && p.agotado_hoy));
     return categoriasConProductos(vendibles, menu.categorias);
-  }, [productos, menu.conCategorias, menu.conAgotados, menu.categorias]);
+  }, [productos, menu.conCategorias, menu.conCombos, menu.conAgotados, menu.categorias]);
 
   const crearCliente = useMutation({
     mutationFn: (data) => api.post('/clientes', data),
@@ -281,7 +283,7 @@ const Ventas = () => {
   const [modsSel, setModsSel] = useState([]); // ids de modificadores marcados
 
   const seleccionarItem = (item, type) => {
-    if (type === 'P' && item.tipo === 'RECETA' && modificadores.length > 0) {
+    if (type === 'P' && item.tipo === 'RECETA' && hayOferta(item, modificadores, menu.grupos)) {
       setModsSel([]);
       setPersonalizar(item);
       return;
@@ -1229,27 +1231,13 @@ const Ventas = () => {
       <Modal open={!!personalizar} onClose={() => setPersonalizar(null)} elevated title={personalizar ? `Personalizar ${personalizar.nombre_producto}` : ''} size="md">
         <div className="space-y-3">
           <p className="text-sm text-slate-500">Marca los extras o lo que se quita. Cada combinación queda como una línea aparte.</p>
-          <ul className="space-y-2 max-h-72 overflow-y-auto">
-            {modificadores.map((m) => {
-              const marcado = modsSel.includes(m.id);
-              return (
-                <li key={m.id}>
-                  <label className={`flex items-center gap-3 rounded-xl border p-3 cursor-pointer transition-colors focus-within:ring-2 focus-within:ring-brand-600 ${marcado ? 'bg-brand-50 border-brand-200' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
-                    <input
-                      type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"
-                      checked={marcado}
-                      onChange={() => setModsSel((prev) => (marcado ? prev.filter((id) => id !== m.id) : [...prev, m.id]))}
-                    />
-                    <span className="flex-1 text-sm font-medium text-slate-800">{m.nombre}</span>
-                    <span className="text-xs font-semibold text-slate-600">{Number(m.precio_extra) > 0 ? `+${formatCOP(m.precio_extra)}` : 'Sin costo'}</span>
-                  </label>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="max-h-72 overflow-y-auto pr-1">
+            <SelectorModificadores plato={personalizar || {}} modificadores={modificadores} grupos={menu.grupos} valor={modsSel} onChange={setModsSel} />
+          </div>
+          {personalizar && faltaElegir(personalizar, modificadores, menu.grupos, modsSel) && <p role="status" className="text-sm font-medium text-amber-800">{faltaElegir(personalizar, modificadores, menu.grupos, modsSel)}</p>}
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" className="btn-secondary" onClick={() => setPersonalizar(null)}>Cancelar</button>
-            <button type="button" className="btn-primary px-6" onClick={confirmarPersonalizado}>Agregar al carrito</button>
+            <button type="button" className="btn-primary px-6" disabled={!!(personalizar && faltaElegir(personalizar, modificadores, menu.grupos, modsSel))} onClick={confirmarPersonalizado}>Agregar al carrito</button>
           </div>
         </div>
       </Modal>

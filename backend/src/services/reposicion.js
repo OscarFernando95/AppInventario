@@ -53,6 +53,7 @@ function analizarProductos(productos) {
   const resultado = new Map();
 
   for (const p of productos) {
+    if (p.tipo === 'COMBO') continue; // se calcula al final: depende de la disponibilidad de sus componentes
     let disponible;
     let consumo = null;
     if (TIPOS_CON_RECETA.includes(p.tipo)) {
@@ -64,6 +65,13 @@ function analizarProductos(productos) {
     }
     const estado = estadoStock(disponible, p.stock_minimo);
     resultado.set(p.id, { disponible, estado, alerta: Number(p.stock_minimo) > 0 && estado !== 'OK', consumo });
+  }
+  // Un combo está disponible mientras haya de TODOS sus componentes: los que se pueden armar con el más escaso.
+  for (const p of productos.filter((x) => x.tipo === 'COMBO')) {
+    const partes = p.combo || [];
+    const disponible = partes.length === 0 ? 0 : Math.max(0, Math.floor(Math.min(...partes.map((c) => (resultado.get(c.productoId)?.disponible ?? 0) / Number(c.cantidad))) + 1e-9));
+    // Un combo no se repone ni alerta: no tiene stock propio (se reponen sus ingredientes).
+    resultado.set(p.id, { disponible, estado: estadoStock(disponible, 0), alerta: false, consumo: null });
   }
   return resultado;
 }
@@ -103,7 +111,7 @@ function calcularReposicion(productos, analisis = analizarProductos(productos)) 
 
   const sugerencias = [];
   for (const p of productos) {
-    if (TIPOS_CON_RECETA.includes(p.tipo)) continue;
+    if (TIPOS_CON_RECETA.includes(p.tipo) || p.tipo === 'COMBO') continue;
     const stock = Number(p.stock_actual);
     const a = analisis.get(p.id);
     const objetivoPropio = a.alerta ? objetivoDe(p) : 0;

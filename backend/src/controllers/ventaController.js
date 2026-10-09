@@ -55,7 +55,7 @@ exports.getVentaById = async (req, res) => {
 exports.createVenta = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    const { venta, calc, clienteNombre, aCredito, diasCredito, numItems } = await registrarVenta(req, t, req.body);
+    const { venta, calc, clienteNombre, aCredito, diasCredito, numItems } = await registrarVenta(req, t, req.body, { exigirGrupos: true });
     await t.commit();
     invalidateDashboard(req.empresaId);
     invalidateInforme(req.empresaId);

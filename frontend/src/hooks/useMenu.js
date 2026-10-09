@@ -11,7 +11,10 @@ export function useMenu() {
   const conFotos = opcion('menu_fotos');
   const conAgotados = opcion('agotados_manuales');
   const conOfertas = opcion('precios_horario');
+  const conGrupos = opcion('modificadores_grupos');
+  const conCombos = opcion('combos');
   const { data: categorias = [] } = useEmpresaQuery(['menu', 'categorias'], '/menu/categorias', { enabled: conCategorias });
   const { data: imagenes = {} } = useEmpresaQuery(['menu', 'imagenes'], '/menu/imagenes', { enabled: conFotos, staleTime: 5 * 60_000 });
-  return { conCategorias, conFotos, conAgotados, conOfertas, categorias, imagenes };
+  const { data: grupos = [] } = useEmpresaQuery(['menu', 'grupos'], '/menu/grupos', { enabled: conGrupos });
+  return { conCategorias, conFotos, conAgotados, conOfertas, conGrupos, conCombos, categorias, imagenes, grupos };
 }

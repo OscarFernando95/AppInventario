@@ -35,6 +35,7 @@ const Tarjeta = ({ comanda, ahora, onEstado, onImprimir, ocupado }) => {
         {comanda.items.map((i) => (
           <li key={i.id} className={i.anulado || cancelada ? 'line-through opacity-60' : ''}>
             <p className="text-lg font-bold text-slate-900 leading-tight">{formatCantidad(i.cantidad)} × {i.nombre}{i.comensal ? <span className="ml-2 text-xs font-bold bg-slate-800 text-white rounded px-1.5 py-0.5 align-middle no-underline inline-block">P{i.comensal}</span> : null}{i.anulado && <span className="ml-2 text-[10px] font-bold border border-slate-700 rounded px-1 no-underline inline-block">ANULADO</span>}</p>
+            {(i.componentes || []).map((c) => <p key={c.nombre} className="text-sm text-slate-700 pl-6">• {formatCantidad(c.cantidad)} {c.nombre}</p>)}
             {i.modificadores.map((m) => <p key={m} className="text-sm text-slate-700 pl-6">+ {m}</p>)}
             {i.nota && <p className="text-sm font-bold text-amber-800 pl-6">» {i.nota}</p>}
           </li>

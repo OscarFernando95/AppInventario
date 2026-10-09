@@ -2,14 +2,18 @@
 
 const { Op } = require('sequelize');
 const {
-  Cuenta, CuentaItem, Comanda, Mesa, Producto, Servicio, Modificador, Usuario, Venta,
+  Cuenta, CuentaItem, Comanda, Mesa, Producto, Servicio, Modificador, Usuario, Venta, ComboItem,
 } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { registrarVenta } = require('./ventaService');
 const { precioDeItem, repartirItems, totalesDeCuenta, totalesPorComensal, redondear3 } = require('./cuentas');
 
 const INCLUDE_ITEM = [
-  { model: Producto, as: 'producto', attributes: ['id', 'nombre_producto', 'codigo', 'tipo', 'precio_unitario', 'porcentaje_iva', 'unidad_medida', 'estacion'] },
+  {
+    model: Producto, as: 'producto', attributes: ['id', 'nombre_producto', 'codigo', 'tipo', 'precio_unitario', 'porcentaje_iva', 'unidad_medida', 'estacion'],
+    // De qué se compone un combo (para mostrarlo en la cuenta y en la comanda).
+    include: [{ model: ComboItem, as: 'combo', required: false, attributes: ['cantidad'], include: [{ model: Producto, as: 'componente', attributes: ['nombre_producto'] }] }],
+  },
   { model: Servicio, as: 'servicio', attributes: ['id', 'nombre', 'precio', 'porcentaje_iva'] },
 ];
 
@@ -42,6 +46,7 @@ function itemJson(item, modsPorId) {
     precio_lista: j.producto ? Number(j.producto.precio_unitario) : (j.servicio ? Number(j.servicio.precio) : null),
     subtotal: Math.round(Number(j.cantidad) * precio * 100) / 100,
     modificadores: modsDetalle,
+    componentes: j.producto?.tipo === 'COMBO' ? (j.producto.combo || []).map((c) => ({ nombre: c.componente?.nombre_producto, cantidad: Number(c.cantidad) })) : [],
     nota: j.nota,
     comensal: j.comensal,
     estacion: j.producto ? j.producto.estacion : null,
@@ -131,7 +136,7 @@ async function detalleDeComanda(empresaId, comandaId, transaction) {
 function comandaJson(comanda, mods) {
   const items = comanda.items.map((i) => {
     const j = itemJson(i, mods);
-    return { id: j.id, nombre: j.nombre, cantidad: j.cantidad, modificadores: j.modificadores.map((m) => m.nombre), nota: j.nota, comensal: j.comensal, anulado: j.estado === 'ANULADO' };
+    return { id: j.id, nombre: j.nombre, cantidad: j.cantidad, modificadores: j.modificadores.map((m) => m.nombre), componentes: j.componentes, nota: j.nota, comensal: j.comensal, anulado: j.estado === 'ANULADO' };
   });
   return {
     id: comanda.id,

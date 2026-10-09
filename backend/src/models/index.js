@@ -39,6 +39,9 @@ const Comanda = require('./Comanda');
 const Reserva = require('./Reserva');
 const CategoriaMenu = require('./CategoriaMenu');
 const PrecioHorario = require('./PrecioHorario');
+const GrupoModificador = require('./GrupoModificador');
+const ProductoGrupo = require('./ProductoGrupo');
+const ComboItem = require('./ComboItem');
 const PropinaReparto = require('./PropinaReparto');
 const Modificador = require('./Modificador');
 const ModificadorItem = require('./ModificadorItem');
@@ -213,6 +216,17 @@ Producto.belongsTo(CategoriaMenu, { foreignKey: 'categoriaId', as: 'categoria' }
 Empresa.hasMany(PrecioHorario, { foreignKey: 'empresaId' });
 PrecioHorario.belongsTo(Empresa, { foreignKey: 'empresaId' });
 
+// Grupos de modificadores y combos.
+Empresa.hasMany(GrupoModificador, { foreignKey: 'empresaId' });
+GrupoModificador.belongsTo(Empresa, { foreignKey: 'empresaId' });
+GrupoModificador.hasMany(Modificador, { foreignKey: 'grupoId', as: 'modificadores' });
+Modificador.belongsTo(GrupoModificador, { foreignKey: 'grupoId', as: 'grupo' });
+GrupoModificador.belongsToMany(Producto, { through: ProductoGrupo, foreignKey: 'grupoId', otherKey: 'productoId', as: 'platos' });
+Producto.belongsToMany(GrupoModificador, { through: ProductoGrupo, foreignKey: 'productoId', otherKey: 'grupoId', as: 'grupos' });
+Producto.hasMany(ComboItem, { foreignKey: 'comboId', as: 'combo' });
+ComboItem.belongsTo(Producto, { foreignKey: 'comboId', as: 'comboProducto' });
+ComboItem.belongsTo(Producto, { foreignKey: 'productoId', as: 'componente' });
+
 // Modificadores de platos.
 Empresa.hasMany(Modificador, { foreignKey: 'empresaId' });
 Modificador.belongsTo(Empresa, { foreignKey: 'empresaId' });
@@ -230,5 +244,5 @@ LogEvento.belongsTo(Empresa, { foreignKey: 'empresaId' });
 module.exports = {
   sequelize, Empresa, Role, Usuario, Modulo, Departamento, Municipio, ActividadCiiu, Sesion,
   Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle,
-  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle, RolEmpresa, UsuarioEmpresa, Produccion, Mesa, Cuenta, CuentaItem, Comanda, Reserva, PropinaReparto, CategoriaMenu, PrecioHorario,
+  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle, RolEmpresa, UsuarioEmpresa, Produccion, Mesa, Cuenta, CuentaItem, Comanda, Reserva, PropinaReparto, CategoriaMenu, PrecioHorario, GrupoModificador, ProductoGrupo, ComboItem,
 };

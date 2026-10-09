@@ -6,7 +6,7 @@ const { requireOpcion } = require('../middlewares/opciones');
 const asyncHandler = require('../middlewares/asyncHandler');
 const validate = require('../middlewares/validate');
 const { z, idParam } = require('../schemas/common');
-const { categoria, categoriaUpdate, categoriasOrden, agotado, precioHorario, precioHorarioUpdate } = require('../schemas/menuSchemas');
+const { categoria, categoriaUpdate, categoriasOrden, agotado, precioHorario, precioHorarioUpdate, grupo, grupoUpdate } = require('../schemas/menuSchemas');
 
 router.use(verifyToken);
 router.use((req, res, next) => {
@@ -41,5 +41,11 @@ router.get('/precios-horario', requireOpcion('precios_horario'), asyncHandler(me
 router.post('/precios-horario', requireOpcion('precios_horario'), requirePermiso('menu.gestionar'), validate({ body: precioHorario }), asyncHandler(menuController.createPrecioHorario));
 router.put('/precios-horario/:id', requireOpcion('precios_horario'), requirePermiso('menu.gestionar'), validate({ params: idParam, body: precioHorarioUpdate }), asyncHandler(menuController.updatePrecioHorario));
 router.delete('/precios-horario/:id', requireOpcion('precios_horario'), requirePermiso('menu.gestionar'), validate({ params: idParam }), asyncHandler(menuController.deletePrecioHorario));
+
+// Grupos de modificadores
+router.get('/grupos', requireOpcion('modificadores_grupos'), asyncHandler(menuController.getGrupos));
+router.post('/grupos', requireOpcion('modificadores_grupos'), requirePermiso('menu.gestionar'), validate({ body: grupo }), asyncHandler(menuController.createGrupo));
+router.put('/grupos/:id', requireOpcion('modificadores_grupos'), requirePermiso('menu.gestionar'), validate({ params: idParam, body: grupoUpdate }), asyncHandler(menuController.updateGrupo));
+router.delete('/grupos/:id', requireOpcion('modificadores_grupos'), requirePermiso('menu.gestionar'), validate({ params: idParam }), asyncHandler(menuController.deleteGrupo));
 
 module.exports = router;

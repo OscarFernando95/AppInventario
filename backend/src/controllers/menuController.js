@@ -114,3 +114,71 @@ exports.deletePrecioHorario = async (req, res) => {
   auditar(req, 'precio_horario_eliminado', { reglaId: regla.id, nombre: regla.nombre });
   res.json({ ok: true });
 };
+
+// ── Grupos de modificadores ─────────────────────────────────────────────────────────────────
+const { GrupoModificador, ProductoGrupo, Modificador } = require('../models');
+
+const GRUPO_INCLUDE = [{ model: Producto, as: 'platos', attributes: ['id'], through: { attributes: [] } }];
+const grupoJson = (g) => ({ ...g.toJSON(), platos: undefined, productoIds: g.platos.map((p) => p.id) });
+
+exports.getGrupos = async (req, res) => {
+  const grupos = await GrupoModificador.findAll({ where: { empresaId: req.empresaId }, include: GRUPO_INCLUDE, order: [['orden', 'ASC'], ['nombre', 'ASC']] });
+  res.json(grupos.map(grupoJson));
+};
+
+/** Los platos del grupo deben ser de la empresa y ser platos (RECETA). */
+async function validarPlatos(req, ids = [], t) {
+  if (!ids.length) return;
+  const n = await Producto.count({ where: { id: ids, empresaId: req.empresaId, tipo: 'RECETA' }, transaction: t });
+  if (n !== new Set(ids).size) throw new ValidationError('Uno de los platos del grupo no existe o no es un plato.');
+}
+
+exports.createGrupo = async (req, res) => {
+  const { productoIds, ...datos } = req.body;
+  try {
+    const id = await sequelize.transaction(async (t) => {
+      await validarPlatos(req, productoIds, t);
+      const max = await GrupoModificador.max('orden', { where: { empresaId: req.empresaId }, transaction: t });
+      const g = await GrupoModificador.create({ ...datos, orden: datos.orden ?? ((max ?? -1) + 1), empresaId: req.empresaId }, { transaction: t });
+      if (productoIds?.length) await ProductoGrupo.bulkCreate([...new Set(productoIds)].map((p) => ({ productoId: p, grupoId: g.id })), { transaction: t });
+      return g.id;
+    });
+    auditar(req, 'grupo_modificadores_creado', { grupoId: id, nombre: datos.nombre, obligatorio: !!datos.obligatorio });
+    res.status(201).json(grupoJson(await GrupoModificador.findByPk(id, { include: GRUPO_INCLUDE })));
+  } catch (err) {
+    throw traducirDuplicado(err, 'un grupo');
+  }
+};
+
+exports.updateGrupo = async (req, res) => {
+  const { productoIds, ...datos } = req.body;
+  try {
+    const ok = await sequelize.transaction(async (t) => {
+      const g = await GrupoModificador.findOne({ where: { id: req.params.id, empresaId: req.empresaId }, transaction: t, lock: t.LOCK.UPDATE });
+      if (!g) return false;
+      if (productoIds) await validarPlatos(req, productoIds, t);
+      await g.update(datos, { transaction: t });
+      if (productoIds) {
+        await ProductoGrupo.destroy({ where: { grupoId: g.id }, transaction: t });
+        if (productoIds.length) await ProductoGrupo.bulkCreate([...new Set(productoIds)].map((p) => ({ productoId: p, grupoId: g.id })), { transaction: t });
+      }
+      return true;
+    });
+    if (!ok) return res.status(404).json({ error: 'Grupo no encontrado' });
+    const g = await GrupoModificador.findByPk(req.params.id, { include: GRUPO_INCLUDE });
+    auditar(req, 'grupo_modificadores_actualizado', { grupoId: g.id, nombre: g.nombre, activo: g.activo });
+    res.json(grupoJson(g));
+  } catch (err) {
+    throw traducirDuplicado(err, 'un grupo');
+  }
+};
+
+/** Se elimina el grupo; sus modificadores quedan como extras sueltos. */
+exports.deleteGrupo = async (req, res) => {
+  const g = await GrupoModificador.findOne({ where: { id: req.params.id, empresaId: req.empresaId } });
+  if (!g) return res.status(404).json({ error: 'Grupo no encontrado' });
+  await Modificador.update({ grupoId: null }, { where: { grupoId: g.id } });
+  await g.destroy();
+  auditar(req, 'grupo_modificadores_eliminado', { grupoId: g.id, nombre: g.nombre });
+  res.json({ ok: true });
+};

@@ -18,9 +18,11 @@
  * solo para RECETA y PREPARACION; cualquier otro id es un ingrediente base.
  */
 
-const TIPOS_PRODUCTO = ['VENTA', 'INSUMO', 'PREPARACION', 'RECETA'];
+const TIPOS_PRODUCTO = ['VENTA', 'INSUMO', 'PREPARACION', 'RECETA', 'COMBO'];
 /** Tipos que tienen receta (y por tanto no llevan stock propio). */
 const TIPOS_CON_RECETA = ['RECETA', 'PREPARACION'];
+/** Tipos que no se compran ni se piden a proveedores: platos, preparaciones y combos (se compran sus ingredientes). */
+const TIPOS_NO_COMPRABLES = ['RECETA', 'PREPARACION', 'COMBO'];
 /** Tipos que no se pueden vender directamente en el POS. */
 const TIPOS_NO_VENDIBLES = ['INSUMO', 'PREPARACION'];
 
@@ -113,6 +115,6 @@ function porcionesDisponibles(consumo, stockPorId) {
 }
 
 module.exports = {
-  TIPOS_PRODUCTO, TIPOS_CON_RECETA, TIPOS_NO_VENDIBLES,
+  TIPOS_PRODUCTO, TIPOS_CON_RECETA, TIPOS_NO_VENDIBLES, TIPOS_NO_COMPRABLES,
   esPorLotes, redondear3, construirMapaRecetas, consumoBase, consumoConModificadores, costoDeConsumo, porcionesDisponibles,
 };

@@ -8,6 +8,7 @@ const Modificador = sequelize.define('Modificador', {
   empresaId: { type: DataTypes.INTEGER, allowNull: false },
   nombre: { type: DataTypes.STRING(100), allowNull: false },
   precio_extra: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0 },
+  grupoId: { type: DataTypes.INTEGER, allowNull: true }, // grupo al que pertenece (vacío = extra suelto)
   activo: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
 }, {
   tableName: 'modificadores',

@@ -12,6 +12,7 @@ const stockInicial = z.coerce.number().min(0).max(9_999_999).transform(redondear
 const cantidadReceta = z.coerce.number().positive().max(9_999_999).transform(redondear3);
 
 const recetaItem = z.object({ insumoId: idRef, cantidad: cantidadReceta });
+const comboItem = z.object({ productoId: idRef, cantidad: cantidadReceta });
 
 const producto = z.object({
   codigo: z.string().trim().min(1).max(100),
@@ -49,6 +50,8 @@ const producto = z.object({
   tipo: z.enum(TIPOS_PRODUCTO, { error: 'Tipo de producto no válido.' }).optional(),
   // Ingredientes de un plato o preparación (solo con tipo RECETA / PREPARACION).
   receta: z.array(recetaItem).max(60).optional(),
+  // Componentes de un combo (solo con tipo COMBO): platos o productos de venta con su cantidad.
+  combo: z.array(comboItem).max(20).optional(),
 });
 // En update no se toca el stock (lo mueven compras/ventas).
 const productoUpdate = producto.partial().omit({ stock_actual: true });
