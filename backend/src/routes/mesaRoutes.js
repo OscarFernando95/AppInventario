@@ -5,7 +5,7 @@ const { verifyToken, requireModulo, requirePermiso } = require('../middlewares/a
 const { requireOpcion } = require('../middlewares/opciones');
 const asyncHandler = require('../middlewares/asyncHandler');
 const validate = require('../middlewares/validate');
-const { idParam, mesa, mesaUpdate, mesaConfig, mesaPesos, mesaPlano } = require('../schemas/mesaSchemas');
+const { idParam, mesa, mesaUpdate, mesaConfig, mesaPesos, mesaPlano, ocupacionQuery } =require('../schemas/mesaSchemas');
 
 router.use(verifyToken);
 router.use((req, res, next) => {
@@ -16,6 +16,7 @@ router.use((req, res, next) => {
 router.use(requireModulo('Mesas'));
 
 router.get('/', asyncHandler(mesaController.getMesas));
+router.get('/ocupacion', requireOpcion('tiempo_ocupacion'), validate({ query: ocupacionQuery }), asyncHandler(mesaController.getOcupacion));
 router.post('/', requirePermiso('mesas.gestionar'), validate({ body: mesa }), asyncHandler(mesaController.createMesa));
 router.put('/config', requirePermiso('mesas.gestionar'), validate({ body: mesaConfig }), asyncHandler(mesaController.updateConfig));
 router.put('/propinas/pesos', requirePermiso('mesas.gestionar'), validate({ body: mesaPesos }), asyncHandler(mesaController.updatePesos));

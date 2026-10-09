@@ -1,10 +1,14 @@
 'use strict';
 
 const { Op } = require('sequelize');
-const { sequelize, Mesa, Cuenta, Empresa, Reserva, Producto, UsuarioEmpresa } = require('../models');
+const { sequelize, Mesa, Cuenta, Empresa, Reserva, Producto, UsuarioEmpresa, MesaBloqueo } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { auditar } = require('../utils/audit');
+const { buildListWhere } = require('../utils/listFilters');
 const { cuentasAbiertas } = require('../services/cuentaService');
+const { opcionesDe } = require('../middlewares/opciones');
+const { HORAS_AVISO, bloqueoParaTablero } = require('../services/bloqueos');
+const { rangoOcupacion, calcularOcupacion } = require('../services/ocupacion');
 
 /** Un nombre repetido (índice único por empresa) se traduce a un 400 legible. */
 function traducirDuplicado(err) {
@@ -30,10 +34,54 @@ exports.getMesas = async (req, res) => {
     Empresa.findByPk(req.empresaId, { attributes: ['propina_sugerida_pct', 'estaciones'] }),
   ]);
   const porMesa = new Map(abiertas.filter((c) => c.mesaId).map((c) => [c.mesaId, c]));
+  // Con «Bloqueo de mesas» encendido, cada mesa trae su bloqueo vigente (o el que empieza en menos de 3 h). Apagado: sin la clave.
+  let bloqueoPorMesa = null;
+  if ((await opcionesDe(req)).bloqueo_mesas) {
+    const bloqueos = await MesaBloqueo.findAll({
+      where: { empresaId: req.empresaId, activo: true, hasta: { [Op.gt]: new Date(ahora) }, desde: { [Op.lte]: new Date(ahora + HORAS_AVISO * 3_600_000) } },
+    });
+    const agrupados = new Map();
+    for (const b of bloqueos) agrupados.set(b.mesaId, [...(agrupados.get(b.mesaId) || []), b]);
+    bloqueoPorMesa = new Map([...agrupados].map(([mesaId, lista]) => [mesaId, bloqueoParaTablero(lista, ahora)]));
+  }
   res.json({
     config: { propina_sugerida_pct: Number(empresa?.propina_sugerida_pct ?? 10), estaciones: empresa?.estaciones?.length ? empresa.estaciones : ['Cocina'] },
-    mesas: mesas.map((m) => ({ ...m.toJSON(), cuenta: porMesa.get(m.id) || null, reserva: reservaPorMesa.get(m.id) || null })),
+    mesas: mesas.map((m) => ({
+      ...m.toJSON(), cuenta: porMesa.get(m.id) || null, reserva: reservaPorMesa.get(m.id) || null,
+      ...(bloqueoPorMesa ? { bloqueo: bloqueoPorMesa.get(m.id) || null } : {}),
+    })),
     sin_mesa: abiertas.filter((c) => !c.mesaId),
+  });
+};
+
+/**
+ * Tiempo de ocupación: con las cuentas COBRADAS de mesa del rango (por omisión los últimos 30 días), cuánto dura cada mesa
+ * ocupada, cuántas veces rota por día y a qué horas llega la gente. Las fechas son en hora local, como los demás listados.
+ */
+exports.getOcupacion = async (req, res) => {
+  let rango;
+  try {
+    rango = rangoOcupacion(req.query);
+  } catch (err) {
+    throw new ValidationError(err.message);
+  }
+  const [cuentas, mesas] = await Promise.all([
+    Cuenta.findAll({
+      where: { empresaId: req.empresaId, estado: 'COBRADA', mesaId: { [Op.ne]: null }, ...buildListWhere(rango, { fecha: 'cerrada_en' }) },
+      attributes: ['id', 'mesaId', 'abierta_en', 'cerrada_en'],
+      include: [{ model: Mesa, as: 'mesa', attributes: ['id', 'nombre'] }],
+    }),
+    Mesa.findAll({ where: { empresaId: req.empresaId, activa: true }, attributes: ['id', 'nombre'] }),
+  ]);
+  res.json({
+    desde: rango.desde,
+    hasta: rango.hasta,
+    dias: rango.dias,
+    ...calcularOcupacion({
+      cuentas: cuentas.map((c) => ({ mesaId: c.mesaId, mesaNombre: c.mesa?.nombre, abierta_en: c.abierta_en, cerrada_en: c.cerrada_en })),
+      mesas: mesas.map((m) => ({ id: m.id, nombre: m.nombre })),
+      dias: rango.dias,
+    }),
   });
 };
 

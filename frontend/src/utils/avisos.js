@@ -30,6 +30,11 @@ export function mensajeReserva({ nombre, fecha_hora: fecha, personas, mesa }, em
   return `Hola ${nombre}, te recordamos tu reserva en ${empresa}: ${dia} a las ${hora} para ${personas} ${Number(personas) === 1 ? 'persona' : 'personas'}${mesa ? ` (${mesa})` : ''}. ¡Te esperamos! Si no puedes venir, avísanos por este medio.`;
 }
 
+/** Aviso a quien espera en la lista de espera: ya hay mesa. */
+export function mensajeMesaLista(nombre, empresa) {
+  return `Hola ${nombre}, tu mesa en ${empresa} ya está lista`;
+}
+
 /** Mensaje con las alertas de desviación (faltantes sobre el límite) de un conteo. */
 export function mensajeAlertas(alertas, empresa, umbral) {
   const lineas = alertas.map((a) => `• ${a.nombre_producto}: faltaron ${a.faltante} (${a.desviacion_pct} % de lo que debía gastarse)`);

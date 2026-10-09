@@ -32,6 +32,11 @@ const OPCIONES = [
   { clave: 'precios_horario', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: MENU, etiqueta: 'Precios por horario', descripcion: 'Happy hour y ofertas por día y hora: el precio baja solo mientras la oferta rige.' },
   { clave: 'modificadores_grupos', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: ['Recetas'], etiqueta: 'Grupos de modificadores obligatorios', descripcion: 'Agrupar los extras en grupos (punto de cocción, tipo de leche, tamaño) y exigir que se elija uno antes de pedir el plato.' },
   { clave: 'combos', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: MENU, etiqueta: 'Combos', descripcion: 'Vender varios productos juntos a un precio (café + croissant): descuenta el inventario de cada componente.' },
+  // ── Lista de espera, bloqueos, ocupación y calendario (nuevas: nacen apagadas) ─────────────
+  { clave: 'lista_espera', grupo: 'Mesas', tipo: 'bool', defecto: false, modulos: ['Mesas'], etiqueta: 'Lista de espera', descripcion: 'Anotar a los clientes sin reserva que esperan mesa, avisarles por WhatsApp y sentarlos cuando se libere una.' },
+  { clave: 'bloqueo_mesas', grupo: 'Mesas', tipo: 'bool', defecto: false, modulos: ['Mesas'], etiqueta: 'Bloqueo de mesas', descripcion: 'Sacar una mesa de servicio por un rato (evento, mantenimiento): no se puede abrir cuenta ni reservarla.' },
+  { clave: 'tiempo_ocupacion', grupo: 'Mesas', tipo: 'bool', defecto: false, modulos: ['Mesas'], etiqueta: 'Tiempo de ocupación', descripcion: 'Informe de cuánto dura cada mesa ocupada y cuántas veces rota por día.' },
+  { clave: 'reservas_calendario', grupo: 'Mesas', tipo: 'bool', defecto: false, modulos: ['Mesas'], requiere: ['reservas'], etiqueta: 'Calendario de reservas', descripcion: 'Ver las reservas de cualquier día y de la semana completa, no solo las de hoy.' },
 ];
 
 const POR_CLAVE = new Map(OPCIONES.map((o) => [o.clave, o]));

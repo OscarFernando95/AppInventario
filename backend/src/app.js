@@ -81,6 +81,8 @@ app.use('/api/mesas', require('./routes/mesaRoutes'));
 app.use('/api/cuentas', require('./routes/cuentaRoutes'));
 app.use('/api/reservas', require('./routes/reservaRoutes'));
 app.use('/api/comandas', require('./routes/comandaRoutes'));
+app.use('/api/lista-espera', require('./routes/listaEsperaRoutes'));
+app.use('/api/bloqueos', require('./routes/bloqueoRoutes'));
 app.use('/api/clientes', require('./routes/clienteRoutes'));
 app.use('/api/servicios', require('./routes/servicioRoutes'));
 app.use('/api/pedidos', require('./routes/pedidoRoutes'));

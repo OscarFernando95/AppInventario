@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { BellRing, BellOff, Volume2, X } from 'lucide-react';
 import PageHeader from '../../components/ui/PageHeader';
+import Tabs from '../../components/ui/Tabs';
 import Tablero from '../../components/mesas/Tablero';
+import Ocupacion from '../../components/mesas/Ocupacion';
 import CuentaPanel from '../../components/mesas/CuentaPanel';
 import { useMesasConAviso } from '../../hooks/useAvisoCocina';
+import { useOpciones } from '../../hooks/useOpciones';
 
 /**
  * Mesas y cuentas abiertas: el tablero muestra qué mesas están libres u ocupadas; al abrir una cuenta se
@@ -13,6 +16,10 @@ import { useMesasConAviso } from '../../hooks/useAvisoCocina';
 const Mesas = () => {
   const [cuentaId, setCuentaId] = useState(null);
   const mesas = useMesasConAviso();
+  // «Tiempo de ocupación» (opción): una pestaña con el informe. Apagada, la página es solo el tablero de siempre.
+  const conOcupacion = useOpciones().opcion('tiempo_ocupacion', false);
+  const [pestana, setPestana] = useState('tablero');
+  const verOcupacion = conOcupacion && pestana === 'ocupacion';
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -40,9 +47,12 @@ const Mesas = () => {
           )}
         />
       )}
-      {cuentaId == null
-        ? <Tablero onAbrir={setCuentaId} consulta={mesas} />
-        : <CuentaPanel key={cuentaId} cuentaId={cuentaId} onVolver={() => setCuentaId(null)} tablero={mesas.data} />}
+      {cuentaId == null && conOcupacion && (
+        <Tabs tabs={[{ id: 'tablero', label: 'Tablero' }, { id: 'ocupacion', label: 'Ocupación' }]} value={pestana} onChange={setPestana} />
+      )}
+      {cuentaId != null
+        ? <CuentaPanel key={cuentaId} cuentaId={cuentaId} onVolver={() => setCuentaId(null)} tablero={mesas.data} />
+        : verOcupacion ? <Ocupacion /> : <Tablero onAbrir={setCuentaId} consulta={mesas} />}
     </div>
   );
 };

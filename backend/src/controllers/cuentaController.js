@@ -15,6 +15,7 @@ const { promoVigente } = require('../services/precios');
 const { validarSeleccion } = require('../services/grupos');
 const { cargarGrupos } = require('../services/gruposDb');
 const { fechaISO } = require('../services/lotes');
+const { exigirMesaSinBloqueo } = require('../services/bloqueosDb');
 const { TIPOS_NO_VENDIBLES } = require('../services/recetas');
 const {
   nombreDeCuenta, detalleDeCuenta, cuentasAbiertas, detalleDeComanda, cuentaAbiertaBloqueada, cobrarCuenta,
@@ -53,6 +54,7 @@ exports.abrirCuenta = async (req, res) => {
       if (!mesa || !mesa.activa) throw new ValidationError('Mesa inválida o inactiva.');
       const abierta = await Cuenta.findOne({ where: { mesaId, estado: 'ABIERTA' }, transaction: t });
       if (abierta) throw new ValidationError(`«${mesa.nombre}» ya tiene una cuenta abierta.`);
+      await exigirMesaSinBloqueo(req, mesa, t);
     }
     try {
       const cuenta = await Cuenta.create({
@@ -259,7 +261,8 @@ exports.moverCuenta = async (req, res) => {
     if (await Cuenta.findOne({ where: { mesaId: destino.id, estado: 'ABIERTA' }, transaction: t })) {
       throw new ValidationError(`«${destino.nombre}» ya tiene una cuenta abierta.`);
     }
-    datos = { cuentaId: cuenta.id, desde: nombreDeCuenta(cuenta), hacia: destino.nombre };
+    await exigirMesaSinBloqueo(req, destino, t);
+    datos ={ cuentaId: cuenta.id, desde: nombreDeCuenta(cuenta), hacia: destino.nombre };
     await cuenta.update({ mesaId: destino.id, etiqueta: cuenta.etiqueta }, { transaction: t });
     return true;
   });
