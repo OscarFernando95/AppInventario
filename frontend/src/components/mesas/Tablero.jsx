@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Armchair, ShoppingBag, Plus, Settings2, Users, ChefHat, Clock, Pencil, CalendarClock, Phone, LayoutGrid, Map as MapaIcono, MessageCircle, X, Shapes } from 'lucide-react';
+import { Armchair, ShoppingBag, Plus, Settings2, Users, ChefHat, Clock, Pencil, CalendarClock, Phone, LayoutGrid, Map as MapaIcono, MessageCircle, X, Shapes, Lock } from 'lucide-react';
 import api from '../../api/axios';
 import { formatCOP } from '../../utils/format';
 import { apiError } from '../../utils/apiError';
@@ -10,11 +10,18 @@ import { useAhora, hace } from '../../hooks/useAhora';
 import { useAuthStore } from '../../store/authStore';
 import { useOpciones } from '../../hooks/useOpciones';
 import { enlaceWhatsApp, mensajeReserva } from '../../utils/avisos';
+import { fechaISOLocal, diasDeSemana, horaCorta, cuandoCorto } from '../../utils/calendarioReservas';
 import PlanoEditor, { ASPECTO_PLANO } from './PlanoEditor';
+import ListaEspera from './ListaEspera';
+import BloqueoModal from './BloqueoModal';
+import { BarraCalendario, VistaSemana } from './ReservasCalendario';
 import FormError from '../FormError';
 import Modal, { ModalActions } from '../ui/Modal';
 import Field from '../ui/Field';
 import { TableState } from '../ui/DataState';
+
+/** ¿La mesa está bloqueada ahora mismo? (`bloqueo` solo viene con la opción «Bloqueo de mesas» encendida). */
+const estaBloqueada = (m) => !!m.bloqueo?.vigente;
 
 /** Indicadores de cocina de una cuenta: lo que se pidió y aún no sale. */
 const EstadoCocina = ({ c }) => {
@@ -203,8 +210,15 @@ const Reservas = ({ mesas, onSentada }) => {
   const [formError, setFormError] = useState(null);
   const [sentando, setSentando] = useState(null); // reserva a sentar
   const [mesaSentar, setMesaSentar] = useState('');
+  // «Calendario de reservas» (opción): navegar por días y ver la semana. Apagada, solo las de hoy como siempre.
+  const conCalendario = useOpciones().opcion('reservas_calendario', false);
+  const [dia, setDia] = useState(() => fechaISOLocal());
+  const [vista, setVista] = useState('dia'); // 'dia' | 'semana'
+  const semana = diasDeSemana(dia);
+  const url = !conCalendario ? '/reservas' : vista === 'semana' ? `/reservas?desde=${semana[0]}&hasta=${semana[6]}` : `/reservas?fecha=${dia}`;
+  const esHoy = !conCalendario || dia === fechaISOLocal();
 
-  const { data: reservas = [] } = useEmpresaQuery(['reservas'], '/reservas', { refetchInterval: 30_000 });
+  const { data: reservas = [] } = useEmpresaQuery(['reservas', url], url, { refetchInterval: 30_000 });
   const pendientes = reservas.filter((r) => r.estado === 'PENDIENTE');
   const resto = reservas.filter((r) => r.estado !== 'PENDIENTE');
 
@@ -235,16 +249,19 @@ const Reservas = ({ mesas, onSentada }) => {
     });
   };
   const hora = (v) => new Date(v).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
-  const libres = mesas.filter((m) => !m.cuenta);
+  const libres = mesas.filter((m) => !m.cuenta && !m.bloqueo?.vigente);
 
   return (
-    <section aria-label="Reservas de hoy" className="space-y-3">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-800"><CalendarClock className="w-5 h-5 text-brand-700" aria-hidden="true" /> Reservas de hoy <span className="text-sm font-normal text-slate-500">({pendientes.length} pendientes)</span></h3>
-        <button type="button" className="btn-secondary gap-2" onClick={() => { setFormError(null); setAbierto(true); }}><Plus className="w-4 h-4" aria-hidden="true" /> Nueva reserva</button>
+    <section aria-label={conCalendario ? 'Calendario de reservas' : 'Reservas de hoy'} className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-800"><CalendarClock className="w-5 h-5 text-brand-700" aria-hidden="true" /> {conCalendario ? 'Reservas' : 'Reservas de hoy'} <span className="text-sm font-normal text-slate-500">({pendientes.length} pendientes)</span></h3>
+        <button type="button" className="btn-secondary gap-2" onClick={() => { setFormError(null); if (conCalendario && !form.fecha_hora) setForm((f) => ({ ...f, fecha_hora: `${dia}T20:00` })); setAbierto(true); }}><Plus className="w-4 h-4" aria-hidden="true" /> Nueva reserva</button>
       </div>
-      {reservas.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-slate-300 py-6 text-center text-sm text-slate-500">No hay reservas para hoy.</p>
+      {conCalendario && <BarraCalendario dia={dia} vista={vista} onDia={setDia} onVista={setVista} />}
+      {conCalendario && vista === 'semana' ? (
+        <VistaSemana dia={dia} reservas={reservas} onElegirDia={(d) => { setDia(d); setVista('dia'); }} />
+      ) : reservas.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-slate-300 py-6 text-center text-sm text-slate-500">{esHoy ? 'No hay reservas para hoy.' : 'No hay reservas para este día.'}</p>
       ) : (
         <ul className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white">
           {[...pendientes, ...resto].map((r) => {
@@ -329,9 +346,16 @@ const Tablero = ({ onAbrir, consulta }) => {
   const { opcion } = useOpciones();
   const conReservas = opcion('reservas', true);
   const conPlano = opcion('plano', true);
+  const conListaEspera = opcion('lista_espera', false);
+  const conBloqueo = opcion('bloqueo_mesas', false);
   const ahora = useAhora();
   const qc = useQueryClient();
   const { data, isLoading, isError, error, refetch } = consulta;
+  const [bloqueando, setBloqueando] = useState(false);
+  const desbloquear = useMutation({
+    mutationFn: (id) => api.delete(`/bloqueos/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['empresa'] }),
+  });
   const [nueva, setNueva] = useState(null); // { mesa } | { llevar: true }
   const [datos, setDatos] = useState({ comensales: '', etiqueta: '' });
   const [formError, setFormError] = useState(null);
@@ -378,6 +402,7 @@ const Tablero = ({ onAbrir, consulta }) => {
               );
             })}
           </div>}
+          {conBloqueo && can('mesas.gestionar') && <button type="button" className="btn-secondary gap-2" onClick={() => setBloqueando(true)}><Lock className="w-4 h-4" aria-hidden="true" /> Bloquear mesas</button>}
           {can('mesas.gestionar') && <button type="button" className="btn-secondary gap-2" onClick={() => setConfig(true)}><Settings2 className="w-4 h-4" aria-hidden="true" /> Configurar mesas</button>}
           <button type="button" className="btn-primary gap-2" onClick={() => { setFormError(null); setNueva({ llevar: true }); }}><ShoppingBag className="w-4 h-4" aria-hidden="true" /> Cuenta para llevar</button>
         </div>
@@ -399,15 +424,16 @@ const Tablero = ({ onAbrir, consulta }) => {
             {mesas.filter((m) => m.pos_x != null && m.pos_y != null).map((m) => (
               <button
                 key={m.id} type="button" style={{ left: `${m.pos_x}%`, top: `${m.pos_y}%` }}
-                aria-label={m.cuenta ? `Abrir la cuenta de ${m.nombre}` : `Abrir cuenta en ${m.nombre}`}
+                aria-label={m.cuenta ? `Abrir la cuenta de ${m.nombre}` : estaBloqueada(m) ? `${m.nombre} bloqueada` : `Abrir cuenta en ${m.nombre}`}
+                disabled={!m.cuenta && estaBloqueada(m)}
                 onClick={() => (m.cuenta ? onAbrir(m.cuenta.id) : (setFormError(null), setNueva({ mesa: m })))}
                 className={`absolute -translate-x-1/2 -translate-y-1/2 min-w-24 rounded-xl border-2 px-3 py-2 text-left shadow-sm transition hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
-                  m.cuenta ? 'border-brand-600 bg-brand-50' : m.reserva ? 'border-amber-400 bg-amber-50' : 'border-emerald-300 bg-white'
+                  m.cuenta ? 'border-brand-600 bg-brand-50' : estaBloqueada(m) ? 'border-slate-400 bg-slate-200 cursor-not-allowed' : m.reserva ? 'border-amber-400 bg-amber-50' : 'border-emerald-300 bg-white'
                 }`}
               >
                 <span className="block text-sm font-bold text-slate-800">{m.nombre}</span>
                 <span className="block text-[11px] text-slate-600">
-                  {m.cuenta ? <>{formatCOP(m.cuenta.total)} · {hace(m.cuenta.abierta_en, ahora)}</> : m.reserva ? `Reservada ${new Date(m.reserva.fecha_hora).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}` : 'Libre'}
+                  {m.cuenta ? <>{formatCOP(m.cuenta.total)} · {hace(m.cuenta.abierta_en, ahora)}</> : estaBloqueada(m) ? `Bloqueada hasta ${cuandoCorto(m.bloqueo.hasta)}` : m.reserva ? `Reservada ${new Date(m.reserva.fecha_hora).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}` : 'Libre'}
                 </span>
                 {m.cuenta && <span className="block text-[11px]"><EstadoCocina c={m.cuenta} /></span>}
               </button>
@@ -422,6 +448,15 @@ const Tablero = ({ onAbrir, consulta }) => {
       <div className={`grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 ${conPlano && vista === 'plano' ? 'hidden' : ''}`}>
         {mesas.map((m) => (m.cuenta ? (
           <TarjetaCuenta key={m.id} cuenta={m.cuenta} ahora={ahora} onAbrir={onAbrir} icono={Armchair} titulo={m.nombre} />
+        ) : estaBloqueada(m) ? (
+          <div key={m.id} aria-label={`${m.nombre} bloqueada`} role="group" className="text-left rounded-2xl border border-slate-300 bg-slate-100 p-4">
+            <span className="flex items-center justify-between gap-2">
+              <span className="flex items-center gap-2 font-bold text-slate-700"><Armchair className="w-5 h-5 text-slate-400" aria-hidden="true" />{m.nombre}</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wide bg-slate-600 text-white rounded px-1.5 py-0.5">Bloqueada</span>
+            </span>
+            <p className="mt-3 flex items-start gap-1.5 text-xs font-semibold text-slate-700"><Lock className="w-3.5 h-3.5 shrink-0 mt-0.5" aria-hidden="true" /> <span>Bloqueada hasta {cuandoCorto(m.bloqueo.hasta)}{m.bloqueo.motivo ? ` (${m.bloqueo.motivo})` : ''}</span></p>
+            {can('mesas.gestionar') && <button type="button" className="btn-secondary text-xs mt-3" disabled={desbloquear.isPending} aria-label={`Desbloquear ${m.nombre}`} onClick={() => desbloquear.mutate(m.bloqueo.id)}>Desbloquear</button>}
+          </div>
         ) : (
           <button
             key={m.id} type="button" onClick={() => { setFormError(null); setNueva({ mesa: m }); }} aria-label={`Abrir cuenta en ${m.nombre}`}
@@ -436,7 +471,12 @@ const Tablero = ({ onAbrir, consulta }) => {
                 <CalendarClock className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> Reservada {new Date(m.reserva.fecha_hora).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} · {m.reserva.nombre}
               </span>
             )}
-            <p className={`${m.reserva ? 'mt-2' : 'mt-6'} text-sm text-slate-500`}>{m.capacidad ? `${m.capacidad} puestos · ` : ''}Toca para abrir cuenta</p>
+            {m.bloqueo && !m.bloqueo.vigente && (
+              <span className="mt-3 flex items-center gap-1.5 rounded-lg bg-slate-200 text-slate-800 text-xs font-semibold px-2 py-1">
+                <Lock className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> Se bloquea a las {horaCorta(m.bloqueo.desde)}{m.bloqueo.motivo ? ` · ${m.bloqueo.motivo}` : ''}
+              </span>
+            )}
+            <p className={`${m.reserva || (m.bloqueo && !m.bloqueo.vigente) ? 'mt-2' : 'mt-6'} text-sm text-slate-500`}>{m.capacidad ? `${m.capacidad} puestos · ` : ''}Toca para abrir cuenta</p>
           </button>
         )))}
       </div>
@@ -449,6 +489,8 @@ const Tablero = ({ onAbrir, consulta }) => {
           </div>
         </div>
       )}
+
+      {conListaEspera && <ListaEspera mesas={mesas} onSentada={onAbrir} />}
 
       {conReservas && <Reservas mesas={mesas} onSentada={onAbrir} />}
 
@@ -471,6 +513,7 @@ const Tablero = ({ onAbrir, consulta }) => {
       </Modal>
 
       <ConfigurarMesas abierto={config} onClose={() => setConfig(false)} />
+      {conBloqueo && bloqueando && <BloqueoModal mesas={mesas.filter((m) => m.activa)} onClose={() => setBloqueando(false)} />}
     </div>
   );
 };
