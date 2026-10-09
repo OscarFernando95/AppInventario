@@ -15,13 +15,18 @@ import Field from '../ui/Field';
 /** Propina sugerida: porcentaje del consumo, a los 100 pesos más cercanos. */
 const propinaDe = (base, pct) => Math.round((base * pct) / 100 / 100) * 100;
 
-const OPCIONES_PROPINA = [['0', 'Sin propina'], ['5', '5 %'], ['10', '10 %'], ['OTRO', 'Otro valor']];
+/** Opciones de propina: ninguna, la sugerida por la empresa (si hay) y un valor libre. */
+const opcionesDePropina = (pct) => [
+  ['0', 'Sin propina'],
+  ...(Number(pct) > 0 ? [[String(Number(pct)), `${Number(pct).toLocaleString('es-CO')} %`]] : []),
+  ['OTRO', 'Otro valor'],
+];
 
 /**
  * Cobro de una cuenta: se eligen los ítems (y cuántas unidades) que paga esta persona —dividir la cuenta
  * es cobrar varias veces—, se define cliente, forma de pago y propina voluntaria.
  */
-const CobrarModal = ({ cuenta, onClose, onCobrado }) => {
+const CobrarModal = ({ cuenta, propinaPct = 10, onClose, onCobrado }) => {
   const qc = useQueryClient();
   const modulos = useAuthStore((s) => s.activeEmpresa?.modulos) || [];
   const conCaja = modulos.includes('Caja');
@@ -146,7 +151,7 @@ const CobrarModal = ({ cuenta, onClose, onCobrado }) => {
         <fieldset>
           <legend className="text-sm font-semibold text-slate-700 mb-2">Propina voluntaria</legend>
           <div role="radiogroup" className="flex flex-wrap gap-2 items-center">
-            {OPCIONES_PROPINA.map(([valor, etiqueta]) => (
+            {opcionesDePropina(propinaPct).map(([valor, etiqueta]) => (
               <label key={valor} className={`rounded-xl border px-3 py-2 text-sm cursor-pointer focus-within:ring-2 focus-within:ring-brand-600 ${form.propina === valor ? 'bg-brand-50 border-brand-200 font-semibold' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
                 <input type="radio" className="sr-only" name="propina" checked={form.propina === valor} onChange={() => setForm({ ...form, propina: valor })} />
                 {etiqueta}{valor !== '0' && valor !== 'OTRO' && <span className="text-slate-500 font-normal"> · {formatCOP(propinaDe(neto, Number(valor)))}</span>}

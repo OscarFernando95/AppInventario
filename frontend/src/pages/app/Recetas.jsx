@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { ChefHat, Plus, Trash2, Edit, TrendingUp, Soup, Undo2 } from 'lucide-react';
+import { ChefHat, Plus, Trash2, Edit, TrendingUp, Soup, Undo2, Hourglass, Lightbulb } from 'lucide-react';
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { unidadCorta } from '../../utils/unidades';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
@@ -20,6 +20,14 @@ import TablePagination from '../../components/ui/TablePagination';
 
 const LIMIT_PRODUCCION = 15;
 const fmtFecha = (v) => new Date(v).toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+const fmtDia = (v) => (v ? new Date(`${v}T12:00:00`).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' }) : 'Sin vencimiento');
+const TONO_LOTE = {
+  VIGENTE: 'bg-emerald-100 text-emerald-800',
+  POR_VENCER: 'bg-amber-100 text-amber-800',
+  VENCIDO: 'bg-red-100 text-red-800',
+};
+const TEXTO_LOTE = { VIGENTE: 'Vigente', POR_VENCER: 'Por vencer', VENCIDO: 'Vencido' };
 
 const pct = (n) => `${Number(n).toLocaleString('es-CO', { maximumFractionDigits: 1 })}%`;
 const toneMargen = (p) => (p >= 50 ? 'text-emerald-700' : p >= 20 ? 'text-amber-700' : 'text-red-700');
@@ -295,6 +303,84 @@ const Modificadores = () => {
   );
 };
 
+/* ───────────────────────── Lotes en existencia y sugerencias ───────────────────────── */
+const LotesYSugerencias = ({ onUsar, onDescartar, descartando }) => {
+  const [dias, setDias] = useState('14');
+  const [cobertura, setCobertura] = useState('1');
+  const { data: lotes = [] } = useEmpresaQuery(['produccion', 'lotes'], '/produccion/lotes');
+  const { data: sug } = useEmpresaQuery(['produccion', 'sugerencias', dias, cobertura], async () => (
+    (await api.get('/produccion/sugerencias', { params: { dias: Number(dias) || 14, cobertura: Number(cobertura) || 1 } })).data
+  ));
+  const conExistencias = lotes.filter((p) => p.lotes.length > 0);
+  const sugerencias = (sug?.sugerencias || []).filter((s) => s.consumo_periodo > 0 || s.stock > 0);
+  if (lotes.length === 0) return null;
+
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <section aria-label="Lotes en existencia" className="card-container p-5 space-y-3">
+        <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-800"><Hourglass className="w-5 h-5 text-brand-700" aria-hidden="true" /> Lotes en existencia</h3>
+        {conExistencias.length === 0 ? (
+          <p className="text-sm text-slate-500">No hay preparaciones en existencia.</p>
+        ) : conExistencias.map((p) => (
+          <div key={p.productoId} className="rounded-xl border border-slate-200 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-semibold text-slate-800">{p.nombre_producto} <span className="font-normal text-slate-500">· hay {formatCantidad(p.stock)} {unidadCorta(p.unidad_medida)}</span></p>
+              {p.vencido > 0 && (
+                <button type="button" className="btn-danger text-xs px-3 py-1.5" disabled={descartando} onClick={() => onDescartar(p)}>
+                  Descartar {formatCantidad(p.vencido)} {unidadCorta(p.unidad_medida)} vencidos
+                </button>
+              )}
+            </div>
+            {!p.vida_util_dias && <p className="text-xs text-slate-500 mt-1">Sin vida útil configurada: en Inventario puedes indicar cuántos días dura un lote.</p>}
+            <ul className="mt-2 space-y-1 text-sm">
+              {p.lotes.map((l) => (
+                <li key={l.id} className="flex items-center justify-between gap-2">
+                  <span className="text-slate-700">Lote del {fmtDia(String(l.fecha).slice(0, 10))} · {formatCantidad(l.restante)} {unidadCorta(p.unidad_medida)}</span>
+                  <span className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500">{l.vence_en ? `vence ${fmtDia(l.vence_en)}` : ''}</span>
+                    <span className={`text-[11px] font-semibold rounded px-1.5 py-0.5 ${TONO_LOTE[l.estado]}`}>{TEXTO_LOTE[l.estado]}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </section>
+
+      <section aria-label="Cuánto producir" className="card-container p-5 space-y-3">
+        <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-800"><Lightbulb className="w-5 h-5 text-amber-600" aria-hidden="true" /> Cuánto producir</h3>
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="Promediar ventas de (días)" className="w-44">
+            <input type="number" min="1" max="90" className="input-field" value={dias} onChange={(e) => setDias(e.target.value)} />
+          </Field>
+          <Field label="Tener cubiertos (días)" className="w-44">
+            <input type="number" min="0.25" step="0.25" className="input-field" value={cobertura} onChange={(e) => setCobertura(e.target.value)} />
+          </Field>
+        </div>
+        {sugerencias.length === 0 ? (
+          <p className="text-sm text-slate-500">Aún no hay ventas de platos con preparaciones por lotes en este periodo.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100 text-sm">
+            {sugerencias.map((s) => (
+              <li key={s.productoId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <span className="min-w-0">
+                  <span className="font-medium text-slate-800">{s.nombre_producto}</span>
+                  <span className="block text-xs text-slate-500">Se gasta ~{formatCantidad(s.promedio_diario)} {unidadCorta(s.unidad_medida)} al día · hay {formatCantidad(s.stock)}</span>
+                </span>
+                {s.sugerido > 0 ? (
+                  <button type="button" className="btn-secondary text-xs gap-1" onClick={() => onUsar(s)} aria-label={`Producir ${formatCantidad(s.sugerido)} ${unidadCorta(s.unidad_medida)} de ${s.nombre_producto}`}>
+                    Producir {formatCantidad(s.sugerido)} {unidadCorta(s.unidad_medida)}
+                  </button>
+                ) : <span className="text-xs font-semibold text-emerald-700">Alcanza</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+};
+
 /* ───────────────────────── Producción por lotes ───────────────────────── */
 const Produccion = () => {
   const queryClient = useQueryClient();
@@ -345,6 +431,11 @@ const Produccion = () => {
       setForm((f) => ({ ...f, cantidad: '', motivo: '' }));
     },
     onError: (err) => { setOkMsg(null); setFormError(apiError(err, 'No se pudo registrar la producción')); },
+  });
+  const descartar = useMutation({
+    mutationFn: (p) => api.post('/ajustes', { productoId: p.productoId, tipo: 'VENCIDO', cantidad: p.vencido, motivo: 'Lote vencido (producción por lotes)' }),
+    onSuccess: (_r, p) => { refrescar(); setFormError(null); setOkMsg(`Se descartaron ${formatCantidad(p.vencido)} ${unidadCorta(p.unidad_medida)} vencidos de ${p.nombre_producto}.`); },
+    onError: (err) => { setOkMsg(null); setFormError(apiError(err, 'No se pudo descartar lo vencido')); },
   });
   const anular = useMutation({
     mutationFn: (id) => api.post(`/produccion/${id}/anular`),
@@ -413,6 +504,12 @@ const Produccion = () => {
           </div>
         </form>
       )}
+
+      <LotesYSugerencias
+        onUsar={(s) => { setForm((f) => ({ ...f, productoId: String(s.productoId), cantidad: String(s.sugerido) })); setOkMsg(null); setFormError(null); }}
+        onDescartar={(p) => descartar.mutate(p)}
+        descartando={descartar.isPending}
+      />
 
       <div>
         <h3 className="text-lg font-semibold text-slate-800 mb-3">Historial de producción</h3>

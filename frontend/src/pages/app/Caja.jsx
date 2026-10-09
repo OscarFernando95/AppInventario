@@ -79,6 +79,14 @@ const Caja = () => {
   // Sacar dinero de la caja: retiro, o pago de un gasto en efectivo.
   const [showEgreso, setShowEgreso] = useState(false);
   const [egresoForm, setEgresoForm] = useState({ modo: 'RETIRO', concepto: '', monto: '', categoria: 'SERVICIOS' });
+  // Entrega de propinas: a quién le toca cuánto ({ [usuarioId]: { sel, monto } }).
+  const [reparto, setReparto] = useState({});
+  const { data: personal = [] } = useEmpresaQuery(['caja', 'personal'], '/caja/personal', { enabled: showEgreso && egresoForm.modo === 'PROPINA' });
+  const { data: propinas } = useEmpresaQuery(['caja', 'propinas', periodo], async () => {
+    const params = {};
+    Object.entries(periodo).forEach(([k, v]) => { if (v) params[k] = v; });
+    return (await api.get('/caja/propinas', { params })).data;
+  }, { enabled: veBalance && conMesas });
 
   const {
     data: historial, isLoading, isError, error, refetch,
@@ -118,13 +126,14 @@ const Caja = () => {
   });
 
   const egreso = useMutation({
-    mutationFn: ({ modo, concepto, monto, categoria }) => (modo === 'RETIRO' || modo === 'PROPINA'
-      ? api.post('/caja/retiros', { tipo: modo, concepto, monto })
+    mutationFn: ({ modo, concepto, monto, categoria, reparto: partes }) => (modo === 'RETIRO' || modo === 'PROPINA'
+      ? api.post('/caja/retiros', { tipo: modo, concepto, monto, reparto: partes })
       : api.post('/gastos', { categoria, descripcion: concepto, monto, pagar_desde_caja: true })),
     onSuccess: () => {
       invalidar();
       setShowEgreso(false);
       setEgresoForm({ modo: 'RETIRO', concepto: '', monto: '', categoria: 'SERVICIOS' });
+      setReparto({});
       setFormError(null);
     },
     onError: (err) => setFormError(apiError(err, 'No se pudo registrar el egreso')),
@@ -165,7 +174,29 @@ const Caja = () => {
     setFormError(null);
     if (!egresoForm.concepto.trim()) return setFormError(egresoForm.modo === 'GASTO' ? 'Describe el gasto.' : 'Indica el concepto.');
     if (!(Number(egresoForm.monto) > 0)) return setFormError('El monto debe ser mayor a 0.');
-    egreso.mutate({ ...egresoForm, concepto: egresoForm.concepto.trim(), monto: Number(egresoForm.monto) });
+    let partes;
+    if (egresoForm.modo === 'PROPINA') {
+      partes = Object.entries(reparto).filter(([, r]) => r.sel).map(([id, r]) => ({ usuarioId: Number(id), monto: Number(r.monto) || 0 }));
+      if (partes.length > 0) {
+        if (partes.some((p) => !(p.monto > 0))) return setFormError('Cada persona del reparto necesita un monto mayor a 0.');
+        const suma = Math.round(partes.reduce((a, p) => a + p.monto, 0) * 100) / 100;
+        if (Math.abs(suma - Number(egresoForm.monto)) > 0.01) return setFormError(`El reparto suma ${formatCOP(suma)} y se entregan ${formatCOP(Number(egresoForm.monto))}: deben coincidir.`);
+      } else partes = undefined;
+    }
+    egreso.mutate({ ...egresoForm, concepto: egresoForm.concepto.trim(), monto: Number(egresoForm.monto), reparto: partes });
+  };
+
+  /** Reparte el monto en partes iguales entre quienes están marcados (la última parte absorbe los centavos). */
+  const repartirIgual = () => {
+    const ids = Object.entries(reparto).filter(([, r]) => r.sel).map(([id]) => id);
+    const total = Number(egresoForm.monto) || 0;
+    if (ids.length === 0 || !(total > 0)) return;
+    const parte = Math.floor((total / ids.length) * 100) / 100;
+    setReparto((prev) => {
+      const sig = { ...prev };
+      ids.forEach((id, i) => { sig[id] = { sel: true, monto: String(i === ids.length - 1 ? Math.round((total - parte * (ids.length - 1)) * 100) / 100 : parte) }; });
+      return sig;
+    });
   };
 
   const handleCerrar = (e) => {
@@ -354,6 +385,24 @@ const Caja = () => {
         </section>
       )}
 
+      {veBalance && conMesas && propinas && (propinas.recibidas > 0 || propinas.entregadas > 0) && (
+        <section aria-label="Propinas" className="card-container p-6 space-y-3">
+          <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-800"><HandCoins className="w-5 h-5 text-violet-700" aria-hidden="true" /> Propinas</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3"><p className="text-xs font-semibold uppercase text-slate-500">Recibidas</p><p className="text-lg font-bold text-slate-800">{formatCOP(propinas.recibidas)}</p></div>
+            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3"><p className="text-xs font-semibold uppercase text-slate-500">Entregadas</p><p className="text-lg font-bold text-slate-800">{formatCOP(propinas.entregadas)}</p></div>
+            <div className="rounded-xl bg-slate-50 border border-slate-200 p-3"><p className="text-xs font-semibold uppercase text-slate-500">Entregadas sin repartir</p><p className="text-lg font-bold text-slate-800">{formatCOP(propinas.sin_repartir)}</p></div>
+          </div>
+          {propinas.por_persona.length > 0 && (
+            <ul className="divide-y divide-slate-100 text-sm">
+              {propinas.por_persona.map((p) => (
+                <li key={p.usuarioId} className="flex justify-between py-2"><span className="text-slate-700">{p.nombre} <span className="text-xs text-slate-500">({p.veces} {p.veces === 1 ? 'entrega' : 'entregas'})</span></span><span className="font-semibold">{formatCOP(p.total)}</span></li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
       <div className="flex items-center gap-2 pt-2">
         <History className="w-5 h-5 text-slate-500" aria-hidden="true" />
         <h3 className="text-lg font-semibold text-slate-800">Historial de cajas</h3>
@@ -499,6 +548,40 @@ const Caja = () => {
           <Field label="Monto ($)" required>
             <input type="number" min="0" step="0.01" className="input-field" value={egresoForm.monto} onChange={(e) => setEgresoForm({ ...egresoForm, monto: e.target.value })} />
           </Field>
+          {egresoForm.modo === 'PROPINA' && (
+            <fieldset className="rounded-xl border border-slate-200 p-3 space-y-2">
+              <legend className="px-2 text-sm font-semibold text-brand-800">Repartir entre (opcional)</legend>
+              <ul className="space-y-1.5 max-h-48 overflow-y-auto">
+                {personal.map((p) => {
+                  const r = reparto[p.id] || { sel: false, monto: '' };
+                  return (
+                    <li key={p.id} className="flex items-center gap-2 text-sm">
+                      <label className="flex items-center gap-2 flex-1 min-w-0">
+                        <input
+                          type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"
+                          checked={r.sel} onChange={(e) => setReparto((prev) => ({ ...prev, [p.id]: { ...r, sel: e.target.checked } }))}
+                        />
+                        <span className="truncate">{p.nombre}</span>
+                      </label>
+                      {r.sel && (
+                        <input
+                          type="number" min="0" step="0.01" aria-label={`Parte de ${p.nombre}`} className="input-field w-28 text-right"
+                          value={r.monto} onChange={(e) => setReparto((prev) => ({ ...prev, [p.id]: { ...r, monto: e.target.value } }))}
+                        />
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="flex items-center justify-between gap-2">
+                <button type="button" className="btn-secondary text-xs" onClick={repartirIgual} disabled={!Object.values(reparto).some((r) => r.sel) || !(Number(egresoForm.monto) > 0)}>Dividir en partes iguales</button>
+                <p className="text-xs text-slate-500">
+                  Repartido: {formatCOP(Object.values(reparto).filter((r) => r.sel).reduce((a, r) => a + (Number(r.monto) || 0), 0))} de {formatCOP(Number(egresoForm.monto) || 0)}
+                </p>
+              </div>
+              <p className="text-xs text-slate-500">Si no marcas a nadie, la entrega queda registrada sin reparto.</p>
+            </fieldset>
+          )}
           <ModalActions>
             <button type="button" className="btn-secondary" onClick={() => setShowEgreso(false)}>Cancelar</button>
             <button type="submit" disabled={egreso.isPending} className="btn-primary px-6">{egreso.isPending ? 'Registrando…' : 'Registrar egreso'}</button>

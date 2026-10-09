@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Armchair, ShoppingBag, Plus, Settings2, Users, ChefHat, Clock, Pencil } from 'lucide-react';
+import { Armchair, ShoppingBag, Plus, Settings2, Users, ChefHat, Clock, Pencil, CalendarClock, Phone } from 'lucide-react';
 import api from '../../api/axios';
 import { formatCOP } from '../../utils/format';
 import { apiError } from '../../utils/apiError';
@@ -59,11 +59,24 @@ const ConfigurarMesas = ({ abierto, onClose }) => {
     guardar.mutate({ id: form.id, nombre: form.nombre.trim(), capacidad: form.capacidad === '' ? null : Number(form.capacidad) });
   };
   const mesas = data?.mesas || [];
+  const [propina, setPropina] = useState('');
+  const guardarPropina = useMutation({
+    mutationFn: (pct) => api.put('/mesas/config', { propina_sugerida_pct: pct }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['empresa'] }); setPropina(''); setFormError(null); },
+    onError: (err) => setFormError(apiError(err, 'No se pudo guardar la propina sugerida')),
+  });
+  const pctActual = data?.config?.propina_sugerida_pct;
 
   return (
     <Modal open={abierto} onClose={onClose} title="Configurar mesas" size="lg">
       <div className="space-y-4">
         <FormError message={formError} onDismiss={() => setFormError(null)} />
+        <form onSubmit={(e) => { e.preventDefault(); if (propina !== '') guardarPropina.mutate(Number(propina)); }} className="flex flex-wrap items-end gap-3 rounded-xl bg-slate-50 border border-slate-200 p-3">
+          <Field label="Propina sugerida al cobrar (%)" hint={pctActual > 0 ? `Hoy se sugiere ${pctActual.toLocaleString('es-CO')} %. 0 = no sugerir.` : 'Hoy no se sugiere propina.'} className="w-60">
+            <input type="number" min="0" max="30" step="any" className="input-field" placeholder={pctActual != null ? String(pctActual) : '10'} value={propina} onChange={(e) => setPropina(e.target.value)} />
+          </Field>
+          <button type="submit" className="btn-secondary mb-5" disabled={propina === '' || guardarPropina.isPending}>Guardar</button>
+        </form>
         <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-[1fr_8rem_auto] gap-3 items-end">
           <Field label={form.id ? 'Nombre de la mesa' : 'Nueva mesa'}>
             <input className="input-field" maxLength={60} placeholder="Mesa 1, Terraza 2, Barra…" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} />
@@ -103,12 +116,133 @@ const ConfigurarMesas = ({ abierto, onClose }) => {
   );
 };
 
+/** Reservas del día: quién viene, cuántos y a qué hora; al llegar se sientan (abren la cuenta). */
+const Reservas = ({ mesas, onSentada }) => {
+  const qc = useQueryClient();
+  const ahora = useAhora();
+  const [abierto, setAbierto] = useState(false);
+  const [form, setForm] = useState({ nombre: '', telefono: '', personas: '2', fecha_hora: '', mesaId: '', nota: '' });
+  const [formError, setFormError] = useState(null);
+  const [sentando, setSentando] = useState(null); // reserva a sentar
+  const [mesaSentar, setMesaSentar] = useState('');
+
+  const { data: reservas = [] } = useEmpresaQuery(['reservas'], '/reservas', { refetchInterval: 30_000 });
+  const pendientes = reservas.filter((r) => r.estado === 'PENDIENTE');
+  const resto = reservas.filter((r) => r.estado !== 'PENDIENTE');
+
+  const refrescar = () => qc.invalidateQueries({ queryKey: ['empresa'] });
+  const crear = useMutation({
+    mutationFn: (payload) => api.post('/reservas', payload),
+    onSuccess: () => { refrescar(); setAbierto(false); setFormError(null); setForm({ nombre: '', telefono: '', personas: '2', fecha_hora: '', mesaId: '', nota: '' }); },
+    onError: (err) => setFormError(apiError(err, 'No se pudo guardar la reserva')),
+  });
+  const cambiar = useMutation({
+    mutationFn: ({ id, estado }) => api.patch(`/reservas/${id}`, { estado }),
+    onSuccess: refrescar,
+  });
+  const sentar = useMutation({
+    mutationFn: ({ id, mesaId }) => api.post(`/reservas/${id}/sentar`, { mesaId: mesaId || undefined }),
+    onSuccess: (res) => { refrescar(); setSentando(null); onSentada(res.data.id); },
+    onError: (err) => setFormError(apiError(err, 'No se pudo sentar la reserva')),
+  });
+
+  const handleCrear = (e) => {
+    e.preventDefault();
+    setFormError(null);
+    if (!form.nombre.trim()) return setFormError('Indica el nombre de quien reserva.');
+    if (!form.fecha_hora) return setFormError('Indica el día y la hora.');
+    crear.mutate({
+      nombre: form.nombre.trim(), telefono: form.telefono.trim() || undefined, personas: Number(form.personas) || 1,
+      fecha_hora: new Date(form.fecha_hora).toISOString(), mesaId: form.mesaId ? Number(form.mesaId) : undefined, nota: form.nota.trim() || undefined,
+    });
+  };
+  const hora = (v) => new Date(v).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
+  const libres = mesas.filter((m) => !m.cuenta);
+
+  return (
+    <section aria-label="Reservas de hoy" className="space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-800"><CalendarClock className="w-5 h-5 text-brand-700" aria-hidden="true" /> Reservas de hoy <span className="text-sm font-normal text-slate-500">({pendientes.length} pendientes)</span></h3>
+        <button type="button" className="btn-secondary gap-2" onClick={() => { setFormError(null); setAbierto(true); }}><Plus className="w-4 h-4" aria-hidden="true" /> Nueva reserva</button>
+      </div>
+      {reservas.length === 0 ? (
+        <p className="rounded-2xl border border-dashed border-slate-300 py-6 text-center text-sm text-slate-500">No hay reservas para hoy.</p>
+      ) : (
+        <ul className="divide-y divide-slate-100 rounded-2xl border border-slate-200 bg-white">
+          {[...pendientes, ...resto].map((r) => {
+            const tarde = r.estado === 'PENDIENTE' && new Date(r.fecha_hora).getTime() < ahora - 15 * 60_000;
+            return (
+              <li key={r.id} className={`flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm ${r.estado !== 'PENDIENTE' ? 'opacity-60' : ''}`}>
+                <span className="min-w-0">
+                  <span className="font-semibold text-slate-800">{hora(r.fecha_hora)} · {r.nombre}</span>
+                  <span className="text-slate-500"> · {r.personas} {r.personas === 1 ? 'persona' : 'personas'}{r.mesa ? ` · ${r.mesa.nombre}` : ' · mesa por definir'}</span>
+                  {r.telefono && <span className="ml-2 inline-flex items-center gap-1 text-xs text-slate-500"><Phone className="w-3 h-3" aria-hidden="true" />{r.telefono}</span>}
+                  {r.nota && <span className="block text-xs text-slate-500">{r.nota}</span>}
+                  {tarde && <span className="ml-2 text-xs font-semibold text-red-700">Atrasada</span>}
+                  {r.estado !== 'PENDIENTE' && <span className="ml-2 text-[11px] font-semibold uppercase text-slate-600">{{ SENTADA: 'Sentada', CANCELADA: 'Cancelada', NO_LLEGO: 'No llegó' }[r.estado]}</span>}
+                </span>
+                {r.estado === 'PENDIENTE' && (
+                  <span className="flex gap-2">
+                    <button type="button" className="btn-primary text-xs" onClick={() => { setFormError(null); setMesaSentar(r.mesaId ? String(r.mesaId) : ''); setSentando(r); }} aria-label={`Sentar la reserva de ${r.nombre}`}>Sentar</button>
+                    <button type="button" className="btn-secondary text-xs" disabled={cambiar.isPending} onClick={() => cambiar.mutate({ id: r.id, estado: 'NO_LLEGO' })} aria-label={`${r.nombre} no llegó`}>No llegó</button>
+                    <button type="button" className="btn-secondary text-xs" disabled={cambiar.isPending} onClick={() => cambiar.mutate({ id: r.id, estado: 'CANCELADA' })} aria-label={`Cancelar la reserva de ${r.nombre}`}>Cancelar</button>
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <Modal open={abierto} onClose={() => setAbierto(false)} title="Nueva reserva" size="lg">
+        <form onSubmit={handleCrear} className="space-y-4">
+          <FormError message={formError} onDismiss={() => setFormError(null)} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field label="A nombre de" required><input className="input-field" autoFocus maxLength={120} value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} /></Field>
+            <Field label="Teléfono"><input className="input-field" maxLength={40} value={form.telefono} onChange={(e) => setForm({ ...form, telefono: e.target.value })} /></Field>
+            <Field label="Día y hora" required><input type="datetime-local" className="input-field" value={form.fecha_hora} onChange={(e) => setForm({ ...form, fecha_hora: e.target.value })} /></Field>
+            <Field label="Personas" required><input type="number" min="1" className="input-field" value={form.personas} onChange={(e) => setForm({ ...form, personas: e.target.value })} /></Field>
+            <Field label="Mesa" hint="Opcional: se puede elegir al sentarlos.">
+              <select className="input-field" value={form.mesaId} onChange={(e) => setForm({ ...form, mesaId: e.target.value })}>
+                <option value="">Por definir</option>
+                {mesas.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
+              </select>
+            </Field>
+            <Field label="Nota"><input className="input-field" maxLength={500} placeholder="Cumpleaños, silla para bebé…" value={form.nota} onChange={(e) => setForm({ ...form, nota: e.target.value })} /></Field>
+          </div>
+          <ModalActions>
+            <button type="button" className="btn-secondary" onClick={() => setAbierto(false)}>Cancelar</button>
+            <button type="submit" className="btn-primary px-6" disabled={crear.isPending}>{crear.isPending ? 'Guardando…' : 'Guardar reserva'}</button>
+          </ModalActions>
+        </form>
+      </Modal>
+
+      <Modal open={!!sentando} onClose={() => setSentando(null)} title={`Sentar a ${sentando?.nombre ?? ''}`} size="md">
+        <form onSubmit={(e) => { e.preventDefault(); sentar.mutate({ id: sentando.id, mesaId: mesaSentar }); }} className="space-y-4">
+          <FormError message={formError} onDismiss={() => setFormError(null)} />
+          <Field label="Mesa libre" required>
+            <select className="input-field" autoFocus value={mesaSentar} onChange={(e) => setMesaSentar(e.target.value)}>
+              <option value="">Elige una mesa…</option>
+              {libres.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
+            </select>
+          </Field>
+          <p className="text-xs text-slate-500">Se abre la cuenta con {sentando?.personas} comensal(es).</p>
+          <ModalActions>
+            <button type="button" className="btn-secondary" onClick={() => setSentando(null)}>Volver</button>
+            <button type="submit" className="btn-primary px-6" disabled={!mesaSentar || sentar.isPending}>Abrir cuenta</button>
+          </ModalActions>
+        </form>
+      </Modal>
+    </section>
+  );
+};
+
 /** Tablero de mesas: libres y ocupadas, con la cuenta de cada una, y las cuentas para llevar. */
-const Tablero = ({ onAbrir }) => {
+const Tablero = ({ onAbrir, consulta }) => {
   const { can } = usePermisos();
   const ahora = useAhora();
   const qc = useQueryClient();
-  const { data, isLoading, isError, error, refetch } = useEmpresaQuery(['mesas'], '/mesas', { refetchInterval: 10_000 });
+  const { data, isLoading, isError, error, refetch } = consulta;
   const [nueva, setNueva] = useState(null); // { mesa } | { llevar: true }
   const [datos, setDatos] = useState({ comensales: '', etiqueta: '' });
   const [formError, setFormError] = useState(null);
@@ -165,7 +299,12 @@ const Tablero = ({ onAbrir }) => {
               <span className="flex items-center gap-2 font-bold text-slate-700"><Armchair className="w-5 h-5 text-slate-400" aria-hidden="true" />{m.nombre}</span>
               <span className="text-[10px] font-semibold uppercase tracking-wide bg-emerald-100 text-emerald-800 rounded px-1.5 py-0.5">Libre</span>
             </span>
-            <p className="mt-6 text-sm text-slate-500">{m.capacidad ? `${m.capacidad} puestos · ` : ''}Toca para abrir cuenta</p>
+            {m.reserva && (
+              <span className="mt-3 flex items-center gap-1.5 rounded-lg bg-amber-100 text-amber-900 text-xs font-semibold px-2 py-1">
+                <CalendarClock className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> Reservada {new Date(m.reserva.fecha_hora).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} · {m.reserva.nombre}
+              </span>
+            )}
+            <p className={`${m.reserva ? 'mt-2' : 'mt-6'} text-sm text-slate-500`}>{m.capacidad ? `${m.capacidad} puestos · ` : ''}Toca para abrir cuenta</p>
           </button>
         )))}
       </div>
@@ -178,6 +317,8 @@ const Tablero = ({ onAbrir }) => {
           </div>
         </div>
       )}
+
+      <Reservas mesas={mesas} onSentada={onAbrir} />
 
       <Modal open={!!nueva} onClose={cerrarModal} title={nueva?.llevar ? 'Cuenta para llevar' : `Abrir cuenta · ${nueva?.mesa?.nombre ?? ''}`} size="md">
         <form onSubmit={handleAbrir} className="space-y-4">

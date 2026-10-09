@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { ClipboardCheck, CheckCircle2, MinusCircle, ScanSearch } from 'lucide-react';
+import { ClipboardCheck, CheckCircle2, MinusCircle, ScanSearch, TriangleAlert } from 'lucide-react';
 import { formatCOP, formatCantidad, fechaLocal } from '../../utils/format';
 import { unidadCorta } from '../../utils/unidades';
 import { usePermisos } from '../../hooks/usePermisos';
@@ -348,6 +348,18 @@ const Conteo = () => {
               <li className="flex items-center gap-1.5"><MinusCircle className="w-4 h-4 text-slate-400" aria-hidden="true" /> {resultado.sin_cambio} sin diferencia</li>
               <li>Valor de la diferencia: <strong className={resultado.valor_total < 0 ? 'text-red-700' : 'text-emerald-700'}>{formatCOP(resultado.valor_total)}</strong></li>
             </ul>
+            {resultado.alertas?.length > 0 && (
+              <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 space-y-2">
+                <p className="flex items-center gap-2 font-semibold"><TriangleAlert className="w-4 h-4" aria-hidden="true" /> Faltantes sobre el límite de {formatCantidad(resultado.umbral_pct)} %</p>
+                <ul className="space-y-1">
+                  {resultado.alertas.map((a) => (
+                    <li key={a.productoId}>
+                      <strong>{a.nombre_producto}</strong>: faltaron {formatCantidad(a.faltante)} {unidadCorta(a.unidad_medida)} de {formatCantidad(a.consumo_teorico)} que debían gastarse desde el conteo anterior ({formatCantidad(a.desviacion_pct)} %)
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <ModalActions>
               <button type="button" className="btn-primary px-6" onClick={() => setResultado(null)}>Cerrar</button>
             </ModalActions>
@@ -374,28 +386,75 @@ const Stat = ({ label, value, tone = 'text-slate-800' }) => (
 );
 
 const Desviaciones = () => {
+  const queryClient = useQueryClient();
+  const [modo, setModo] = useState('rango'); // 'rango' (consumo del rango vs conteos del rango) | 'conteos' (cada conteo vs el anterior)
   const [rango, setRango] = useState(() => {
     const hoy = fechaLocal();
     return { desde: `${hoy.slice(0, 8)}01`, hasta: hoy }; // desde el 1 del mes
   });
   const [soloProblemas, setSoloProblemas] = useState(false);
+  const [umbralEdit, setUmbralEdit] = useState('');
+  const [error, setError] = useState(null);
   const hayFiltros = !!rango.desde || !!rango.hasta;
 
-  const { data, isLoading, isError, error, refetch } = useEmpresaQuery(['ajustes', 'desviaciones', rango], async () => {
-    const params = {};
+  const { data, isLoading, isError, error: errCarga, refetch } = useEmpresaQuery(['ajustes', 'desviaciones', modo, rango], async () => {
+    const params = { modo };
     Object.entries(rango).forEach(([k, v]) => { if (v) params[k] = v; });
     return (await api.get('/ajustes/desviaciones', { params })).data;
   });
-  const filas = useMemo(() => (data?.filas || []).filter((f) => !soloProblemas || f.estado === 'FALTANTE'), [data, soloProblemas]);
+  const guardarUmbral = useMutation({
+    mutationFn: (pct) => api.put('/ajustes/desviaciones/umbral', { desviacion_alerta_pct: pct }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['empresa'] }); setUmbralEdit(''); setError(null); },
+    onError: (err) => setError(apiError(err, 'No se pudo guardar el límite')),
+  });
+  const umbral = data?.umbral_pct;
+  const filas = useMemo(() => {
+    const todas = modo === 'conteos' ? (data?.eventos || []) : (data?.filas || []);
+    return todas.filter((f) => !soloProblemas || f.estado === 'FALTANTE' || f.faltante > 0);
+  }, [data, modo, soloProblemas]);
   const t = data?.totales;
-  const conValores = t?.valor_faltante !== undefined;
+  const conValores = modo === 'conteos' ? (data?.eventos || []).some((e) => e.valor_conteo !== undefined) : t?.valor_faltante !== undefined;
+
+  const celdaPct = (f) => (
+    <Td align="right" className={`font-semibold ${f.alerta ? 'text-red-700' : f.desviacion_pct >= 3 ? 'text-amber-700' : 'text-slate-700'}`}>
+      {f.desviacion_pct == null ? <span className="text-slate-400 font-normal">—</span> : `${f.desviacion_pct.toLocaleString('es-CO', { maximumFractionDigits: 1 })}%`}
+      {f.alerta && <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] font-bold uppercase bg-red-600 text-white rounded px-1 py-0.5"><TriangleAlert className="w-3 h-3" aria-hidden="true" />Alerta</span>}
+    </Td>
+  );
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-slate-500 max-w-3xl">
         Compara lo que <strong>debió gastarse</strong> según las recetas y las producciones con lo que <strong>faltó o sobró al contar</strong>.
         Un faltante grande frente al consumo teórico sugiere desperdicio, porciones mal servidas, robo o una receta mal medida.
-        Solo aparece diferencia donde hiciste un conteo físico en el rango.
+      </p>
+
+      <FormError message={error} onDismiss={() => setError(null)} />
+
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div role="radiogroup" aria-label="Cómo comparar" className="inline-flex rounded-xl border border-slate-200 bg-white p-1 text-sm">
+          {[['rango', 'Por fechas'], ['conteos', 'Entre conteos']].map(([v, etiqueta]) => (
+            <label key={v} className={`px-3 py-1.5 rounded-lg cursor-pointer focus-within:ring-2 focus-within:ring-brand-600 ${modo === v ? 'bg-brand-700 text-white font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}>
+              <input type="radio" className="sr-only" name="modo-desviacion" checked={modo === v} onChange={() => setModo(v)} />
+              {etiqueta}
+            </label>
+          ))}
+        </div>
+        <form
+          className="flex items-end gap-2"
+          onSubmit={(e) => { e.preventDefault(); if (umbralEdit !== '') guardarUmbral.mutate(Number(umbralEdit)); }}
+        >
+          <Field label="Alertar si falta más de (%)" className="w-44">
+            <input type="number" min="0" max="100" step="any" className="input-field" placeholder={umbral != null ? String(umbral) : '5'} value={umbralEdit} onChange={(e) => setUmbralEdit(e.target.value)} />
+          </Field>
+          <button type="submit" className="btn-secondary" disabled={umbralEdit === '' || guardarUmbral.isPending}>Guardar</button>
+        </form>
+      </div>
+      <p className="text-xs text-slate-500">
+        {modo === 'conteos'
+          ? 'Cada conteo se compara con el anterior del mismo producto: lo que se gastó entre uno y otro. El primer conteo de un producto no tiene con qué compararse.'
+          : 'Solo aparece diferencia donde hiciste un conteo físico en el rango.'}
+        {umbral != null && ` Límite de alerta actual: ${umbral.toLocaleString('es-CO')} % del consumo.`}
       </p>
 
       <FilterBar hayFiltros={hayFiltros} onLimpiar={() => setRango({ desde: '', hasta: '' })}>
@@ -411,7 +470,7 @@ const Desviaciones = () => {
         </label>
       </FilterBar>
 
-      {conValores && (
+      {modo === 'rango' && conValores && (
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
           <Stat label="Faltante al contar" value={formatCOP(t.valor_faltante)} tone={t.valor_faltante > 0 ? 'text-red-700' : 'text-slate-800'} />
           <Stat label="Sobrante al contar" value={formatCOP(t.valor_sobrante)} tone="text-sky-700" />
@@ -419,51 +478,92 @@ const Desviaciones = () => {
           <Stat label="Productos con faltante" value={t.con_faltante} />
         </div>
       )}
+      {modo === 'conteos' && data?.alertas > 0 && (
+        <p role="status" className="flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-900">
+          <TriangleAlert className="w-4 h-4" aria-hidden="true" /> {data.alertas} conteo(s) con faltante sobre el límite en este rango.
+        </p>
+      )}
 
-      <TableCard>
-        <THead>
-          <Th>Producto</Th>
-          <Th align="right">Debió gastarse</Th>
-          <Th align="right">Mermas</Th>
-          <Th align="right">Al contar</Th>
-          {conValores && <Th align="right">Valor</Th>}
-          <Th align="right">% del consumo</Th>
-          <Th align="center">Estado</Th>
-        </THead>
-        <tbody>
-          <TableState
-            colSpan={conValores ? 7 : 6} isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
-            isEmpty={filas.length === 0} emptyIcon={ScanSearch}
-            emptyTitle="Sin datos para este rango"
-            emptyHint="Aparecen los productos que se gastaron en ventas o producciones, o que tuvieron conteo o mermas."
-          />
-          {filas.map((f) => (
-            <Tr key={f.productoId}>
-              <Td className="font-medium text-slate-800">
-                {f.nombre_producto}
-                <span className="block text-xs font-normal text-slate-500">{f.codigo}</span>
-              </Td>
-              <Td align="right" className="whitespace-nowrap">
-                {formatCantidad(f.consumo_teorico)} {unidadCorta(f.unidad_medida)}
-                {f.consumo_produccion > 0 && (
-                  <span className="block text-[11px] text-slate-500">{formatCantidad(f.consumo_ventas)} ventas · {formatCantidad(f.consumo_produccion)} producción</span>
-                )}
-              </Td>
-              <Td align="right" className="whitespace-nowrap">{f.mermas > 0 ? `${formatCantidad(f.mermas)} ${unidadCorta(f.unidad_medida)}` : <span className="text-slate-400">—</span>}</Td>
-              <Td align="right" className={`whitespace-nowrap font-semibold ${f.conteo < 0 ? 'text-red-700' : f.conteo > 0 ? 'text-sky-700' : 'text-slate-400'}`}>
-                {f.conteo === 0 ? '—' : `${f.conteo > 0 ? '+' : ''}${formatCantidad(f.conteo)} ${unidadCorta(f.unidad_medida)}`}
-              </Td>
-              {conValores && <Td align="right" className={`whitespace-nowrap ${f.valor_conteo < 0 ? 'text-red-700' : ''}`}>{f.contado && f.valor_conteo !== 0 ? formatCOP(f.valor_conteo) : <span className="text-slate-400">—</span>}</Td>}
-              <Td align="right" className={`font-semibold ${f.desviacion_pct >= 10 ? 'text-red-700' : f.desviacion_pct >= 3 ? 'text-amber-700' : 'text-slate-700'}`}>
-                {f.desviacion_pct == null ? <span className="text-slate-400 font-normal">—</span> : `${f.desviacion_pct.toLocaleString('es-CO', { maximumFractionDigits: 1 })}%`}
-              </Td>
-              <Td align="center">
-                <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${ESTADOS_DESVIACION[f.estado].tone}`}>{ESTADOS_DESVIACION[f.estado].label}</span>
-              </Td>
-            </Tr>
-          ))}
-        </tbody>
-      </TableCard>
+      {modo === 'rango' ? (
+        <TableCard>
+          <THead>
+            <Th>Producto</Th>
+            <Th align="right">Debió gastarse</Th>
+            <Th align="right">Mermas</Th>
+            <Th align="right">Al contar</Th>
+            {conValores && <Th align="right">Valor</Th>}
+            <Th align="right">% del consumo</Th>
+            <Th align="center">Estado</Th>
+          </THead>
+          <tbody>
+            <TableState
+              colSpan={conValores ? 7 : 6} isLoading={isLoading} isError={isError} error={errCarga} onRetry={refetch}
+              isEmpty={filas.length === 0} emptyIcon={ScanSearch}
+              emptyTitle="Sin datos para este rango"
+              emptyHint="Aparecen los productos que se gastaron en ventas o producciones, o que tuvieron conteo o mermas."
+            />
+            {filas.map((f) => (
+              <Tr key={f.productoId}>
+                <Td className="font-medium text-slate-800">
+                  {f.nombre_producto}
+                  <span className="block text-xs font-normal text-slate-500">{f.codigo}</span>
+                </Td>
+                <Td align="right" className="whitespace-nowrap">
+                  {formatCantidad(f.consumo_teorico)} {unidadCorta(f.unidad_medida)}
+                  {f.consumo_produccion > 0 && (
+                    <span className="block text-[11px] text-slate-500">{formatCantidad(f.consumo_ventas)} ventas · {formatCantidad(f.consumo_produccion)} producción</span>
+                  )}
+                </Td>
+                <Td align="right" className="whitespace-nowrap">{f.mermas > 0 ? `${formatCantidad(f.mermas)} ${unidadCorta(f.unidad_medida)}` : <span className="text-slate-400">—</span>}</Td>
+                <Td align="right" className={`whitespace-nowrap font-semibold ${f.conteo < 0 ? 'text-red-700' : f.conteo > 0 ? 'text-sky-700' : 'text-slate-400'}`}>
+                  {f.conteo === 0 ? '—' : `${f.conteo > 0 ? '+' : ''}${formatCantidad(f.conteo)} ${unidadCorta(f.unidad_medida)}`}
+                </Td>
+                {conValores && <Td align="right" className={`whitespace-nowrap ${f.valor_conteo < 0 ? 'text-red-700' : ''}`}>{f.contado && f.valor_conteo !== 0 ? formatCOP(f.valor_conteo) : <span className="text-slate-400">—</span>}</Td>}
+                {celdaPct(f)}
+                <Td align="center">
+                  <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${ESTADOS_DESVIACION[f.estado].tone}`}>{ESTADOS_DESVIACION[f.estado].label}</span>
+                </Td>
+              </Tr>
+            ))}
+          </tbody>
+        </TableCard>
+      ) : (
+        <TableCard>
+          <THead>
+            <Th>Producto</Th>
+            <Th>Conteo</Th>
+            <Th align="right">Se gastó desde el anterior</Th>
+            <Th align="right">Mermas</Th>
+            <Th align="right">Al contar</Th>
+            {conValores && <Th align="right">Valor</Th>}
+            <Th align="right">% del consumo</Th>
+          </THead>
+          <tbody>
+            <TableState
+              colSpan={conValores ? 7 : 6} isLoading={isLoading} isError={isError} error={errCarga} onRetry={refetch}
+              isEmpty={filas.length === 0} emptyIcon={ScanSearch}
+              emptyTitle="Sin conteos en este rango" emptyHint="Haz un conteo físico en la pestaña «Conteo físico»."
+            />
+            {filas.map((e) => (
+              <Tr key={e.ajusteId} className={e.alerta ? 'bg-red-50/50' : ''}>
+                <Td className="font-medium text-slate-800">
+                  {e.nombre_producto}
+                  <span className="block text-xs font-normal text-slate-500">{e.codigo}</span>
+                </Td>
+                <Td className="text-sm whitespace-nowrap">
+                  {fmtFecha(e.fecha)}
+                  <span className="block text-[11px] text-slate-500">{e.sin_base ? 'Primer conteo: sin con qué comparar' : `contra el del ${fmtFecha(e.previo)}`}</span>
+                </Td>
+                <Td align="right" className="whitespace-nowrap">{e.sin_base ? <span className="text-slate-400">—</span> : `${formatCantidad(e.consumo_teorico)} ${unidadCorta(e.unidad_medida)}`}</Td>
+                <Td align="right" className="whitespace-nowrap">{e.mermas > 0 ? `${formatCantidad(e.mermas)} ${unidadCorta(e.unidad_medida)}` : <span className="text-slate-400">—</span>}</Td>
+                <Td align="right" className={`whitespace-nowrap font-semibold ${e.conteo < 0 ? 'text-red-700' : 'text-sky-700'}`}>{`${e.conteo > 0 ? '+' : ''}${formatCantidad(e.conteo)} ${unidadCorta(e.unidad_medida)}`}</Td>
+                {conValores && <Td align="right" className={`whitespace-nowrap ${e.valor_conteo < 0 ? 'text-red-700' : ''}`}>{formatCOP(e.valor_conteo)}</Td>}
+                {celdaPct(e)}
+              </Tr>
+            ))}
+          </tbody>
+        </TableCard>
+      )}
     </div>
   );
 };

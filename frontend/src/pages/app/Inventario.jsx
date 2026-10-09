@@ -21,7 +21,7 @@ import { TableState } from '../../components/ui/DataState';
 const EMPTY_FORM = {
   codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
   porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: '',
-  tipo: 'VENTA', receta: [], costo_promedio: '', rendimiento: '', por_lotes: false,
+  tipo: 'VENTA', receta: [], costo_promedio: '', rendimiento: '', por_lotes: false, vida_util_dias: '',
   unidad_compra: '', factor_compra: '', presOtra: false, // presentación de compra (kg, caja…)
   stock_minimo: '', stock_objetivo: '', // alerta de reposición
 };
@@ -128,6 +128,7 @@ const Inventario = () => {
       costo_promedio: CON_RECETA.includes(p.tipo) ? '' : String(Number(p.costo_promedio ?? 0) || ''),
       rendimiento: p.tipo === 'PREPARACION' ? String(Number(p.rendimiento)) : '',
       por_lotes: p.tipo === 'PREPARACION' && !!p.por_lotes,
+      vida_util_dias: p.vida_util_dias ? String(p.vida_util_dias) : '',
       stock_minimo: Number(p.stock_minimo) ? String(Number(p.stock_minimo)) : '',
       stock_objetivo: p.stock_objetivo != null ? String(Number(p.stock_objetivo)) : '',
       unidad_compra: p.unidad_compra || '',
@@ -165,6 +166,7 @@ const Inventario = () => {
       costo_promedio: esPlato || formData.costo_promedio === '' ? undefined : Number(formData.costo_promedio),
       rendimiento: formData.tipo === 'PREPARACION' ? Number(formData.rendimiento) : undefined,
       por_lotes: formData.tipo === 'PREPARACION' ? !!formData.por_lotes : undefined,
+      vida_util_dias: formData.tipo === 'PREPARACION' && formData.por_lotes ? (formData.vida_util_dias === '' ? null : Number(formData.vida_util_dias)) : undefined,
       // Presentación de compra: vacía = se compra en la unidad base (null la quita al editar).
       unidad_compra: esPlato ? undefined : (formData.unidad_compra.trim() || null),
       factor_compra: !esPlato && formData.unidad_compra.trim() ? Number(formData.factor_compra) : undefined,
@@ -424,6 +426,11 @@ const Inventario = () => {
                 </span>
               </span>
             </label>
+          )}
+          {formData.tipo === 'PREPARACION' && formData.por_lotes && (
+            <Field label="Vida útil de un lote (días)" hint="Opcional. Con ella se sabe cuándo vence cada lote y qué parte del stock hay que descartar.">
+              <input type="number" min="1" step="1" className="input-field sm:w-48" placeholder="3" value={formData.vida_util_dias} onChange={(e) => setFormData({ ...formData, vida_util_dias: e.target.value })} />
+            </Field>
           )}
 
           <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">

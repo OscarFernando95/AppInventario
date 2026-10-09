@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeft, ChefHat, Printer, Ban, ArrowRightLeft, Minus, Plus, Trash2, Users, Clock, Receipt, CheckCircle2, FileDown, MessageSquareText, Armchair, ShoppingBag,
+  ArrowLeft, ChefHat, Printer, Ban, ArrowRightLeft, Combine, Minus, Plus, Trash2, Users, Clock, Receipt, CheckCircle2, FileDown, MessageSquareText, Armchair, ShoppingBag,
 } from 'lucide-react';
 import api from '../../api/axios';
 import { formatCOP, formatCantidad } from '../../utils/format';
@@ -73,7 +73,7 @@ const FilaItem = ({ item, comandaPorId, puedeAnular, acciones, bloqueado }) => {
 };
 
 /** Una cuenta abierta: se piden platos, se envían a cocina y se cobra (todo o por partes). */
-const CuentaPanel = ({ cuentaId, onVolver }) => {
+const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
   const qc = useQueryClient();
   const { can } = usePermisos();
   const activeEmpresa = useAuthStore((s) => s.activeEmpresa);
@@ -88,7 +88,6 @@ const CuentaPanel = ({ cuentaId, onVolver }) => {
   const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
   const { data: servicios = [] } = useEmpresaQuery(['servicios'], '/servicios', { enabled: modulos.includes('Servicios') });
   const { data: modificadores = [] } = useEmpresaQuery(['modificadores'], '/modificadores', { enabled: modulos.includes('Recetas') });
-  const { data: tablero } = useEmpresaQuery(['mesas'], '/mesas');
 
   const [imprimir, setImprimir] = useState(() => leerImprimir(!conCocina));
   const [pidiendo, setPidiendo] = useState(null); // plato con extras que se está pidiendo { opcion, mods, nota, cantidad }
@@ -109,6 +108,11 @@ const CuentaPanel = ({ cuentaId, onVolver }) => {
   const quitar = useMutation({ mutationFn: (id) => api.delete(`/cuentas/${cuentaId}/items/${id}`), onSuccess: aplicar, onError: fallar });
   const anularItem = useMutation({ mutationFn: ({ id, motivo }) => api.post(`/cuentas/${cuentaId}/items/${id}/anular`, { motivo }), onSuccess: (r) => { aplicar(r); setDialogo(null); }, onError: (e) => { setDialogo(null); fallar(e); } });
   const mover = useMutation({ mutationFn: (mesaId) => api.post(`/cuentas/${cuentaId}/mover`, { mesaId }), onSuccess: (r) => { aplicar(r); setDialogo(null); }, onError: (e) => { setDialogo(null); fallar(e); } });
+  const unir = useMutation({
+    mutationFn: (otraId) => api.post(`/cuentas/${cuentaId}/unir`, { cuentaId: otraId }),
+    onSuccess: (r) => { aplicar(r); qc.invalidateQueries({ queryKey: ['empresa'] }); setDialogo(null); setAviso('Cuentas unidas: todo quedó en esta cuenta.'); },
+    onError: (e) => { setDialogo(null); fallar(e); },
+  });
   const cancelar = useMutation({
     mutationFn: (motivo) => api.post(`/cuentas/${cuentaId}/cancelar`, { motivo }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['empresa'] }); onVolver(); },
@@ -179,6 +183,8 @@ const CuentaPanel = ({ cuentaId, onVolver }) => {
   const ocupada = (m) => m.cuenta && m.cuenta.id !== cuenta.id;
   const mesasLibres = (tablero?.mesas || []).filter((m) => !ocupada(m) && m.id !== cuenta.mesa?.id);
   const Icono = cuenta.mesa ? Armchair : ShoppingBag;
+  const otrasCuentas = [...(tablero?.mesas || []).map((m) => m.cuenta).filter(Boolean), ...(tablero?.sin_mesa || [])].filter((c) => c.id !== cuenta.id);
+  const propinaPct = tablero?.config?.propina_sugerida_pct ?? 10;
 
   return (
     <div className="space-y-5">
@@ -197,6 +203,7 @@ const CuentaPanel = ({ cuentaId, onVolver }) => {
         {abierta && (
           <div className="ml-auto flex flex-wrap gap-2">
             <button type="button" className="btn-secondary gap-2" onClick={() => { setMesaDestino(''); setDialogo({ tipo: 'mover' }); }}><ArrowRightLeft className="w-4 h-4" aria-hidden="true" /> Cambiar mesa</button>
+            <button type="button" className="btn-secondary gap-2" disabled={otrasCuentas.length === 0} title={otrasCuentas.length === 0 ? 'No hay otra cuenta abierta' : undefined} onClick={() => { setMesaDestino(''); setDialogo({ tipo: 'unir' }); }}><Combine className="w-4 h-4" aria-hidden="true" /> Unir con otra cuenta</button>
             <button type="button" className="btn-secondary gap-2 hover:bg-red-50 hover:text-red-700" onClick={() => { setTexto(''); setDialogo({ tipo: 'cancelar' }); }}><Ban className="w-4 h-4" aria-hidden="true" /> Cancelar cuenta</button>
           </div>
         )}
@@ -316,7 +323,7 @@ const CuentaPanel = ({ cuentaId, onVolver }) => {
       {/* Anular ítem enviado / nota / cancelar cuenta / cambiar mesa */}
       <Modal
         open={!!dialogo} onClose={() => setDialogo(null)} size="md"
-        title={{ anular: 'Anular pedido ya enviado', nota: 'Nota para cocina', cancelar: 'Cancelar la cuenta', mover: 'Cambiar de mesa' }[dialogo?.tipo] || ''}
+        title={{ anular: 'Anular pedido ya enviado', nota: 'Nota para cocina', cancelar: 'Cancelar la cuenta', mover: 'Cambiar de mesa', unir: 'Unir con otra cuenta' }[dialogo?.tipo] || ''}
       >
         {dialogo?.tipo === 'mover' && (
           <form onSubmit={(e) => { e.preventDefault(); if (mesaDestino) mover.mutate(Number(mesaDestino)); }} className="space-y-4">
@@ -329,6 +336,21 @@ const CuentaPanel = ({ cuentaId, onVolver }) => {
             <ModalActions>
               <button type="button" className="btn-secondary" onClick={() => setDialogo(null)}>Volver</button>
               <button type="submit" className="btn-primary px-6" disabled={!mesaDestino || mover.isPending}>Pasar la cuenta</button>
+            </ModalActions>
+          </form>
+        )}
+        {dialogo?.tipo === 'unir' && (
+          <form onSubmit={(e) => { e.preventDefault(); if (mesaDestino) unir.mutate(Number(mesaDestino)); }} className="space-y-4">
+            <p className="text-sm text-slate-600">Todo lo pedido en la otra cuenta pasa a <strong>{cuenta.nombre}</strong> y esa mesa queda libre. Solo se puede si de la otra aún no se cobró nada.</p>
+            <Field label="Cuenta que se une a esta" required>
+              <select className="input-field" value={mesaDestino} onChange={(e) => setMesaDestino(e.target.value)} autoFocus>
+                <option value="">Elige una cuenta…</option>
+                {otrasCuentas.map((c) => <option key={c.id} value={c.id}>{c.nombre} · {formatCOP(c.total)}</option>)}
+              </select>
+            </Field>
+            <ModalActions>
+              <button type="button" className="btn-secondary" onClick={() => setDialogo(null)}>Volver</button>
+              <button type="submit" className="btn-primary px-6" disabled={!mesaDestino || unir.isPending}>Unir cuentas</button>
             </ModalActions>
           </form>
         )}
@@ -366,7 +388,7 @@ const CuentaPanel = ({ cuentaId, onVolver }) => {
         )}
       </Modal>
 
-      {cobrando && <CobrarModal cuenta={cuenta} onClose={() => setCobrando(false)} onCobrado={(res) => { setCobrando(false); qc.setQueryData(claveCuenta, res.cuenta); setResultado(res); }} />}
+      {cobrando && <CobrarModal cuenta={cuenta} propinaPct={propinaPct} onClose={() => setCobrando(false)} onCobrado={(res) => { setCobrando(false); qc.setQueryData(claveCuenta, res.cuenta); setResultado(res); }} />}
 
       <Modal open={!!resultado} onClose={() => setResultado(null)} title="Cobro registrado" size="md">
         {resultado && (
