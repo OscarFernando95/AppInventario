@@ -21,6 +21,8 @@ const REQUIERE = {
   Informes: ['Ventas'],
   Recetas: ['Inventario'],
   Caja: ['Ventas'],
+  Mesas: ['Ventas'],
+  Cocina: ['Mesas'],
   Gastos: [],
   'Cuentas por cobrar': ['Ventas', 'Clientes'],
   'Cuentas por pagar': ['Compras', 'Proveedores'],

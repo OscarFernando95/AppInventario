@@ -1,24 +1,26 @@
 'use strict';
 
-const { fn, col } = require('sequelize');
-const { sequelize, AjusteInventario, Producto, Usuario } = require('../models');
+const { fn, col, QueryTypes } = require('sequelize');
+const { sequelize, AjusteInventario, Producto, Usuario, Empresa } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { buildListWhere } = require('../utils/listFilters');
 const { auditar } = require('../utils/audit');
+const { unidadCorta } = require('../utils/unidades');
+const { tiene } = require('../middlewares/auth');
+const { armarDesviaciones, armarRanking } = require('../services/desviaciones');
+const { umbralDeAlerta, eventosDeConteo } = require('../services/desviacionesDb');
 const { invalidateDashboard } = require('./reporteController');
-const { TIPOS_CON_RECETA, redondear3 } = require('../services/recetas');
+const { TIPOS_CON_RECETA, esPorLotes, redondear3 } = require('../services/recetas');
 
 const redondear2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
-const UNIDADES_CORTAS = { 94: 'ud', KGM: 'kg', GRM: 'g', LBR: 'lb', ONZ: 'oz', LTR: 'L', MLT: 'ml', MTK: 'm²', HUR: 'h' };
-const unidadCortaBackend = (codigo) => UNIDADES_CORTAS[codigo] || 'ud';
 
 const FILTROS = (query) => buildListWhere(query, { fecha: 'fecha', igualdad: ['tipo', 'productoId'] });
 
-/** Solo los productos con stock propio se ajustan (no platos ni preparaciones). */
+/** Solo los productos con stock propio se ajustan (no platos ni preparaciones, salvo las que se producen por lotes). */
 function exigirConStock(producto) {
-  if (TIPOS_CON_RECETA.includes(producto.tipo)) {
+  if ((TIPOS_CON_RECETA.includes(producto.tipo) && !esPorLotes(producto)) || producto.tipo === 'COMBO') {
     throw new ValidationError(`"${producto.nombre_producto}" no tiene stock propio (se descuenta de sus ingredientes).`);
   }
 }
@@ -60,7 +62,7 @@ exports.registrarSalida = async (req, res) => {
 
   invalidateDashboard(req.empresaId);
   auditar(req, 'ajuste_inventario', {
-    ajusteId: ajuste.id, productoId, productoNombre: producto.nombre_producto, tipo, cantidad, unidad: unidadCortaBackend(producto.unidad_medida), valor: Number(ajuste.valor),
+    ajusteId: ajuste.id, productoId, productoNombre: producto.nombre_producto, tipo, cantidad, unidad: unidadCorta(producto.unidad_medida), valor: Number(ajuste.valor),
   });
   res.status(201).json(ajuste);
 };
@@ -96,7 +98,23 @@ exports.registrarConteo = async (req, res) => {
   invalidateDashboard(req.empresaId);
   const valor = redondear2(resultado.ajustes.reduce((a, x) => a + Number(x.valor), 0));
   auditar(req, 'conteo_fisico', { ajustados: resultado.ajustes.length, sinCambio: resultado.sinCambio, valor });
-  res.status(201).json({ ajustados: resultado.ajustes.length, sin_cambio: resultado.sinCambio, valor_total: valor, ajustes: resultado.ajustes });
+
+  // Alerta automática: faltantes que superan el % de desviación de la empresa frente al conteo anterior.
+  const umbral = await umbralDeAlerta(req.empresaId);
+  const alertas = (await eventosDeConteo(req.empresaId, { ajusteIds: resultado.ajustes.map((a) => a.id), umbral })).filter((e) => e.alerta);
+  for (const a of alertas) {
+    auditar(req, 'desviacion_alerta', {
+      productoId: a.productoId, productoNombre: a.nombre_producto, faltante: a.faltante, unidad: unidadCorta(a.unidad_medida), pct: a.desviacion_pct, umbral,
+    });
+  }
+  res.status(201).json({
+    ajustados: resultado.ajustes.length, sin_cambio: resultado.sinCambio, valor_total: valor, ajustes: resultado.ajustes, umbral_pct: umbral,
+    contacto: alertas.length > 0 ? await contactoDeAlertas(req.empresaId) : undefined,
+    alertas: alertas.map((a) => ({
+      productoId: a.productoId, nombre_producto: a.nombre_producto, unidad_medida: a.unidad_medida, faltante: a.faltante, consumo_teorico: a.consumo_teorico,
+      desviacion_pct: a.desviacion_pct, ...(tiene(req, 'costos.ver') ? { valor: a.valor_conteo } : {}),
+    })),
+  });
 };
 
 exports.getAjustes = async (req, res) => {
@@ -125,4 +143,118 @@ exports.getResumen = async (req, res) => {
   });
   const porTipo = filas.map((f) => ({ tipo: f.tipo, num: Number(f.num), valor: redondear2(f.valor) }));
   res.json({ por_tipo: porTipo, valor_total: redondear2(porTipo.reduce((a, f) => a + f.valor, 0)) });
+};
+
+/** Condición de fechas (hora local) sobre una columna de fecha, y sus parámetros. */
+function condicionDeFechas(columna, { desde, hasta }, replacements) {
+  const partes = [];
+  if (desde) { partes.push(`AND ${columna} >= :desde`); replacements.desde = new Date(`${desde}T00:00:00`); }
+  if (hasta) { partes.push(`AND ${columna} <= :hasta`); replacements.hasta = new Date(`${hasta}T23:59:59.999`); }
+  return partes.join(' ');
+}
+
+/**
+ * Informe de desviaciones: por producto, lo que DEBIÓ gastarse según las recetas (consumo teórico de
+ * las ventas, neto de lo que volvió por devoluciones, más lo que gastaron las producciones por lotes)
+ * contra lo que apareció o faltó al contar (conteo físico) y las mermas registradas.
+ * El conteo ya compara contra el stock del sistema, que descuenta el consumo teórico: su diferencia
+ * es la desviación (faltante si es negativa, sobrante si es positiva).
+ */
+exports.getDesviaciones = async (req, res) => {
+  const umbral = await umbralDeAlerta(req.empresaId);
+  const contacto = await contactoDeAlertas(req.empresaId);
+  // Modo «entre conteos»: cada conteo contra el anterior del mismo producto (en vez de un rango de fechas fijo).
+  if (req.query.modo === 'conteos') {
+    const eventos = await eventosDeConteo(req.empresaId, { desde: req.query.desde, hasta: req.query.hasta, umbral });
+    if (!tiene(req, 'costos.ver')) for (const e of eventos) delete e.valor_conteo;
+    return res.json({ modo: 'conteos', umbral_pct: umbral, contacto, eventos, alertas: eventos.filter((e) => e.alerta).length });
+  }
+  const replacements = { empresaId: req.empresaId };
+  const fechasVenta = condicionDeFechas('v."fecha"', req.query, replacements);
+  const fechasProduccion = condicionDeFechas('pr."fecha"', req.query, replacements);
+  const fechasAjuste = condicionDeFechas('a."fecha"', req.query, replacements);
+
+  const [ventas, producciones, ajustes] = await Promise.all([
+    sequelize.query(
+      `SELECT (e->>'productoId')::int AS "productoId",
+              SUM((e->>'cantidad')::numeric * GREATEST(0, 1 - vd."cantidad_reingresada" / NULLIF(vd."cantidad", 0))) AS cantidad
+         FROM "ventas_detalles" vd
+         JOIN "ventas" v ON v."id" = vd."ventaId"
+         CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(vd."consumo") = 'array' THEN vd."consumo" ELSE '[]'::jsonb END) AS e
+        WHERE v."empresaId" = :empresaId AND v."estado" = 'ACTIVA' ${fechasVenta}
+        GROUP BY 1`,
+      { type: QueryTypes.SELECT, replacements }
+    ),
+    sequelize.query(
+      `SELECT (e->>'productoId')::int AS "productoId", SUM((e->>'cantidad')::numeric) AS cantidad
+         FROM "producciones" pr
+         CROSS JOIN LATERAL jsonb_array_elements(pr."consumo") AS e
+        WHERE pr."empresaId" = :empresaId AND pr."estado" = 'ACTIVA' ${fechasProduccion}
+        GROUP BY 1`,
+      { type: QueryTypes.SELECT, replacements }
+    ),
+    sequelize.query(
+      `SELECT a."productoId", a."tipo", SUM(a."diferencia") AS diferencia, SUM(a."valor") AS valor
+         FROM "ajustes_inventario" a
+        WHERE a."empresaId" = :empresaId ${fechasAjuste}
+        GROUP BY a."productoId", a."tipo"`,
+      { type: QueryTypes.SELECT, replacements }
+    ),
+  ]);
+
+  const ids = [...new Set([...ventas, ...producciones, ...ajustes].map((f) => Number(f.productoId)))];
+  const productos = ids.length
+    ? await Producto.findAll({ where: { id: ids, empresaId: req.empresaId }, attributes: ['id', 'nombre_producto', 'codigo', 'tipo', 'unidad_medida', 'costo_promedio'], raw: true })
+    : [];
+
+  const informe = armarDesviaciones({ productos, ventas, producciones, ajustes });
+  informe.umbral_pct = umbral;
+  informe.contacto = contacto;
+  for (const f of informe.filas) f.alerta = f.desviacion_pct != null && f.desviacion_pct >= umbral;
+  if (!tiene(req, 'costos.ver')) {
+    for (const f of informe.filas) { delete f.valor_conteo; delete f.valor_mermas; delete f.costo_unitario; }
+    informe.totales = { productos: informe.totales.productos, con_faltante: informe.totales.con_faltante };
+  }
+  res.json(informe);
+};
+
+/** A quién se avisa cuando salta una alerta de desviación. */
+async function contactoDeAlertas(empresaId) {
+  const e = await Empresa.findByPk(empresaId, { attributes: ['alerta_whatsapp', 'alerta_correo'] });
+  return { whatsapp: e?.alerta_whatsapp || null, correo: e?.alerta_correo || null };
+}
+
+/** Cambia el % de faltante a partir del cual un conteo es una alerta y/o a quién se avisa (WhatsApp, correo). */
+exports.setUmbralDesviacion = async (req, res) => {
+  const { desviacion_alerta_pct: pct, alerta_whatsapp: whatsapp, alerta_correo: correo } = req.body;
+  await Empresa.update({
+    ...(pct !== undefined ? { desviacion_alerta_pct: pct } : {}),
+    ...(whatsapp !== undefined ? { alerta_whatsapp: whatsapp } : {}),
+    ...(correo !== undefined ? { alerta_correo: correo } : {}),
+  }, { where: { id: req.empresaId } });
+  if (pct !== undefined) auditar(req, 'desviacion_umbral', { pct });
+  if (whatsapp !== undefined || correo !== undefined) auditar(req, 'desviacion_contacto', { whatsapp: !!whatsapp, correo: !!correo });
+  res.json({ umbral_pct: await umbralDeAlerta(req.empresaId), contacto: await contactoDeAlertas(req.empresaId) });
+};
+
+/** Lo que más dinero se perdió en un mes (por defecto el actual): faltantes al contar + mermas, por producto. */
+exports.getRankingPerdidas = async (req, res) => {
+  if (!tiene(req, 'costos.ver')) return res.status(403).json({ error: 'El ranking de pérdidas muestra costos: necesitas el permiso para ver costos.' });
+  const hoy = new Date();
+  const mes = req.query.mes || `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+  const [anio, m] = mes.split('-').map(Number);
+  const desde = new Date(anio, m - 1, 1);
+  const hasta = new Date(anio, m, 1);
+  const ajustes = await sequelize.query(
+    `SELECT a."productoId", a."tipo", SUM(a."diferencia") AS diferencia, SUM(a."valor") AS valor, COUNT(*) AS num
+       FROM "ajustes_inventario" a
+      WHERE a."empresaId" = :empresaId AND a."fecha" >= :desde AND a."fecha" < :hasta AND a."tipo" IN ('CONTEO', 'MERMA', 'VENCIDO', 'CONSUMO_INTERNO')
+      GROUP BY a."productoId", a."tipo"`,
+    { type: QueryTypes.SELECT, replacements: { empresaId: req.empresaId, desde, hasta } }
+  );
+  const ids = [...new Set(ajustes.map((a) => Number(a.productoId)))];
+  const productos = ids.length
+    ? await Producto.findAll({ where: { id: ids, empresaId: req.empresaId }, attributes: ['id', 'nombre_producto', 'codigo', 'unidad_medida'], raw: true })
+    : [];
+  res.json({ mes, ...armarRanking({ productos, ajustes }) });
 };

@@ -12,6 +12,8 @@ const CATALOGO = [
   { codigo: 'ventas.anular', grupo: 'Ventas', etiqueta: 'Anular ventas directamente', descripcion: 'Sin este permiso solo puede solicitar la anulación y alguien con permiso la resuelve.' },
   { codigo: 'ventas.resolver_anulaciones', grupo: 'Ventas', etiqueta: 'Aprobar o rechazar solicitudes de anulación', descripcion: 'Resuelve las solicitudes que dejan otros usuarios.' },
   { codigo: 'ventas.devolver', grupo: 'Ventas', etiqueta: 'Registrar devoluciones de ventas', descripcion: 'Devolver parte o toda una venta (inventario y dinero).' },
+  { codigo: 'mesas.anular_items', grupo: 'Mesas', etiqueta: 'Anular pedidos ya enviados a cocina', descripcion: 'Quitar de una cuenta lo que ya se envió a cocina y cancelar cuentas con pedidos enviados.' },
+  { codigo: 'mesas.gestionar', grupo: 'Mesas', etiqueta: 'Configurar las mesas', descripcion: 'Crear, renombrar y desactivar mesas.' },
   { codigo: 'caja.todas', grupo: 'Caja', etiqueta: 'Ver y manejar las cajas de todos', descripcion: 'Sin este permiso solo ve y maneja su propia caja.' },
   { codigo: 'caja.balance', grupo: 'Caja', etiqueta: 'Ver el dinero de la empresa', descripcion: 'El balance: capital, ventas, gastos, retiros y devoluciones.' },
   { codigo: 'cartera.anular_abonos', grupo: 'Cartera', etiqueta: 'Anular abonos de clientes', descripcion: '' },
@@ -20,6 +22,8 @@ const CATALOGO = [
   { codigo: 'inventario.conteo', grupo: 'Inventario', etiqueta: 'Registrar el conteo físico', descripcion: 'Ajusta el inventario al contar.' },
   { codigo: 'costos.ver', grupo: 'Costos', etiqueta: 'Ver costos y márgenes', descripcion: 'Costo de productos y platos, margen y rentabilidad.' },
   { codigo: 'auditoria.ver', grupo: 'Administración', etiqueta: 'Ver la auditoría', descripcion: 'Quién hizo qué y cuándo.' },
+  { codigo: 'menu.gestionar', grupo: 'Menú', etiqueta: 'Gestionar el menú', descripcion: 'Categorías, precios por horario, grupos de modificadores y combos.' },
+  { codigo: 'opciones.gestionar', grupo: 'Administración', etiqueta: 'Configurar las opciones del restaurante', descripcion: 'Prender o apagar las funciones de mesas, menú, cocina y mostrador, y aplicar perfiles (cafetería, restaurante).' },
   { codigo: 'usuarios.gestionar', grupo: 'Administración', etiqueta: 'Gestionar el personal', descripcion: 'Crear y editar usuarios, solo con roles que no superen los suyos.' },
   { codigo: 'roles.gestionar', grupo: 'Administración', etiqueta: 'Gestionar roles y permisos', descripcion: 'Crear roles propios, solo con permisos que él mismo tiene.' },
 ];

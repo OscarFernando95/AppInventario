@@ -11,6 +11,11 @@ import { usePermisos } from '../../hooks/usePermisos';
 import { unidadCorta } from '../../utils/unidades';
 import { generateDevolucionPDF } from '../../utils/generateDevolucionPDF';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import { useMenu } from '../../hooks/useMenu';
+import { useOpciones } from '../../hooks/useOpciones';
+import SelectorModificadores from '../../components/SelectorModificadores';
+import { faltaElegir, hayOferta } from '../../utils/grupos';
+import { ordenarProductos, categoriasConProductos, deCategoria, precioVigente, tieneOferta } from '../../utils/menu';
 import FormError from '../../components/FormError';
 import { apiError } from '../../utils/apiError';
 import PageHeader from '../../components/ui/PageHeader';
@@ -26,7 +31,7 @@ const MAX_LOTE = 100;
 const FILTROS_VACIOS = { desde: '', hasta: '', clienteId: '', estado: '' };
 
 /** Lo vendible de un producto: porciones para un plato; stock físico para el resto. */
-const disponible = (p) => Number(p.tipo === 'RECETA' ? (p.porciones_disponibles ?? 0) : p.stock_actual);
+const disponible = (p) => Number(['RECETA', 'COMBO'].includes(p.tipo) ? (p.porciones_disponibles ?? p.disponible ?? 0) : p.stock_actual);
 
 const Ventas = () => {
   const { activeEmpresa } = useAuthStore();
@@ -189,6 +194,9 @@ const Ventas = () => {
   const [clientSearch, setClientSearch] = useState('');
   const [itemSearch, setItemSearch] = useState('');
   const [activeTab, setActiveTab] = useState('P'); // 'P' or 'S'
+  const menu = useMenu(); // categorías, fotos, agotados y ofertas (solo si sus opciones están encendidas)
+  const clienteOpcional = useOpciones().opcion('pos_cliente_opcional');
+  const [categoriaSel, setCategoriaSel] = useState(undefined); // undefined = todas
   const [viewDetalle, setViewDetalle] = useState(null);
   const { data: devolucionesDeVenta = [] } = useEmpresaQuery(
     ['ventas', 'devoluciones', viewDetalle?.id], `/ventas/${viewDetalle?.id}/devoluciones`, { enabled: !!viewDetalle && Number(viewDetalle.total_devuelto) > 0 }
@@ -231,13 +239,24 @@ const Ventas = () => {
   const displayList = useMemo(() => {
     const lower = itemSearch.toLowerCase();
     if (activeTab === 'P') {
-      let filtered = productos.filter(p => !['INSUMO', 'PREPARACION'].includes(p.tipo) && disponible(p) > 0 && ((p.nombre_producto || '').toLowerCase().includes(lower) || (p.codigo || '').toLowerCase().includes(lower)));
+      let filtered = productos.filter(p => !['INSUMO', 'PREPARACION'].includes(p.tipo) && !(p.tipo === 'COMBO' && !menu.conCombos) && disponible(p) > 0 && !(menu.conAgotados && p.agotado_hoy) && ((p.nombre_producto || '').toLowerCase().includes(lower) || (p.codigo || '').toLowerCase().includes(lower)));
+      if (menu.conCategorias) {
+        // Con categorías el catálogo sigue el orden del menú (y se puede filtrar por categoría).
+        return ordenarProductos(deCategoria(filtered, categoriaSel, menu.categorias), menu.categorias);
+      }
       return filtered.sort((a,b) => (freq.pFreq[b.id] || 0) - (freq.pFreq[a.id] || 0));
     } else {
       let filtered = servicios.filter(s => (s.nombre || '').toLowerCase().includes(lower));
       return filtered.sort((a,b) => (freq.sFreq[b.id] || 0) - (freq.sFreq[a.id] || 0));
     }
-  }, [activeTab, itemSearch, productos, servicios, freq]);
+  }, [activeTab, itemSearch, productos, servicios, freq, menu.conCombos, menu.conAgotados, menu.conCategorias, menu.categorias, categoriaSel]);
+
+  // Pestañas de categorías: las que tienen algo vendible ahora.
+  const chipsCategorias = useMemo(() => {
+    if (!menu.conCategorias) return [];
+    const vendibles = productos.filter((p) => !['INSUMO', 'PREPARACION'].includes(p.tipo) && !(p.tipo === 'COMBO' && !menu.conCombos) && disponible(p) > 0 && !(menu.conAgotados && p.agotado_hoy));
+    return categoriasConProductos(vendibles, menu.categorias);
+  }, [productos, menu.conCategorias, menu.conCombos, menu.conAgotados, menu.categorias]);
 
   const crearCliente = useMutation({
     mutationFn: (data) => api.post('/clientes', data),
@@ -266,7 +285,7 @@ const Ventas = () => {
   const [modsSel, setModsSel] = useState([]); // ids de modificadores marcados
 
   const seleccionarItem = (item, type) => {
-    if (type === 'P' && item.tipo === 'RECETA' && modificadores.length > 0) {
+    if (type === 'P' && item.tipo === 'RECETA' && hayOferta(item, modificadores, menu.grupos)) {
       setModsSel([]);
       setPersonalizar(item);
       return;
@@ -289,7 +308,9 @@ const Ventas = () => {
     const existingIdx = formData.detalles.findIndex(d => (isP ? d.productoId === item.id : d.servicioId === item.id) && (d.modKey || '') === modKey);
 
     const stock = isP ? disponible(item) : 0;
-    const precio = Number(isP ? item.precio_unitario : item.precio) + extras;
+    // Precio de lista (+ extras) y precio con que se vende hoy: con una oferta por horario vigente es menor y la factura lo muestra como descuento.
+    const lista = Number(isP ? item.precio_unitario : item.precio) + extras;
+    const precio = (isP ? precioVigente(item) : Number(item.precio)) + extras;
     if (existingIdx >= 0) {
       if (isP && formData.detalles[existingIdx].cantidad + 1 > stock) {
         return setFormError(`Stock insuficiente de ${item.nombre_producto}. Solo quedan ${formatCantidad(stock)} ${item.tipo === 'RECETA' ? 'porciones' : 'ud'}.`);
@@ -306,7 +327,7 @@ const Ventas = () => {
           servicioId: !isP ? item.id : null,
           nombre: isP ? `${item.nombre_producto}${sufijo}` : `(Serv.) ${item.nombre}`,
           cantidad: 1,
-          precio_base: precio, // precio de lista (+ extras)
+          precio_base: lista, // precio de lista (+ extras)
           precio_unitario: precio,
           tipo: type,
           maxStock: isP ? stock : null,
@@ -396,10 +417,11 @@ const Ventas = () => {
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (!formData.clienteId) return setFormError('Debes seleccionar un cliente para registrar la venta.');
+    // Con «venta de mostrador sin cliente» (cafetería) el cliente es opcional; a crédito siempre hace falta.
+    if (!formData.clienteId && (!clienteOpcional || formData.forma_pago === '2')) return setFormError('Debes seleccionar un cliente para registrar la venta.');
     if (formData.detalles.length === 0) return setFormError('El carrito está vacío.');
     emitirVenta.mutate({
-      clienteId: parseInt(formData.clienteId),
+      clienteId: formData.clienteId ? parseInt(formData.clienteId) : undefined,
       descuento_global: globalDiscount || 0,
       forma_pago: formData.forma_pago,
       // A crédito: plazo en días (el servidor calcula el vencimiento y deja el total por cobrar).
@@ -637,7 +659,7 @@ const Ventas = () => {
                {/* ZONA CLIENTE */}
                <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-6">
                  <div className="flex justify-between items-end mb-3">
-                   <label className="text-sm font-bold text-slate-700 flex items-center gap-2"><Users className="w-4 h-4"/> 1. Identificar Cliente <span className="text-red-700">*</span></label>
+                   <label className="text-sm font-bold text-slate-700 flex items-center gap-2"><Users className="w-4 h-4"/> 1. Identificar Cliente {clienteOpcional ? <span className="text-xs font-normal text-slate-500">(opcional)</span> : <span className="text-red-700">*</span>}</label>
                    {!showNewClient && <button className="text-xs font-bold text-brand-700 hover:text-brand-800 flex items-center gap-1" onClick={()=>setShowNewClient(true)}><UserPlus className="w-3.5 h-3.5"/> Alta rápida</button>}
                  </div>
 
@@ -718,17 +740,35 @@ const Ventas = () => {
                    </div>
                  </div>
                  
+                 {activeTab === 'P' && chipsCategorias.length > 1 && (
+                   <div role="tablist" aria-label="Categorías" className="flex gap-1.5 overflow-x-auto px-4 py-2 bg-white border-b border-slate-100">
+                     {[{ id: undefined, nombre: 'Todo' }, ...chipsCategorias].map((c) => {
+                       const activa = (chipsCategorias.some((x) => x.id === categoriaSel) ? categoriaSel : undefined) === c.id;
+                       return (
+                         <button key={String(c.id)} type="button" role="tab" aria-selected={activa} onClick={() => setCategoriaSel(c.id)}
+                           className={`whitespace-nowrap rounded-full border px-3.5 py-2 text-sm font-semibold min-h-10 ${activa ? 'bg-brand-700 text-white border-brand-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
+                           {c.nombre}
+                         </button>
+                       );
+                     })}
+                   </div>
+                 )}
                  <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 md:grid-cols-3 gap-3 content-start">
                    {displayList.length === 0 ? (
                      <div className="col-span-full py-8 text-center text-slate-500 font-bold text-sm">Sin coincidencias o stock agotado.</div>
                    ) : displayList.map(item => (
                      <div key={item.id} onClick={() => seleccionarItem(item, activeTab)} className="bg-white border border-slate-200 rounded-xl p-3 cursor-pointer hover:border-brand-400 hover:shadow-md transition-all active:scale-95 group flex flex-col justify-between">
                        <div>
+                         {activeTab === 'P' && menu.conFotos && item.tiene_imagen && menu.imagenes[item.id] && <img src={menu.imagenes[item.id]} alt="" className="w-full h-20 object-cover rounded-lg mb-2" />}
                          <div className="text-xs font-semibold text-slate-500 mb-1">{activeTab==='P'?item.codigo:'SVC'}</div>
                          <div className="font-bold text-slate-800 text-sm leading-tight mb-2 group-hover:text-brand-700">{activeTab==='P'?item.nombre_producto:item.nombre}</div>
                        </div>
                        <div>
-                         <div className="font-semibold text-brand-700">{formatCOP(activeTab==='P'?item.precio_unitario:item.precio)}</div>
+                         <div className="font-semibold text-brand-700">
+                           {formatCOP(activeTab==='P'?precioVigente(item):item.precio)}
+                           {activeTab === 'P' && tieneOferta(item) && <span className="ml-1.5 text-xs font-normal text-slate-400 line-through">{formatCOP(item.precio_unitario)}</span>}
+                         </div>
+                         {activeTab === 'P' && tieneOferta(item) && <div className="text-[10px] font-bold text-amber-700">{item.promo_nombre}</div>}
                          {activeTab === 'P' && <div className="text-[10px] font-bold text-slate-500 mt-1">Disp: {item.tipo === 'RECETA' ? `${formatCantidad(disponible(item))} porciones` : `${formatCantidad(item.stock_actual)} ${unidadCorta(item.unidad_medida)}`}</div>}
                        </div>
                      </div>
@@ -1194,27 +1234,13 @@ const Ventas = () => {
       <Modal open={!!personalizar} onClose={() => setPersonalizar(null)} elevated title={personalizar ? `Personalizar ${personalizar.nombre_producto}` : ''} size="md">
         <div className="space-y-3">
           <p className="text-sm text-slate-500">Marca los extras o lo que se quita. Cada combinación queda como una línea aparte.</p>
-          <ul className="space-y-2 max-h-72 overflow-y-auto">
-            {modificadores.map((m) => {
-              const marcado = modsSel.includes(m.id);
-              return (
-                <li key={m.id}>
-                  <label className={`flex items-center gap-3 rounded-xl border p-3 cursor-pointer transition-colors focus-within:ring-2 focus-within:ring-brand-600 ${marcado ? 'bg-brand-50 border-brand-200' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
-                    <input
-                      type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"
-                      checked={marcado}
-                      onChange={() => setModsSel((prev) => (marcado ? prev.filter((id) => id !== m.id) : [...prev, m.id]))}
-                    />
-                    <span className="flex-1 text-sm font-medium text-slate-800">{m.nombre}</span>
-                    <span className="text-xs font-semibold text-slate-600">{Number(m.precio_extra) > 0 ? `+${formatCOP(m.precio_extra)}` : 'Sin costo'}</span>
-                  </label>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="max-h-72 overflow-y-auto pr-1">
+            <SelectorModificadores plato={personalizar || {}} modificadores={modificadores} grupos={menu.grupos} valor={modsSel} onChange={setModsSel} />
+          </div>
+          {personalizar && faltaElegir(personalizar, modificadores, menu.grupos, modsSel) && <p role="status" className="text-sm font-medium text-amber-800">{faltaElegir(personalizar, modificadores, menu.grupos, modsSel)}</p>}
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" className="btn-secondary" onClick={() => setPersonalizar(null)}>Cancelar</button>
-            <button type="button" className="btn-primary px-6" onClick={confirmarPersonalizado}>Agregar al carrito</button>
+            <button type="button" className="btn-primary px-6" disabled={!!(personalizar && faltaElegir(personalizar, modificadores, menu.grupos, modsSel))} onClick={confirmarPersonalizado}>Agregar al carrito</button>
           </div>
         </div>
       </Modal>

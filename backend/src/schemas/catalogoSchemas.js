@@ -12,6 +12,7 @@ const stockInicial = z.coerce.number().min(0).max(9_999_999).transform(redondear
 const cantidadReceta = z.coerce.number().positive().max(9_999_999).transform(redondear3);
 
 const recetaItem = z.object({ insumoId: idRef, cantidad: cantidadReceta });
+const comboItem = z.object({ productoId: idRef, cantidad: cantidadReceta });
 
 const producto = z.object({
   codigo: z.string().trim().min(1).max(100),
@@ -35,10 +36,24 @@ const producto = z.object({
   factor_compra: z.coerce.number().positive().max(99_999_999).transform((n) => Math.round(n * 1e6) / 1e6).optional(),
   // Solo preparaciones: cuánto produce la receta (en la unidad del producto).
   rendimiento: cantidadReceta.optional(),
+  // Solo preparaciones: con stock propio, se producen por lotes (módulo Recetas, «Producción»).
+  por_lotes: z.boolean().optional(),
+  // Menú (solo se guardan con las opciones de menú encendidas): categoría, orden dentro de ella y foto pequeña (data URL).
+  categoriaId: z.preprocess((v) => (v === '' ? null : v), idRef.nullish()),
+  orden_menu: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().int().min(0).max(9999).nullish()),
+  imagen: z.preprocess((v) => (v === '' ? null : v), z.string().max(150_000).regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/, 'La foto debe ser una imagen JPG, PNG o WebP.').nullish()),
+  // Estación que lo prepara (Cocina, Barra…): a dónde van sus comandas. Vacío = la primera.
+  estacion: z.string().trim().max(30).nullish().transform((v) => (v === undefined ? undefined : (v || null))),
+  // Minutos en que debería salir el plato (alerta de demora por ítem en Cocina). Vacío = sin objetivo propio.
+  tiempo_objetivo_min: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().int().min(1).max(600).nullish()),
+  // Solo preparaciones por lotes: días que dura un lote (vacío/null = no vence).
+  vida_util_dias: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().int().min(1).max(3650).nullish()),
   // VENTA (por defecto) | INSUMO | PREPARACION | RECETA. Distinto de VENTA exige el módulo Recetas.
   tipo: z.enum(TIPOS_PRODUCTO, { error: 'Tipo de producto no válido.' }).optional(),
   // Ingredientes de un plato o preparación (solo con tipo RECETA / PREPARACION).
   receta: z.array(recetaItem).max(60).optional(),
+  // Componentes de un combo (solo con tipo COMBO): platos o productos de venta con su cantidad.
+  combo: z.array(comboItem).max(20).optional(),
 });
 // En update no se toca el stock (lo mueven compras/ventas).
 const productoUpdate = producto.partial().omit({ stock_actual: true });

@@ -1,4 +1,4 @@
-const { TIPOS_CON_RECETA } = require('../services/recetas');
+const { TIPOS_NO_COMPRABLES } = require('../services/recetas');
 const { promedioPonderado } = require('../services/costos');
 const { aUnidadBase, presentacionDe } = require('../services/presentacion');
 const { sequelize, Compra, CompraDetalle, Producto, Proveedor, Usuario } = require('../models');
@@ -59,8 +59,8 @@ exports.createCompra = async (req, res) => {
     const porId = new Map(productos.map((p) => [p.id, p]));
     for (const id of productoIds) {
       if (!porId.has(id)) throw new ValidationError('Producto inválido en un detalle de la compra.');
-      if (TIPOS_CON_RECETA.includes(porId.get(id).tipo)) {
-        throw new ValidationError(`"${porId.get(id).nombre_producto}" es un plato o preparación; no se compra (se compran sus ingredientes).`);
+      if (TIPOS_NO_COMPRABLES.includes(porId.get(id).tipo)) {
+        throw new ValidationError(`"${porId.get(id).nombre_producto}" es un plato, preparación o combo; no se compra (se compran sus ingredientes).`);
       }
     }
 

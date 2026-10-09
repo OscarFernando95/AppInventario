@@ -26,6 +26,7 @@ const Caja = sequelize.define('Caja', {
   abonos_efectivo: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
   total_egresos: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
   ventas_efectivo: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
+  propinas_efectivo: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
   efectivo_esperado: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
   monto_contado: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
   diferencia: { type: DataTypes.DECIMAL(14, 2), allowNull: true },

@@ -90,6 +90,16 @@ const Empresa = sequelize.define('Empresa', {
     defaultValue: 'COMERCIO', // COMERCIO | RESTAURANTE | SERVICIOS (sugiere módulos en el alta)
   },
   // Dinero con el que la empresa empieza en el software; referencia para medir su crecimiento.
+  // Propina sugerida al cobrar una cuenta de mesa (%). 0 = no se sugiere.
+  propina_sugerida_pct: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 10 },
+  // Un faltante al contar por encima de este % del consumo teórico se marca como alerta.
+  desviacion_alerta_pct: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 5 },
+  // Estaciones de preparación (cada una ve sus comandas) y a quién avisar cuando salta una alerta de desviación.
+  // Interruptores de funciones (ver services/opciones.js); solo lo que se cambió, el resto vale su valor por omisión.
+  opciones: { type: DataTypes.JSONB, allowNull: false, defaultValue: {} },
+  estaciones: { type: DataTypes.JSONB, allowNull: false, defaultValue: ['Cocina'] },
+  alerta_whatsapp: { type: DataTypes.STRING(30), allowNull: true },
+  alerta_correo: { type: DataTypes.STRING(120), allowNull: true },
   capital_inicial: {
     type: DataTypes.DECIMAL(14, 2),
     allowNull: false,

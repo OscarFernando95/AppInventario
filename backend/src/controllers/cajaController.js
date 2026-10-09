@@ -1,6 +1,7 @@
 'use strict';
 
-const { sequelize, Caja, CajaMovimiento, Venta, Usuario, Empresa, AbonoVenta } = require('../models');
+const { Op, fn, col } = require('sequelize');
+const { sequelize, Caja, CajaMovimiento, Venta, Usuario, Empresa, AbonoVenta, PropinaReparto, UsuarioEmpresa, Cuenta, Comanda } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { buildListWhere } = require('../utils/listFilters');
@@ -22,6 +23,7 @@ async function conResumen(caja) {
       num_ventas: caja.num_ventas,
       total_ventas: Number(caja.total_ventas),
       ventas_efectivo: Number(caja.ventas_efectivo),
+      propinas_efectivo: Number(caja.propinas_efectivo || 0),
       abonos_efectivo: Number(caja.abonos_efectivo || 0),
       total_egresos: Number(caja.total_egresos || 0),
       efectivo_esperado: Number(caja.efectivo_esperado),
@@ -92,7 +94,7 @@ exports.getCajaById = async (req, res) => {
   });
   json.ventas = await Venta.findAll({
     where: { cajaId: caja.id },
-    attributes: ['id', 'fecha', 'total', 'forma_pago', 'medio_pago', 'estado'],
+    attributes: ['id', 'fecha', 'total', 'propina', 'forma_pago', 'medio_pago', 'estado'],
     order: [['fecha', 'ASC']],
     raw: true,
   });
@@ -144,6 +146,7 @@ exports.cerrarCaja = async (req, res) => {
       num_ventas: resumen.num_ventas,
       total_ventas: resumen.total_ventas,
       ventas_efectivo: resumen.ventas_efectivo,
+      propinas_efectivo: resumen.propinas_efectivo,
       abonos_efectivo: resumen.abonos_efectivo,
       total_egresos: resumen.total_egresos,
       efectivo_esperado: resumen.efectivo_esperado,
@@ -166,12 +169,82 @@ exports.cerrarCaja = async (req, res) => {
   res.json(await conResumen(completa));
 };
 
-/** Retiro de efectivo de la caja del usuario (sacar dinero). Los pagos de gastos/compras tienen su propio flujo. */
+/**
+ * Retiro de efectivo de la caja del usuario (sacar dinero). Los pagos de gastos/compras tienen su propio flujo.
+ * `tipo` PROPINA = entrega de las propinas al personal: sale de la caja pero no es un retiro de la empresa
+ * (la propina nunca fue ingreso, así que no resta del dinero de la empresa).
+ */
 exports.registrarRetiro = async (req, res) => {
-  const { concepto, monto } = req.body;
-  const mov = await sequelize.transaction((t) => registrarEgreso(req, t, { tipo: 'RETIRO', concepto, monto }));
-  auditar(req, 'caja_retiro', { cajaId: mov.cajaId, monto: Number(mov.monto), concepto });
+  const { concepto, monto, tipo, reparto } = req.body;
+  if (reparto && tipo !== 'PROPINA') throw new ValidationError('Solo la entrega de propinas se reparte entre el personal.');
+  if (reparto) {
+    const suma = redondear2(reparto.reduce((a, r) => a + r.monto, 0));
+    if (Math.abs(suma - monto) > 0.01) throw new ValidationError(`El reparto suma ${suma.toLocaleString('es-CO')} y se entregan ${monto.toLocaleString('es-CO')}: deben coincidir.`);
+    if (new Set(reparto.map((r) => r.usuarioId)).size !== reparto.length) throw new ValidationError('Hay personas repetidas en el reparto.');
+  }
+  const mov = await sequelize.transaction(async (t) => {
+    if (reparto) {
+      const validos = await UsuarioEmpresa.count({ where: { empresaId: req.empresaId, usuarioId: reparto.map((r) => r.usuarioId) }, transaction: t });
+      if (validos !== reparto.length) throw new ValidationError('Una de las personas del reparto no pertenece a esta empresa.');
+    }
+    const m = await registrarEgreso(req, t, { tipo, concepto, monto });
+    if (reparto) {
+      await PropinaReparto.bulkCreate(reparto.map((r) => ({ empresaId: req.empresaId, movimientoId: m.id, usuarioId: r.usuarioId, monto: r.monto, fecha: m.fecha })), { transaction: t });
+    }
+    return m;
+  });
+  auditar(req, tipo === 'PROPINA' ? 'caja_propinas' : 'caja_retiro', {
+    cajaId: mov.cajaId, monto: Number(mov.monto), concepto, ...(reparto ? { repartidas: reparto.length } : {}),
+  });
   res.status(201).json(mov);
+};
+
+/**
+ * Personas de la empresa a quienes se puede repartir una entrega de propinas, con su peso en el reparto y si
+ * hoy trabajaron (abrieron una cuenta o una caja, enviaron una comanda o vendieron).
+ */
+exports.getPersonal = async (req, res) => {
+  const enlaces = await UsuarioEmpresa.findAll({ where: { empresaId: req.empresaId }, attributes: ['usuarioId', 'propina_peso'], raw: true });
+  const personas = await Usuario.findAll({
+    where: { id: enlaces.map((e) => e.usuarioId), estado: true }, attributes: ['id', 'nombre'], order: [['nombre', 'ASC']], raw: true,
+  });
+  const inicio = new Date(); inicio.setHours(0, 0, 0, 0);
+  const hoy = { [Op.gte]: inicio };
+  const [cuentas, comandas, ventas, cajas] = await Promise.all([
+    Cuenta.findAll({ where: { empresaId: req.empresaId, abierta_en: hoy }, attributes: ['usuarioId'], group: ['usuarioId'], raw: true }),
+    Comanda.findAll({ where: { empresaId: req.empresaId, enviada_en: hoy }, attributes: ['usuarioId'], group: ['usuarioId'], raw: true }),
+    Venta.findAll({ where: { empresaId: req.empresaId, fecha: hoy }, attributes: ['usuarioId'], group: ['usuarioId'], raw: true }),
+    Caja.findAll({ where: { empresaId: req.empresaId, fecha_apertura: hoy }, attributes: ['usuarioId'], group: ['usuarioId'], raw: true }),
+  ]);
+  const activos = new Set([...cuentas, ...comandas, ...ventas, ...cajas].map((r) => r.usuarioId));
+  const peso = new Map(enlaces.map((e) => [e.usuarioId, Number(e.propina_peso)]));
+  res.json(personas.map((p) => ({ ...p, peso: peso.get(p.id) ?? 1, trabajo_hoy: activos.has(p.id) })));
+};
+
+/** Propinas del rango: lo recibido en ventas, lo entregado y cuánto le tocó a cada persona. */
+exports.getPropinas = async (req, res) => {
+  const f = buildListWhere(req.query, { fecha: 'fecha' });
+  const [recibidas, entregadas, repartos] = await Promise.all([
+    Venta.sum('propina', { where: { empresaId: req.empresaId, estado: 'ACTIVA', ...f } }),
+    CajaMovimiento.sum('monto', { where: { empresaId: req.empresaId, tipo: 'PROPINA', ...f } }),
+    PropinaReparto.findAll({
+      where: { empresaId: req.empresaId, ...f },
+      attributes: ['usuarioId', [fn('SUM', col('monto')), 'total'], [fn('COUNT', col('PropinaReparto.id')), 'veces']],
+      include: [{ model: Usuario, as: 'usuario', attributes: ['nombre'] }],
+      group: ['usuarioId', 'usuario.id'],
+      raw: true,
+      nest: true,
+    }),
+  ]);
+  const porPersona = repartos.map((r) => ({ usuarioId: r.usuarioId, nombre: r.usuario.nombre, total: redondear2(r.total), veces: Number(r.veces) })).sort((a, b) => b.total - a.total);
+  const repartido = redondear2(porPersona.reduce((a, p) => a + p.total, 0));
+  res.json({
+    recibidas: redondear2(recibidas || 0),
+    entregadas: redondear2(entregadas || 0),
+    repartido,
+    sin_repartir: redondear2((entregadas || 0) - repartido),
+    por_persona: porPersona,
+  });
 };
 
 /**

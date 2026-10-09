@@ -31,6 +31,20 @@ const DevolucionVenta = require('./DevolucionVenta');
 const DevolucionVentaDetalle = require('./DevolucionVentaDetalle');
 const PagoCompra = require('./PagoCompra');
 const CajaMovimiento = require('./CajaMovimiento');
+const Produccion = require('./Produccion');
+const Mesa = require('./Mesa');
+const Cuenta = require('./Cuenta');
+const CuentaItem = require('./CuentaItem');
+const Comanda = require('./Comanda');
+const Reserva = require('./Reserva');
+const CategoriaMenu = require('./CategoriaMenu');
+const PrecioHorario = require('./PrecioHorario');
+const GrupoModificador = require('./GrupoModificador');
+const ProductoGrupo = require('./ProductoGrupo');
+const ComboItem = require('./ComboItem');
+const PropinaReparto = require('./PropinaReparto');
+const ListaEspera = require('./ListaEspera');
+const MesaBloqueo = require('./MesaBloqueo');
 const Modificador = require('./Modificador');
 const ModificadorItem = require('./ModificadorItem');
 
@@ -160,6 +174,72 @@ DevolucionVenta.hasMany(DevolucionVentaDetalle, { foreignKey: 'devolucionId', as
 DevolucionVentaDetalle.belongsTo(DevolucionVenta, { foreignKey: 'devolucionId' });
 DevolucionVentaDetalle.belongsTo(VentaDetalle, { foreignKey: 'ventaDetalleId', as: 'linea' });
 
+// Producción de preparaciones por lotes.
+Empresa.hasMany(Produccion, { foreignKey: 'empresaId' });
+Produccion.belongsTo(Empresa, { foreignKey: 'empresaId' });
+Producto.hasMany(Produccion, { foreignKey: 'productoId' });
+Produccion.belongsTo(Producto, { foreignKey: 'productoId' });
+Produccion.belongsTo(Usuario, { foreignKey: 'usuarioId' });
+
+// Mesas, cuentas abiertas y comandas.
+Empresa.hasMany(Mesa, { foreignKey: 'empresaId' });
+Mesa.belongsTo(Empresa, { foreignKey: 'empresaId' });
+Mesa.hasMany(Cuenta, { foreignKey: 'mesaId', as: 'cuentas' });
+Cuenta.belongsTo(Mesa, { foreignKey: 'mesaId', as: 'mesa' });
+Cuenta.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'mesero' });
+Cuenta.belongsTo(Cliente, { foreignKey: 'clienteId', as: 'cliente' });
+Cuenta.hasMany(CuentaItem, { foreignKey: 'cuentaId', as: 'items' });
+CuentaItem.belongsTo(Cuenta, { foreignKey: 'cuentaId', as: 'cuenta' });
+CuentaItem.belongsTo(Producto, { foreignKey: 'productoId', as: 'producto' });
+CuentaItem.belongsTo(Servicio, { foreignKey: 'servicioId', as: 'servicio' });
+CuentaItem.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+CuentaItem.belongsTo(Comanda, { foreignKey: 'comandaId', as: 'comanda' });
+Comanda.hasMany(CuentaItem, { foreignKey: 'comandaId', as: 'items' });
+Comanda.belongsTo(Cuenta, { foreignKey: 'cuentaId', as: 'cuenta' });
+Cuenta.hasMany(Comanda, { foreignKey: 'cuentaId', as: 'comandas' });
+Comanda.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'mesero' });
+Cuenta.hasMany(Venta, { foreignKey: 'cuentaId', as: 'ventas' });
+Venta.belongsTo(Cuenta, { foreignKey: 'cuentaId', as: 'cuenta' });
+
+// Reservas de mesa y reparto de propinas.
+Empresa.hasMany(Reserva, { foreignKey: 'empresaId' });
+Reserva.belongsTo(Empresa, { foreignKey: 'empresaId' });
+Reserva.belongsTo(Mesa, { foreignKey: 'mesaId', as: 'mesa' });
+Reserva.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'registro' });
+Reserva.belongsTo(Cuenta, { foreignKey: 'cuentaId', as: 'cuenta' });
+CajaMovimiento.hasMany(PropinaReparto, { foreignKey: 'movimientoId', as: 'reparto' });
+PropinaReparto.belongsTo(CajaMovimiento, { foreignKey: 'movimientoId' });
+PropinaReparto.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
+
+// Menú: categorías y precios por horario.
+Empresa.hasMany(CategoriaMenu, { foreignKey: 'empresaId' });
+CategoriaMenu.belongsTo(Empresa, { foreignKey: 'empresaId' });
+CategoriaMenu.hasMany(Producto, { foreignKey: 'categoriaId', as: 'productos' });
+Producto.belongsTo(CategoriaMenu, { foreignKey: 'categoriaId', as: 'categoria' });
+Empresa.hasMany(PrecioHorario, { foreignKey: 'empresaId' });
+PrecioHorario.belongsTo(Empresa, { foreignKey: 'empresaId' });
+
+// Grupos de modificadores y combos.
+Empresa.hasMany(GrupoModificador, { foreignKey: 'empresaId' });
+GrupoModificador.belongsTo(Empresa, { foreignKey: 'empresaId' });
+GrupoModificador.hasMany(Modificador, { foreignKey: 'grupoId', as: 'modificadores' });
+Modificador.belongsTo(GrupoModificador, { foreignKey: 'grupoId', as: 'grupo' });
+GrupoModificador.belongsToMany(Producto, { through: ProductoGrupo, foreignKey: 'grupoId', otherKey: 'productoId', as: 'platos' });
+Producto.belongsToMany(GrupoModificador, { through: ProductoGrupo, foreignKey: 'productoId', otherKey: 'grupoId', as: 'grupos' });
+Producto.hasMany(ComboItem, { foreignKey: 'comboId', as: 'combo' });
+ComboItem.belongsTo(Producto, { foreignKey: 'comboId', as: 'comboProducto' });
+ComboItem.belongsTo(Producto, { foreignKey: 'productoId', as: 'componente' });
+// Lista de espera y bloqueo de mesas.
+Empresa.hasMany(ListaEspera, { foreignKey: 'empresaId' });
+ListaEspera.belongsTo(Empresa, { foreignKey: 'empresaId' });
+ListaEspera.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'registro' });
+ListaEspera.belongsTo(Cuenta, { foreignKey: 'cuentaId', as: 'cuenta' });
+Empresa.hasMany(MesaBloqueo, { foreignKey: 'empresaId' });
+MesaBloqueo.belongsTo(Empresa, { foreignKey: 'empresaId' });
+MesaBloqueo.belongsTo(Mesa, { foreignKey: 'mesaId', as: 'mesa' });
+Mesa.hasMany(MesaBloqueo, { foreignKey: 'mesaId', as: 'bloqueos' });
+MesaBloqueo.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'registro' });
+
 // Modificadores de platos.
 Empresa.hasMany(Modificador, { foreignKey: 'empresaId' });
 Modificador.belongsTo(Empresa, { foreignKey: 'empresaId' });
@@ -177,5 +257,5 @@ LogEvento.belongsTo(Empresa, { foreignKey: 'empresaId' });
 module.exports = {
   sequelize, Empresa, Role, Usuario, Modulo, Departamento, Municipio, ActividadCiiu, Sesion,
   Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle,
-  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle, RolEmpresa, UsuarioEmpresa,
+  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle, RolEmpresa, UsuarioEmpresa, Produccion, Mesa, Cuenta, CuentaItem, Comanda, Reserva, PropinaReparto, CategoriaMenu, PrecioHorario, GrupoModificador, ProductoGrupo, ComboItem, ListaEspera, MesaBloqueo,
 };

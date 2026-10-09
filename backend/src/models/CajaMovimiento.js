@@ -8,7 +8,7 @@ const CajaMovimiento = sequelize.define('CajaMovimiento', {
   empresaId: { type: DataTypes.INTEGER, allowNull: false },
   cajaId: { type: DataTypes.INTEGER, allowNull: false },
   usuarioId: { type: DataTypes.INTEGER, allowNull: false },
-  tipo: { type: DataTypes.STRING(10), allowNull: false }, // RETIRO | GASTO | COMPRA
+  tipo: { type: DataTypes.STRING(10), allowNull: false }, // RETIRO | GASTO | COMPRA | PAGO_PROV | DEVOLUCION | PROPINA (entrega de propinas al personal)
   concepto: { type: DataTypes.STRING(255), allowNull: false },
   monto: { type: DataTypes.DECIMAL(14, 2), allowNull: false },
   fecha: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },

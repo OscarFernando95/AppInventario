@@ -82,7 +82,7 @@ async function anularVenta(req, t, ventaId, motivo) {
         throw new ValidationError('Esta venta se cobró en efectivo en una caja que ya cerró: abre tu caja para registrar la devolución del dinero.');
       }
       devolucion = await registrarEgreso(req, t, {
-        tipo: 'DEVOLUCION', concepto: `Devolución de la venta #${venta.id}`, monto: venta.total, ventaId: venta.id,
+        tipo: 'DEVOLUCION', concepto: `Devolución de la venta #${venta.id}`, monto: Number(venta.total) + Number(venta.propina || 0), ventaId: venta.id, // la propina cobrada también se devuelve
       });
     }
   }

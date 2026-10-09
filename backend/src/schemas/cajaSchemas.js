@@ -1,6 +1,6 @@
 'use strict';
 
-const { z, dinero, textoOpc } = require('./common');
+const { z, dinero, textoOpc, idRef } = require('./common');
 
 const redondear2 = (n) => Math.round(n * 100) / 100;
 const monto = dinero.max(99_999_999_999).transform(redondear2);
@@ -16,6 +16,10 @@ const cajaCerrar = z.object({
 });
 
 const cajaRetiro = z.object({
+  // RETIRO: el dueño saca dinero. PROPINA: se entregan al personal las propinas recibidas en efectivo.
+  tipo: z.enum(['RETIRO', 'PROPINA']).optional().default('RETIRO'),
+  // Solo PROPINA: cómo se reparte entre el personal (debe sumar el monto entregado).
+  reparto: z.array(z.object({ usuarioId: idRef, monto: monto.refine((n) => n > 0, 'Cada parte debe ser mayor a 0.') })).min(1).max(50).optional(),
   concepto: z.string().trim().min(1, 'Indica el concepto.').max(255),
   monto: monto.refine((n) => n > 0, 'El monto debe ser mayor a 0.'),
 });

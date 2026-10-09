@@ -1,4 +1,4 @@
-const { TIPOS_CON_RECETA } = require('../services/recetas');
+const { TIPOS_NO_COMPRABLES } = require('../services/recetas');
 const { promedioPonderado } = require('../services/costos');
 const { aUnidadBase, presentacionDe } = require('../services/presentacion');
 const { sequelize, Pedido, PedidoDetalle, Proveedor, Producto, Compra, CompraDetalle } = require('../models');
@@ -57,8 +57,8 @@ exports.createPedido = async (req, res) => {
         transaction: t,
       });
       if (!producto) throw new ValidationError('Producto inválido en un detalle del pedido.');
-      if (TIPOS_CON_RECETA.includes(producto.tipo)) {
-        throw new ValidationError(`"${producto.nombre_producto}" es un plato o preparación; no se pide (se piden sus ingredientes).`);
+      if (TIPOS_NO_COMPRABLES.includes(producto.tipo)) {
+        throw new ValidationError(`"${producto.nombre_producto}" es un plato, preparación o combo; no se pide (se piden sus ingredientes).`);
       }
       lineas.push({
         item,

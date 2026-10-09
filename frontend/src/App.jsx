@@ -27,6 +27,10 @@ import { CuentasCobrar, CuentasPagar } from './pages/app/Cartera';
 import Informes from './pages/app/Informes';
 import Auditoria from './pages/app/Auditoria';
 import Roles from './pages/app/Roles';
+import Mesas from './pages/app/Mesas';
+import Cocina from './pages/app/Cocina';
+import Opciones from './pages/app/Opciones';
+import Menu from './pages/app/Menu';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { isAuthenticated, user } = useAuthStore();
@@ -123,10 +127,14 @@ const App = () => {
           <Route path="cuentas-por-cobrar" element={<ModuloRoute modulo="Cuentas por cobrar"><CuentasCobrar /></ModuloRoute>} />
           <Route path="cuentas-por-pagar" element={<ModuloRoute modulo="Cuentas por pagar"><ConPermiso permiso="cartera.pagar"><CuentasPagar /></ConPermiso></ModuloRoute>} />
           <Route path="gastos" element={<ModuloRoute modulo="Gastos"><Gastos /></ModuloRoute>} />
+          <Route path="mesas" element={<ModuloRoute modulo="Mesas"><Mesas /></ModuloRoute>} />
+          <Route path="cocina" element={<ModuloRoute modulo="Cocina"><Cocina /></ModuloRoute>} />
           <Route path="caja" element={<ModuloRoute modulo="Caja"><Caja /></ModuloRoute>} />
           <Route path="pedidos" element={<ModuloRoute modulo="Pedidos"><Pedidos /></ModuloRoute>} />
           <Route path="informes" element={<ModuloRoute modulo="Informes"><Informes /></ModuloRoute>} />
           <Route path="admin" element={<ConPermiso permiso="usuarios.gestionar"><AdminUsuarios /></ConPermiso>} />
+          <Route path="menu" element={<ConPermiso permiso="menu.gestionar"><Menu /></ConPermiso>} />
+          <Route path="opciones" element={<ConPermiso permiso="opciones.gestionar"><Opciones /></ConPermiso>} />
           <Route path="roles" element={<ModuloRoute modulo="Roles y permisos"><ConPermiso permiso="roles.gestionar"><Roles /></ConPermiso></ModuloRoute>} />
           <Route path="auditoria" element={<ConPermiso permiso="auditoria.ver"><Auditoria /></ConPermiso>} />
         </Route>

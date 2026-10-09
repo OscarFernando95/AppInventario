@@ -285,6 +285,9 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
   if (hasGlobalDiscount) boxH += 8;
   boxH += 4; // divider space
   boxH += 10; // total line
+  // Propina voluntaria (cuentas de mesa): no es parte del total de la venta, se muestra aparte.
+  const propina = Number(venta.propina) || 0;
+  if (propina > 0) boxH += 18;
 
   // Si la tabla terminó cerca del pie (facturas con muchas líneas), el bloque de
   // totales se pasaría de página / pisaría el footer: lo llevamos a una hoja nueva.
@@ -349,6 +352,19 @@ export const generateInvoicePDF = (venta, empresa, options = {}) => {
   doc.text('TOTAL:', totalsX, lineY + 9);
   doc.setTextColor(...accent);
   doc.text(formatCOP(total), totalsX + totalsW, lineY + 9, { align: 'right' });
+
+  if (propina > 0) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.setTextColor(...textMuted);
+    doc.text('Propina voluntaria:', totalsX, lineY + 17);
+    doc.text(formatCOP(propina), totalsX + totalsW, lineY + 17, { align: 'right' });
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(...primary);
+    doc.text('TOTAL A PAGAR:', totalsX, lineY + 25);
+    doc.text(formatCOP(total + propina), totalsX + totalsW, lineY + 25, { align: 'right' });
+  }
 
   // ═══════════════════════════════════════════════
   // FOOTER

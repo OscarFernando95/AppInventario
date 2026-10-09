@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { ChefHat, Plus, Trash2, Edit, TrendingUp } from 'lucide-react';
+import { ChefHat, Plus, Trash2, Edit, TrendingUp, Soup, Undo2, Hourglass, Lightbulb, Tag } from 'lucide-react';
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { unidadCorta } from '../../utils/unidades';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
@@ -11,11 +11,26 @@ import SearchableSelect from '../../components/SearchableSelect';
 import PageHeader from '../../components/ui/PageHeader';
 import Tabs from '../../components/ui/Tabs';
 import { usePermisos } from '../../hooks/usePermisos';
+import { useAuthStore } from '../../store/authStore';
+import { useMenu } from '../../hooks/useMenu';
+import { imprimirEtiquetaLote } from '../../utils/etiquetaLote';
 import Modal, { ModalActions } from '../../components/ui/Modal';
 import Field from '../../components/ui/Field';
 import FilterBar from '../../components/ui/FilterBar';
 import { TableCard, THead, Th, Tr, Td } from '../../components/ui/Table';
 import { TableState } from '../../components/ui/DataState';
+import TablePagination from '../../components/ui/TablePagination';
+
+const LIMIT_PRODUCCION = 15;
+const fmtFecha = (v) => new Date(v).toLocaleString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+const fmtDia = (v) => (v ? new Date(`${v}T12:00:00`).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' }) : 'Sin vencimiento');
+const TONO_LOTE = {
+  VIGENTE: 'bg-emerald-100 text-emerald-800',
+  POR_VENCER: 'bg-amber-100 text-amber-800',
+  VENCIDO: 'bg-red-100 text-red-800',
+};
+const TEXTO_LOTE = { VIGENTE: 'Vigente', POR_VENCER: 'Por vencer', VENCIDO: 'Vencido' };
 
 const pct = (n) => `${Number(n).toLocaleString('es-CO', { maximumFractionDigits: 1 })}%`;
 const toneMargen = (p) => (p >= 50 ? 'text-emerald-700' : p >= 20 ? 'text-amber-700' : 'text-red-700');
@@ -130,8 +145,127 @@ const Rentabilidad = () => {
   );
 };
 
+/* ───────────────────────── Grupos de modificadores ───────────────────────── */
+const Grupos = () => {
+  const qc = useQueryClient();
+  const { data: grupos = [], isLoading, isError, error, refetch } = useEmpresaQuery(['menu', 'grupos', 'todos'], '/menu/grupos');
+  const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
+  const [abierto, setAbierto] = useState(false);
+  const [editId, setEditId] = useState(null);
+  const [form, setForm] = useState(EMPTY_GRUPO);
+  const [formError, setFormError] = useState(null);
+  const platos = productos.filter((p) => p.tipo === 'RECETA');
+  const porId = new Map(productos.map((p) => [p.id, p]));
+  const cerrar = () => { setAbierto(false); setEditId(null); setForm(EMPTY_GRUPO); setFormError(null); };
+  const refrescar = () => qc.invalidateQueries({ queryKey: ['empresa'] });
+
+  const guardar = useMutation({
+    mutationFn: (payload) => (editId ? api.put(`/menu/grupos/${editId}`, payload) : api.post('/menu/grupos', payload)),
+    onSuccess: () => { refrescar(); cerrar(); },
+    onError: (err) => setFormError(apiError(err, 'No se pudo guardar el grupo')),
+  });
+  const eliminar = useMutation({ mutationFn: (id) => api.delete(`/menu/grupos/${id}`), onSuccess: refrescar });
+
+  const abrirEdicion = (g) => {
+    setEditId(g.id);
+    setForm({ nombre: g.nombre, obligatorio: g.obligatorio, max_selecciones: g.max_selecciones == null ? '' : String(g.max_selecciones), todos: g.todos, productoIds: g.productoIds, activo: g.activo });
+    setFormError(null);
+    setAbierto(true);
+  };
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!form.nombre.trim()) return setFormError('Indica el nombre del grupo.');
+    guardar.mutate({
+      nombre: form.nombre.trim(), obligatorio: form.obligatorio, max_selecciones: form.max_selecciones === '' ? null : Number(form.max_selecciones),
+      todos: form.todos, productoIds: form.todos ? [] : form.productoIds, activo: form.activo,
+    });
+  };
+
+  return (
+    <section aria-label="Grupos de modificadores" className="card-container p-5 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-800">Grupos de modificadores</h3>
+          <p className="text-sm text-slate-500 max-w-2xl">Agrupa extras que se eligen juntos (punto de cocción, tipo de leche, tamaño). Un grupo obligatorio no deja pedir el plato sin elegir uno. Asigna cada modificador a su grupo más abajo.</p>
+        </div>
+        <button type="button" className="btn-secondary gap-2" onClick={() => { setForm(EMPTY_GRUPO); setEditId(null); setFormError(null); setAbierto(true); }}><Plus className="w-4 h-4" aria-hidden="true" /> Nuevo grupo</button>
+      </div>
+      <TableCard>
+        <THead><Th>Grupo</Th><Th>Reglas</Th><Th>Aplica a</Th><Th align="center" className="w-24">Acciones</Th></THead>
+        <tbody>
+          <TableState colSpan={4} isLoading={isLoading} isError={isError} error={error} onRetry={refetch} isEmpty={grupos.length === 0} emptyIcon={ChefHat} emptyTitle="Aún no hay grupos" emptyHint="Crea el primero con «Nuevo grupo»." />
+          {grupos.map((g) => (
+            <Tr key={g.id}>
+              <Td className={`font-medium ${g.activo ? 'text-slate-800' : 'text-slate-400 line-through'}`}>{g.nombre}</Td>
+              <Td className="text-sm">{g.obligatorio ? 'Obligatorio' : 'Opcional'} · {g.max_selecciones == null ? 'elige los que quiera' : g.max_selecciones === 1 ? 'elige uno' : `hasta ${g.max_selecciones}`}</Td>
+              <Td className="text-sm text-slate-600">{g.todos ? 'Todos los platos' : (g.productoIds.map((id) => porId.get(id)?.nombre_producto).filter(Boolean).join(', ') || <span className="text-slate-400">Ningún plato</span>)}</Td>
+              <Td align="center" className="whitespace-nowrap">
+                <button type="button" className="btn-icon" aria-label={`Editar el grupo ${g.nombre}`} onClick={() => abrirEdicion(g)}><Edit className="w-4 h-4" /></button>
+                <button type="button" className="btn-icon" aria-label={`Eliminar el grupo ${g.nombre}`} onClick={() => eliminar.mutate(g.id)}><Trash2 className="w-4 h-4" /></button>
+              </Td>
+            </Tr>
+          ))}
+        </tbody>
+      </TableCard>
+
+      <Modal open={abierto} onClose={cerrar} title={editId ? 'Editar grupo' : 'Nuevo grupo'} size="lg">
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <FormError message={formError} onDismiss={() => setFormError(null)} />
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field label="Nombre del grupo" required><input className="input-field" maxLength={60} placeholder="Punto de cocción" value={form.nombre} onChange={(e) => setForm({ ...form, nombre: e.target.value })} /></Field>
+            <Field label="Cuántos se pueden elegir">
+              <select className="input-field" value={form.max_selecciones} onChange={(e) => setForm({ ...form, max_selecciones: e.target.value })}>
+                <option value="1">Solo uno</option>
+                <option value="2">Hasta 2</option>
+                <option value="3">Hasta 3</option>
+                <option value="">Los que quiera</option>
+              </select>
+            </Field>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600" checked={form.obligatorio} onChange={(e) => setForm({ ...form, obligatorio: e.target.checked })} />
+            Obligatorio: hay que elegir al menos uno antes de pedir el plato
+          </label>
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600" checked={form.todos} onChange={(e) => setForm({ ...form, todos: e.target.checked })} />
+            Aplica a todos los platos
+          </label>
+          {!form.todos && (
+            <fieldset className="rounded-xl border border-slate-200 p-3 space-y-2">
+              <legend className="px-2 text-sm font-semibold text-brand-800">Platos a los que aplica</legend>
+              <SearchableSelect
+                options={platos.filter((p) => !form.productoIds.includes(p.id)).map((p) => ({ value: String(p.id), label: p.nombre_producto, keywords: p.codigo }))}
+                value="" onChange={(v) => v && setForm({ ...form, productoIds: [...form.productoIds, Number(v)] })} placeholder="Buscar plato…" allowClear={false}
+              />
+              <ul className="flex flex-wrap gap-2">
+                {form.productoIds.map((id) => (
+                  <li key={id} className="flex items-center gap-1 rounded-full bg-slate-100 pl-3 pr-1 py-1 text-sm">
+                    {porId.get(id)?.nombre_producto}
+                    <button type="button" className="btn-icon p-1" aria-label={`Quitar ${porId.get(id)?.nombre_producto}`} onClick={() => setForm({ ...form, productoIds: form.productoIds.filter((x) => x !== id) })}>×</button>
+                  </li>
+                ))}
+              </ul>
+            </fieldset>
+          )}
+          {editId && (
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600" checked={form.activo} onChange={(e) => setForm({ ...form, activo: e.target.checked })} />
+              Activo
+            </label>
+          )}
+          <ModalActions>
+            <button type="button" className="btn-secondary" onClick={cerrar}>Cancelar</button>
+            <button type="submit" className="btn-primary px-6" disabled={guardar.isPending}>{guardar.isPending ? 'Guardando…' : 'Guardar grupo'}</button>
+          </ModalActions>
+        </form>
+      </Modal>
+    </section>
+  );
+};
+
 /* ───────────────────────── Modificadores ───────────────────────── */
-const EMPTY_MOD = { nombre: '', precio_extra: '', activo: true, items: [] };
+const EMPTY_MOD = { nombre: '', precio_extra: '', activo: true, grupoId: '', items: [] };
+const EMPTY_GRUPO = { nombre: '', obligatorio: false, max_selecciones: '1', todos: false, productoIds: [], activo: true };
 
 const resumenItems = (items = []) => items
   .map((i) => `${Number(i.cantidad) > 0 ? '+' : '−'}${formatCantidad(Math.abs(Number(i.cantidad)))} ${unidadCorta(i.insumo?.unidad_medida)} ${i.insumo?.nombre_producto || ''}`.trim())
@@ -141,6 +275,7 @@ const Modificadores = () => {
   const queryClient = useQueryClient();
   const { data: mods = [], isLoading, isError, error, refetch } = useEmpresaQuery(['modificadores', 'todos'], '/modificadores?todos=1');
   const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
+  const menu = useMenu();
 
   const [showModal, setShowModal] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -169,6 +304,7 @@ const Modificadores = () => {
       nombre: m.nombre,
       precio_extra: Number(m.precio_extra) ? String(Number(m.precio_extra)) : '',
       activo: m.activo,
+      grupoId: m.grupoId ? String(m.grupoId) : '',
       // En pantalla: acción (agrega/quita) + cantidad positiva; al guardar se vuelve a firmar.
       items: m.items.map((i) => ({
         insumoId: String(i.insumoId), accion: Number(i.cantidad) < 0 ? 'quita' : 'agrega', cantidad: String(Math.abs(Number(i.cantidad))),
@@ -190,6 +326,7 @@ const Modificadores = () => {
       nombre: form.nombre.trim(),
       precio_extra: Number(form.precio_extra) || 0,
       activo: form.activo,
+      ...(menu.conGrupos ? { grupoId: form.grupoId === '' ? null : Number(form.grupoId) } : {}),
       items: form.items.map((i) => ({ insumoId: Number(i.insumoId), cantidad: (i.accion === 'quita' ? -1 : 1) * Number(i.cantidad) })),
     });
   };
@@ -204,6 +341,8 @@ const Modificadores = () => {
           <Plus className="w-5 h-5" aria-hidden="true" /> Nuevo modificador
         </button>
       </div>
+
+      {menu.conGrupos && <Grupos />}
 
       <TableCard>
         <THead>
@@ -220,7 +359,7 @@ const Modificadores = () => {
           />
           {mods.map((m) => (
             <Tr key={m.id}>
-              <Td className="font-medium text-slate-800">{m.nombre}</Td>
+              <Td className="font-medium text-slate-800">{m.nombre}{menu.conGrupos && m.grupoId && <span className="ml-2 text-[11px] font-semibold bg-slate-100 text-slate-600 rounded px-1.5 py-0.5">{menu.grupos.find((g) => g.id === m.grupoId)?.nombre}</span>}</Td>
               <Td align="right" className="whitespace-nowrap">{Number(m.precio_extra) > 0 ? `+${formatCOP(m.precio_extra)}` : 'Sin costo'}</Td>
               <Td className="text-sm text-slate-600">{resumenItems(m.items) || <span className="text-slate-400">Solo precio</span>}</Td>
               <Td align="center">
@@ -247,6 +386,15 @@ const Modificadores = () => {
               <input type="number" min="0" step="0.01" className="input-field" placeholder="0" value={form.precio_extra} onChange={(e) => setForm({ ...form, precio_extra: e.target.value })} />
             </Field>
           </div>
+
+          {menu.conGrupos && (
+            <Field label="Grupo" hint="Vacío = extra suelto. Los de un grupo se eligen juntos al pedir (p. ej. el punto de cocción).">
+              <select className="input-field sm:w-72" value={form.grupoId} onChange={(e) => setForm({ ...form, grupoId: e.target.value })}>
+                <option value="">Sin grupo (extra suelto)</option>
+                {menu.grupos.map((g) => <option key={g.id} value={g.id}>{g.nombre}</option>)}
+              </select>
+            </Field>
+          )}
 
           <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">
             <legend className="px-2 text-sm font-semibold text-brand-800">Ajuste de ingredientes (por porción)</legend>
@@ -291,22 +439,319 @@ const Modificadores = () => {
   );
 };
 
+/* ───────────────────────── Lotes en existencia y sugerencias ───────────────────────── */
+const LotesYSugerencias = ({ onUsar, onDescartar, descartando }) => {
+  const [dias, setDias] = useState('14');
+  const [cobertura, setCobertura] = useState('1');
+  const { data: lotes = [] } = useEmpresaQuery(['produccion', 'lotes'], '/produccion/lotes');
+  const { data: sug } = useEmpresaQuery(['produccion', 'sugerencias', dias, cobertura], async () => (
+    (await api.get('/produccion/sugerencias', { params: { dias: Number(dias) || 14, cobertura: Number(cobertura) || 1 } })).data
+  ));
+  const conExistencias = lotes.filter((p) => p.lotes.length > 0);
+  const sugerencias = (sug?.sugerencias || []).filter((s) => s.consumo_periodo > 0 || s.stock > 0);
+  if (lotes.length === 0) return null;
+
+  return (
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <section aria-label="Lotes en existencia" className="card-container p-5 space-y-3">
+        <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-800"><Hourglass className="w-5 h-5 text-brand-700" aria-hidden="true" /> Lotes en existencia</h3>
+        {conExistencias.length === 0 ? (
+          <p className="text-sm text-slate-500">No hay preparaciones en existencia.</p>
+        ) : conExistencias.map((p) => (
+          <div key={p.productoId} className="rounded-xl border border-slate-200 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-semibold text-slate-800">{p.nombre_producto} <span className="font-normal text-slate-500">· hay {formatCantidad(p.stock)} {unidadCorta(p.unidad_medida)}</span></p>
+              {p.vencido > 0 && (
+                <button type="button" className="btn-danger text-xs px-3 py-1.5" disabled={descartando} onClick={() => onDescartar(p)}>
+                  Descartar {formatCantidad(p.vencido)} {unidadCorta(p.unidad_medida)} vencidos
+                </button>
+              )}
+            </div>
+            {!p.vida_util_dias && <p className="text-xs text-slate-500 mt-1">Sin vida útil configurada: en Inventario puedes indicar cuántos días dura un lote.</p>}
+            <ul className="mt-2 space-y-1 text-sm">
+              {p.lotes.map((l, i) => (
+                <li key={l.id} className="flex items-center justify-between gap-2">
+                  <span className="text-slate-700">
+                    Lote del {fmtDia(String(l.fecha).slice(0, 10))} · {formatCantidad(l.restante)} {unidadCorta(p.unidad_medida)}
+                    {i === 0 && p.lotes.length > 1 && l.estado !== 'VENCIDO' && <span className="ml-2 text-[11px] font-semibold text-brand-700">Usar primero</span>}
+                  </span>
+                  <span className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500">{l.vence_en ? `vence ${fmtDia(l.vence_en)}` : ''}</span>
+                    <span className={`text-[11px] font-semibold rounded px-1.5 py-0.5 ${TONO_LOTE[l.estado]}`}>{TEXTO_LOTE[l.estado]}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </section>
+
+      <section aria-label="Cuánto producir" className="card-container p-5 space-y-3">
+        <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-800"><Lightbulb className="w-5 h-5 text-amber-600" aria-hidden="true" /> Cuánto producir</h3>
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="Promediar ventas de (días)" className="w-44">
+            <input type="number" min="1" max="90" className="input-field" value={dias} onChange={(e) => setDias(e.target.value)} />
+          </Field>
+          <Field label="Tener cubiertos (días)" className="w-44">
+            <input type="number" min="0.25" step="0.25" className="input-field" value={cobertura} onChange={(e) => setCobertura(e.target.value)} />
+          </Field>
+        </div>
+        {sugerencias.length === 0 ? (
+          <p className="text-sm text-slate-500">Aún no hay ventas de platos con preparaciones por lotes en este periodo.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100 text-sm">
+            {sugerencias.map((s) => (
+              <li key={s.productoId} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                <span className="min-w-0">
+                  <span className="font-medium text-slate-800">{s.nombre_producto}</span>
+                  <span className="block text-xs text-slate-500">Se gasta ~{formatCantidad(s.promedio_diario)} {unidadCorta(s.unidad_medida)} al día · hay {formatCantidad(s.stock)}</span>
+                </span>
+                {s.sugerido > 0 ? (
+                  <button type="button" className="btn-secondary text-xs gap-1" onClick={() => onUsar(s)} aria-label={`Producir ${formatCantidad(s.sugerido)} ${unidadCorta(s.unidad_medida)} de ${s.nombre_producto}`}>
+                    Producir {formatCantidad(s.sugerido)} {unidadCorta(s.unidad_medida)}
+                  </button>
+                ) : <span className="text-xs font-semibold text-emerald-700">Alcanza</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+};
+
+/* ───────────────────────── Producción por lotes ───────────────────────── */
+const Produccion = () => {
+  const queryClient = useQueryClient();
+  const { can } = usePermisos();
+  const puedeDeshacer = can('inventario.conteo');
+  const verCostos = can('costos.ver');
+  const [form, setForm] = useState({ productoId: '', cantidad: '', motivo: '' });
+  const [formError, setFormError] = useState(null);
+  const [okMsg, setOkMsg] = useState(null);
+  const [ultimoLote, setUltimoLote] = useState(null); // el lote recién producido, para imprimir su etiqueta
+  const [offset, setOffset] = useState(0);
+  const nombreEmpresa = useAuthStore((st) => st.activeEmpresa?.nombre);
+  const etiquetar = (r, p) => imprimirEtiquetaLote({
+    id: r.id, cantidad: r.cantidad, fecha: r.fecha, vence_en: r.vence_en, nombre: p?.nombre_producto, unidad: unidadCorta(p?.unidad_medida), usuario: r.Usuario?.nombre,
+  }, { empresa: nombreEmpresa });
+  const [deshacer, setDeshacer] = useState(null);
+
+  const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
+  const lotes = useMemo(() => productos.filter((p) => p.tipo === 'PREPARACION' && p.por_lotes), [productos]);
+  const porId = useMemo(() => new Map(productos.map((p) => [p.id, p])), [productos]);
+  const opciones = useMemo(
+    () => lotes.map((p) => ({ value: String(p.id), label: `${p.nombre_producto} · hay ${formatCantidad(p.stock_actual)} ${unidadCorta(p.unidad_medida)}`, keywords: p.codigo })),
+    [lotes]
+  );
+  const prep = porId.get(Number(form.productoId));
+  const cantidad = Number(form.cantidad) || 0;
+
+  // Lo que gastaría el lote: cada ingrediente directo × cantidad / rendimiento.
+  const necesidades = useMemo(() => {
+    if (!prep || !(cantidad > 0)) return [];
+    const factor = cantidad / (Number(prep.rendimiento) || 1);
+    return (prep.receta || []).map((i) => {
+      const ing = porId.get(i.insumoId);
+      const necesario = Number(i.cantidad) * factor;
+      const esSubreceta = ing?.tipo === 'PREPARACION' && !ing.por_lotes;
+      return { ing, necesario, falta: !esSubreceta && ing && Number(ing.stock_actual) < necesario - 1e-9, esSubreceta };
+    });
+  }, [prep, cantidad, porId]);
+  const hayFaltantes = necesidades.some((n) => n.falta);
+
+  const { data: historial, isLoading, isError, error, refetch } = useEmpresaQuery(['produccion', offset], async () => {
+    const res = await api.get('/produccion', { params: { limit: LIMIT_PRODUCCION, offset } });
+    return { rows: res.data, total: Number(res.headers['x-total-count'] || 0) };
+  });
+
+  const refrescar = () => queryClient.invalidateQueries({ queryKey: ['empresa'] });
+  const producir = useMutation({
+    mutationFn: (payload) => api.post('/produccion', payload),
+    onSuccess: (res) => {
+      refrescar();
+      setFormError(null);
+      setOkMsg(`Producción registrada: ${formatCantidad(res.data.cantidad)} ${unidadCorta(prep?.unidad_medida)} de ${prep?.nombre_producto}.`);
+      setUltimoLote({ ...res.data, Usuario: { nombre: useAuthStore.getState().user?.nombre }, prep });
+      setForm((f) => ({ ...f, cantidad: '', motivo: '' }));
+    },
+    onError: (err) => { setOkMsg(null); setFormError(apiError(err, 'No se pudo registrar la producción')); },
+  });
+  const descartar = useMutation({
+    mutationFn: (p) => api.post('/ajustes', { productoId: p.productoId, tipo: 'VENCIDO', cantidad: p.vencido, motivo: 'Lote vencido (producción por lotes)' }),
+    onSuccess: (_r, p) => { refrescar(); setFormError(null); setOkMsg(`Se descartaron ${formatCantidad(p.vencido)} ${unidadCorta(p.unidad_medida)} vencidos de ${p.nombre_producto}.`); },
+    onError: (err) => { setOkMsg(null); setFormError(apiError(err, 'No se pudo descartar lo vencido')); },
+  });
+  const anular = useMutation({
+    mutationFn: (id) => api.post(`/produccion/${id}/anular`),
+    onSuccess: () => { refrescar(); setDeshacer(null); setFormError(null); },
+    onError: (err) => { setDeshacer(null); setOkMsg(null); setFormError(apiError(err, 'No se pudo deshacer la producción')); },
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    setFormError(null);
+    setOkMsg(null);
+    if (!prep) return setFormError('Elige la preparación que hiciste.');
+    if (!(cantidad > 0)) return setFormError('Indica cuánto preparaste (mayor a 0).');
+    producir.mutate({ productoId: prep.id, cantidad, motivo: form.motivo.trim() || undefined });
+  };
+
+  return (
+    <div className="space-y-6">
+      <p className="text-sm text-slate-500 max-w-3xl">
+        Registra lo que preparas en lote («hoy preparé 2 litros de salsa»): se descuentan los ingredientes y la preparación suma su propio stock.
+        Al vender un plato que la usa se descuenta ella. Para que una preparación aparezca aquí, márcala «por lotes» en Inventario.
+      </p>
+
+      <FormError message={formError} onDismiss={() => setFormError(null)} />
+      {okMsg && (
+        <p role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-4 py-3">
+          <span>{okMsg}</span>
+          {ultimoLote && okMsg.startsWith('Producción registrada') && (
+            <button type="button" className="btn-secondary text-xs gap-1.5" onClick={() => etiquetar(ultimoLote, ultimoLote.prep)}><Tag className="w-3.5 h-3.5" aria-hidden="true" /> Imprimir etiqueta del lote</button>
+          )}
+        </p>
+      )}
+
+      {lotes.length === 0 ? (
+        <div className="card-container p-8 text-center text-slate-500">
+          <Soup className="w-8 h-8 mx-auto mb-2 text-slate-400" aria-hidden="true" />
+          <p className="font-semibold text-slate-700">Aún no hay preparaciones por lotes</p>
+          <p className="text-sm mt-1">En Inventario, crea una preparación (o edita una) y marca «Prepararla por lotes».</p>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="card-container p-5 space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr_2fr] gap-4">
+            <Field label="Preparación" required>
+              <SearchableSelect options={opciones} value={form.productoId} onChange={(v) => setForm({ ...form, productoId: v })} placeholder="Buscar preparación…" allowClear={false} />
+            </Field>
+            <Field label={`Cantidad preparada${prep ? ` (${unidadCorta(prep.unidad_medida)})` : ''}`} required>
+              <input type="number" step="any" min="0" className="input-field" placeholder="2000" value={form.cantidad} onChange={(e) => setForm({ ...form, cantidad: e.target.value })} />
+            </Field>
+            <Field label="Nota (opcional)">
+              <input className="input-field" maxLength={500} placeholder="Lote del lunes" value={form.motivo} onChange={(e) => setForm({ ...form, motivo: e.target.value })} />
+            </Field>
+          </div>
+
+          {necesidades.length > 0 && (
+            <div className="rounded-xl bg-slate-50 border border-slate-200 p-4">
+              <p className="text-sm font-semibold text-slate-700 mb-2">Se descontará del inventario</p>
+              <ul className="text-sm space-y-1">
+                {necesidades.map((n, i) => (
+                  <li key={i} className={n.falta ? 'text-red-700 font-semibold' : 'text-slate-700'}>
+                    {n.ing?.nombre_producto || 'Ingrediente'}: {formatCantidad(Math.round(n.necesario * 1000) / 1000)} {unidadCorta(n.ing?.unidad_medida)}
+                    {n.falta && ` — solo hay ${formatCantidad(n.ing.stock_actual)}`}
+                    {n.esSubreceta && <span className="text-slate-500 font-normal"> (sub-receta: se descuentan sus ingredientes)</span>}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="flex justify-end">
+            <button type="submit" className="btn-primary px-6 gap-2" disabled={producir.isPending || hayFaltantes}>
+              <Soup className="w-4 h-4" aria-hidden="true" /> {producir.isPending ? 'Registrando…' : 'Registrar producción'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      <LotesYSugerencias
+        onUsar={(s) => { setForm((f) => ({ ...f, productoId: String(s.productoId), cantidad: String(s.sugerido) })); setOkMsg(null); setFormError(null); }}
+        onDescartar={(p) => descartar.mutate(p)}
+        descartando={descartar.isPending}
+      />
+
+      <div>
+        <h3 className="text-lg font-semibold text-slate-800 mb-3">Historial de producción</h3>
+        <TableCard>
+          <THead>
+            <Th>Fecha</Th>
+            <Th>Preparación</Th>
+            <Th align="right">Cantidad</Th>
+            {verCostos && <Th align="right">Costo del lote</Th>}
+            <Th>Registró</Th>
+            <Th align="center">Estado</Th>
+            <Th align="center" className="w-24">Acciones</Th>
+          </THead>
+          <tbody>
+            <TableState
+              colSpan={6 + (verCostos ? 1 : 0)} isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
+              isEmpty={(historial?.rows || []).length === 0} emptyIcon={Soup}
+              emptyTitle="Aún no hay producciones" emptyHint="Cuando registres un lote aparecerá aquí."
+            />
+            {(historial?.rows || []).map((r) => (
+              <Tr key={r.id}>
+                <Td className="whitespace-nowrap text-sm">{fmtFecha(r.fecha)}</Td>
+                <Td className="font-medium text-slate-800">
+                  {r.Producto?.nombre_producto}
+                  {r.motivo && <span className="block text-xs font-normal text-slate-500">{r.motivo}</span>}
+                </Td>
+                <Td align="right" className="whitespace-nowrap">{formatCantidad(r.cantidad)} {unidadCorta(r.Producto?.unidad_medida)}</Td>
+                {verCostos && <Td align="right" className="whitespace-nowrap">{formatCOP(r.costo_total)}</Td>}
+                <Td className="text-sm">{r.Usuario?.nombre}</Td>
+                <Td align="center">
+                  <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${r.estado === 'ACTIVA' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}`}>
+                    {r.estado === 'ACTIVA' ? 'ACTIVA' : 'DESHECHA'}
+                  </span>
+                </Td>
+                <Td align="center" className="whitespace-nowrap">
+                  {r.estado === 'ACTIVA' && (
+                    <button className="btn-icon" aria-label={`Imprimir la etiqueta del lote #${r.id}`} onClick={() => etiquetar(r, r.Producto)}><Tag className="w-4 h-4" /></button>
+                  )}
+                  {puedeDeshacer && r.estado === 'ACTIVA' && (
+                    <button className="btn-icon" aria-label={`Deshacer la producción #${r.id}`} onClick={() => setDeshacer(r)}><Undo2 className="w-4 h-4" /></button>
+                  )}
+                </Td>
+              </Tr>
+            ))}
+          </tbody>
+        </TableCard>
+        <TablePagination total={historial?.total || 0} offset={offset} limit={LIMIT_PRODUCCION} onChange={setOffset} />
+      </div>
+
+      <Modal open={!!deshacer} onClose={() => setDeshacer(null)} title="Deshacer producción" size="md">
+        {deshacer && (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-700">
+              Se devolverán los ingredientes al inventario y se quitarán {formatCantidad(deshacer.cantidad)} {unidadCorta(deshacer.Producto?.unidad_medida)} de «{deshacer.Producto?.nombre_producto}».
+              Solo se puede si el lote sigue completo; si ya se usó en platos, regístralo como merma.
+            </p>
+            <ModalActions>
+              <button type="button" className="btn-secondary" onClick={() => setDeshacer(null)}>Volver</button>
+              <button type="button" className="btn-primary px-6" disabled={anular.isPending} onClick={() => anular.mutate(deshacer.id)}>
+                {anular.isPending ? 'Deshaciendo…' : 'Deshacer producción'}
+              </button>
+            </ModalActions>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+};
+
 /* ───────────────────────── Página ───────────────────────── */
 const Recetas = () => {
   const verCostos = usePermisos().can('costos.ver'); // la rentabilidad muestra costos y márgenes
   const [tab, setTab] = useState(verCostos ? 'rentabilidad' : 'modificadores');
+  const actual = !verCostos && tab === 'rentabilidad' ? 'modificadores' : tab;
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
         title="Recetas y rentabilidad"
-        description="Cuánto cuesta y cuánto deja cada plato, y los modificadores que se ofrecen al vender."
+        description="Cuánto cuesta y cuánto deja cada plato, las preparaciones por lotes y los modificadores que se ofrecen al vender."
       />
       <Tabs
-        tabs={[...(verCostos ? [{ id: 'rentabilidad', label: 'Rentabilidad' }] : []), { id: 'modificadores', label: 'Modificadores' }]}
-        value={verCostos ? tab : 'modificadores'}
+        tabs={[
+          ...(verCostos ? [{ id: 'rentabilidad', label: 'Rentabilidad' }] : []),
+          { id: 'produccion', label: 'Producción' },
+          { id: 'modificadores', label: 'Modificadores' },
+        ]}
+        value={actual}
         onChange={setTab}
       />
-      {verCostos && tab === 'rentabilidad' ? <Rentabilidad /> : <Modificadores />}
+      {actual === 'rentabilidad' ? <Rentabilidad /> : actual === 'produccion' ? <Produccion /> : <Modificadores />}
     </div>
   );
 };

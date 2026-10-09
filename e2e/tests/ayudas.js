@@ -33,7 +33,7 @@ const path = require('path');
  */
 async function ver(page, nombre) {
   if (process.env.E2E_CONSERVAR !== '1') return;
-  await page.screenshot({ path: path.join(os.tmpdir(), 'appinventario-e2e', 'capturas', `${nombre}.png`), fullPage: true });
+  await page.screenshot({ path: path.join(os.tmpdir(), (process.env.E2E_CARPETA || 'appinventario-e2e'), 'capturas', `${nombre}.png`), fullPage: true });
 }
 
 module.exports = { ver, SUPER, CAFE, TIENDA, entrar, salir, aNumero };

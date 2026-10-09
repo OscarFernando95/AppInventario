@@ -19,6 +19,6 @@ const resultado = spawnSync(
 );
 
 if (process.env.E2E_CONSERVAR !== '1') {
-  fs.rmSync(path.join(os.tmpdir(), 'appinventario-e2e'), { recursive: true, force: true });
+  fs.rmSync(path.join(os.tmpdir(), (process.env.E2E_CARPETA || 'appinventario-e2e')), { recursive: true, force: true });
 }
 process.exit(resultado.status ?? 1);

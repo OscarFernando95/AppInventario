@@ -26,14 +26,14 @@ const sustantivo = (d) => SUSTANTIVO_PRODUCTO[d.tipo] || 'producto';
 const ref = (nombre, id, prefijo = '#') => (nombre ? `«${nombre}»` : (id != null ? `${prefijo}${id}` : ''));
 
 /** Módulos por los que se puede filtrar la vista (orden = orden del menú del filtro). */
-const MODULOS = ['Ventas', 'Cuentas por cobrar', 'Compras', 'Cuentas por pagar', 'Pedidos', 'Inventario', 'Caja', 'Gastos', 'Clientes', 'Proveedores', 'Servicios', 'Recetas', 'Usuarios'];
+const MODULOS = ['Ventas', 'Cuentas por cobrar', 'Compras', 'Cuentas por pagar', 'Pedidos', 'Inventario', 'Caja', 'Mesas', 'Menú', 'Gastos', 'Clientes', 'Proveedores', 'Servicios', 'Recetas', 'Usuarios'];
 
 const EVENTOS = {
   // Ventas
   venta_creada: {
     modulo: 'Ventas',
     accion: () => 'Registró una venta',
-    descripcion: (d) => `Venta #${d.ventaId} por ${cop(d.total)}${d.clienteNombre ? ` a ${d.clienteNombre}` : ''}${d.numItems ? ` (${plural(d.numItems, 'ítem', 'ítems')})` : ''}${d.aCredito ? ` · a crédito (${d.diasCredito} días)` : ''}`,
+    descripcion: (d) => `Venta #${d.ventaId} por ${cop(d.total)}${d.clienteNombre ? ` a ${d.clienteNombre}` : ''}${d.numItems ? ` (${plural(d.numItems, 'ítem', 'ítems')})` : ''}${d.aCredito ? ` · a crédito (${d.diasCredito} días)` : ''}${d.cuenta ? ` · ${d.cuenta}` : ''}${Number(d.propina) > 0 ? ` · propina ${cop(d.propina)}` : ''}`,
   },
   venta_anulada: {
     modulo: 'Ventas',
@@ -118,6 +118,27 @@ const EVENTOS = {
     accion: () => 'Hizo un conteo físico de inventario',
     descripcion: (d) => `${plural(d.ajustados || 0, 'producto ajustado', 'productos ajustados')}, ${d.sinCambio || 0} sin diferencia · diferencia valorizada ${cop(d.valor)}`,
   },
+  produccion_registrada: {
+    modulo: 'Recetas',
+    accion: () => 'Registró una producción por lotes',
+    descripcion: (d) => `${num(d.cantidad)}${d.unidad ? ` ${d.unidad}` : ''} de ${ref(d.productoNombre, d.productoId)}`,
+  },
+  produccion_anulada: {
+    modulo: 'Recetas',
+    accion: () => 'Anuló una producción por lotes',
+    descripcion: (d) => `${num(d.cantidad)}${d.unidad ? ` ${d.unidad}` : ''} de ${ref(d.productoNombre, d.productoId)}`,
+  },
+  desviacion_alerta: {
+    modulo: 'Inventario',
+    accion: () => 'Alerta: faltante de inventario sobre el límite',
+    descripcion: (d) => `${ref(d.productoNombre, d.productoId)} · faltaron ${num(d.faltante)}${d.unidad ? ` ${d.unidad}` : ''} (${num(d.pct)} % de lo que debió gastarse; límite ${num(d.umbral)} %)`,
+  },
+  desviacion_contacto: { modulo: 'Inventario', accion: () => 'Cambió a quién se avisa de las alertas de desviación', descripcion: (d) => [d.whatsapp ? 'WhatsApp' : null, d.correo ? 'correo' : null].filter(Boolean).join(' y ') || 'Sin contactos' },
+  desviacion_umbral: {
+    modulo: 'Inventario',
+    accion: () => 'Cambió el límite de alerta de desviaciones',
+    descripcion: (d) => `Ahora ${num(d.pct)} %`,
+  },
   // Caja
   caja_abierta: {
     modulo: 'Caja',
@@ -137,6 +158,86 @@ const EVENTOS = {
     accion: () => 'Sacó dinero de la caja',
     descripcion: (d) => `${cop(d.monto)}${d.concepto ? ` · ${d.concepto}` : ''}`,
   },
+  caja_propinas: {
+    modulo: 'Caja',
+    accion: () => 'Entregó las propinas al personal',
+    descripcion: (d) => `${cop(d.monto)}${d.concepto ? ` · ${d.concepto}` : ''}${d.repartidas ? ` · repartidas entre ${plural(d.repartidas, 'persona', 'personas')}` : ''}`,
+  },
+  // Mesas y cocina
+  comanda_enviada: {
+    modulo: 'Mesas',
+    accion: () => 'Envió una comanda a cocina',
+    descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`} · comanda #${d.comandaId}${d.estacion ? ` (${d.estacion})` : ''} · ${plural(d.numItems || 0, 'ítem', 'ítems')}${d.tiempo ? ` · tiempo «${d.tiempo}»` : ''}`,
+  },
+  tiempo_disparado: {
+    modulo: 'Mesas',
+    accion: () => 'Disparó un tiempo de servicio',
+    descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`} · «${d.tiempo}» · ${plural(d.numItems || 0, 'ítem', 'ítems')} a cocina`,
+  },
+  cuenta_item_anulado: {
+    modulo: 'Mesas',
+    accion: (d) => (d.enviado ? 'Anuló un pedido ya enviado a cocina' : 'Anuló un pedido'),
+    descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`} · ${d.cantidad != null ? `${num(d.cantidad)} × ` : ''}${d.item || 'ítem'}${d.motivo ? ` · motivo: ${d.motivo}` : ''}`,
+  },
+  cuenta_cancelada: {
+    modulo: 'Mesas',
+    accion: () => 'Canceló una cuenta',
+    descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`}${d.numItems ? ` · ${plural(d.numItems, 'ítem', 'ítems')}${d.enviados ? ` (${d.enviados} ya enviados a cocina)` : ''}` : ''}${d.motivo ? ` · motivo: ${d.motivo}` : ''}`,
+  },
+  cuentas_unidas: {
+    modulo: 'Mesas',
+    accion: () => 'Unió dos cuentas',
+    descripcion: (d) => `${d.origen} pasó a ${d.destino} (${plural(d.numItems || 0, 'ítem', 'ítems')})`,
+  },
+  reserva_creada: {
+    modulo: 'Mesas',
+    accion: () => 'Registró una reserva',
+    descripcion: (d) => `${d.nombre} · ${plural(d.personas || 0, 'persona', 'personas')}${d.mesa ? ` · ${d.mesa}` : ''}${d.fecha ? ` · ${d.fecha}` : ''}`,
+  },
+  reserva_actualizada: {
+    modulo: 'Mesas',
+    accion: (d) => (d.estado === 'CANCELADA' ? 'Canceló una reserva' : d.estado === 'NO_LLEGO' ? 'Marcó una reserva como «no llegó»' : d.estado === 'SENTADA' ? 'Sentó una reserva' : 'Modificó una reserva'),
+    descripcion: (d) => `${d.nombre}${d.mesa ? ` · ${d.mesa}` : ''}`,
+  },
+  cuenta_movida: {
+    modulo: 'Mesas',
+    accion: () => 'Cambió una cuenta de mesa',
+    descripcion: (d) => `De ${d.desde} a ${d.hacia}`,
+  },
+  propina_sugerida_cambiada: { modulo: 'Mesas', accion: () => 'Cambió la propina sugerida', descripcion: (d) => (Number(d.pct) > 0 ? `Ahora ${num(d.pct)} %` : 'Ya no se sugiere propina') },
+  opciones_cambiadas: {
+    modulo: 'Mesas',
+    accion: (d) => (d.perfil ? 'Aplicó un perfil de opciones' : 'Cambió las opciones del restaurante'),
+    descripcion: (d) => [d.perfil ? `perfil «${d.perfil}»` : null, d.activadas ? `activó: ${d.activadas}` : null, d.desactivadas ? `apagó: ${d.desactivadas}` : null, d.ajustadas ? `ajustó: ${d.ajustadas}` : null].filter(Boolean).join(' · ') || 'Sin cambios',
+  },
+  categoria_menu_creada: { modulo: 'Menú', accion: () => 'Creó una categoría del menú', descripcion: (d) => ref(d.nombre, d.categoriaId) },
+  categoria_menu_actualizada: { modulo: 'Menú', accion: (d) => (d.activa === false ? 'Desactivó una categoría del menú' : 'Modificó una categoría del menú'), descripcion: (d) => ref(d.nombre, d.categoriaId) },
+  categorias_menu_ordenadas: { modulo: 'Menú', accion: () => 'Reordenó las categorías del menú', descripcion: (d) => plural(d.categorias || 0, 'categoría', 'categorías') },
+  producto_agotado: {
+    modulo: 'Menú',
+    accion: (d) => (d.agotado ? 'Marcó un plato como agotado hoy' : 'Volvió a habilitar un plato agotado'),
+    descripcion: (d) => ref(d.productoNombre, d.productoId),
+  },
+  precio_horario_creado: { modulo: 'Menú', accion: () => 'Creó una oferta por horario', descripcion: (d) => ref(d.nombre, d.reglaId) },
+  precio_horario_actualizado: { modulo: 'Menú', accion: (d) => (d.activo === false ? 'Apagó una oferta por horario' : 'Modificó una oferta por horario'), descripcion: (d) => ref(d.nombre, d.reglaId) },
+  precio_horario_eliminado: { modulo: 'Menú', accion: () => 'Eliminó una oferta por horario', descripcion: (d) => ref(d.nombre, d.reglaId) },
+  grupo_modificadores_creado: { modulo: 'Menú', accion: () => 'Creó un grupo de modificadores', descripcion: (d) => `${ref(d.nombre, d.grupoId)}${d.obligatorio ? ' · obligatorio' : ''}` },
+  grupo_modificadores_actualizado: { modulo: 'Menú', accion: (d) => (d.activo === false ? 'Desactivó un grupo de modificadores' : 'Modificó un grupo de modificadores'), descripcion: (d) => ref(d.nombre, d.grupoId) },
+  grupo_modificadores_eliminado: { modulo: 'Menú', accion: () => 'Eliminó un grupo de modificadores', descripcion: (d) => ref(d.nombre, d.grupoId) },
+  precuenta_impresa: { modulo: 'Mesas', accion: () => 'Imprimió la pre-cuenta', descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`} · ${cop(d.total)}` },
+  estaciones_cambiadas: { modulo: 'Mesas', accion: () => 'Cambió las estaciones de preparación', descripcion: (d) => d.estaciones },
+  propina_pesos_cambiados: { modulo: 'Mesas', accion: () => 'Cambió el reparto de propinas', descripcion: (d) => `Pesos de ${plural(d.personas || 0, 'persona', 'personas')}` },
+  plano_actualizado: { modulo: 'Mesas', accion: () => 'Acomodó el plano del local', descripcion: (d) => plural(d.mesas || 0, 'mesa', 'mesas') },
+  mesa_creada: { modulo: 'Mesas', accion: () => 'Creó una mesa', descripcion: (d) => ref(d.nombre, d.mesaId) },
+  mesa_actualizada: { modulo: 'Mesas', accion: (d) => (d.activa === false ? 'Desactivó una mesa' : 'Modificó una mesa'), descripcion: (d) => ref(d.nombre, d.mesaId) },
+  lista_espera_agregada: { modulo: 'Mesas', accion: () => 'Anotó a alguien en la lista de espera', descripcion: (d) => `${d.nombre} · ${plural(d.personas || 0, 'persona', 'personas')}` },
+  lista_espera_actualizada: {
+    modulo: 'Mesas',
+    accion: (d) => (d.estado === 'SENTADO' ? 'Sentó a alguien de la lista de espera' : d.estado === 'NO_LLEGO' ? 'Marcó «no llegó» en la lista de espera' : 'Sacó a alguien de la lista de espera'),
+    descripcion: (d) => `${d.nombre}${d.mesa ? ` · ${d.mesa}` : ''}`,
+  },
+  mesa_bloqueada: { modulo: 'Mesas', accion: () => 'Bloqueó una mesa', descripcion: (d) => `${d.mesa || 'Mesa'}${d.desde && d.hasta ? ` · de ${d.desde} a ${d.hasta}` : ''}${d.motivo ? ` · ${d.motivo}` : ''}` },
+  mesa_desbloqueada: { modulo: 'Mesas', accion: () => 'Desbloqueó una mesa', descripcion: (d) => d.mesa || 'Mesa' },
   // Gastos
   gasto_creado: {
     modulo: 'Gastos',

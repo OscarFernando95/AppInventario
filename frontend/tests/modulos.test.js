@@ -47,6 +47,8 @@ describe('tipos de negocio', () => {
       { id: 11, nombre_codigo: 'Gastos', requiere: [] },
       { id: 12, nombre_codigo: 'Cuentas por cobrar', requiere: ['Ventas', 'Clientes'] },
       { id: 13, nombre_codigo: 'Cuentas por pagar', requiere: ['Compras', 'Proveedores'] },
+      { id: 15, nombre_codigo: 'Mesas', requiere: ['Ventas'] },
+      { id: 16, nombre_codigo: 'Cocina', requiere: ['Mesas'] },
     ];
     for (const tipo of TIPOS_NEGOCIO) {
       const ids = idsPorNombre(tipo.sugeridos, catalogo);
@@ -55,8 +57,8 @@ describe('tipos de negocio', () => {
     }
   });
 
-  it('el restaurante sugiere Recetas y Caja; tipo desconocido cae en Comercio', () => {
-    expect(tipoNegocio('RESTAURANTE').sugeridos).toEqual(expect.arrayContaining(['Recetas', 'Caja']));
+  it('el restaurante sugiere Recetas, Mesas, Cocina y Caja; tipo desconocido cae en Comercio', () => {
+    expect(tipoNegocio('RESTAURANTE').sugeridos).toEqual(expect.arrayContaining(['Recetas', 'Mesas', 'Cocina', 'Caja']));
     expect(tipoNegocio('X').value).toBe('COMERCIO');
   });
 });

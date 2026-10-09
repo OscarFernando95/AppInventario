@@ -82,6 +82,27 @@ const Producto = sequelize.define('Producto', {
     allowNull: false,
     defaultValue: 1,
   },
+  // Solo PREPARACION: con stock propio. Se produce por lotes y al vender un plato se descuenta ella
+  // (no sus ingredientes). Sin marcar, la preparación se descuenta al vender (sin stock).
+  por_lotes: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+  },
+  // Menú: categoría y orden dentro de ella, foto (data URL pequeña) y último día en que se marcó «agotado hoy».
+  categoriaId: { type: DataTypes.INTEGER, allowNull: true },
+  orden_menu: { type: DataTypes.INTEGER, allowNull: true },
+  imagen: { type: DataTypes.TEXT, allowNull: true },
+  agotado_dia: { type: DataTypes.DATEONLY, allowNull: true },
+  // Estación que prepara este plato o bebida (Cocina, Barra…); vacío = la primera de la empresa.
+  estacion: { type: DataTypes.STRING(30), allowNull: true },
+  // Minutos en que debería salir este plato (solo con «Alertas de demora en cocina»); vacío = sin objetivo propio.
+  tiempo_objetivo_min: { type: DataTypes.INTEGER, allowNull: true },
+  // Solo preparaciones por lotes: días que dura un lote (vacío = no vence).
+  vida_util_dias: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   // Solo PREPARACION: cuánto produce la receta, en la unidad de medida del producto.
   rendimiento: {
     type: DataTypes.DECIMAL(12, 3),

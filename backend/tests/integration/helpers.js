@@ -42,11 +42,11 @@ async function seedBase(models) {
   // Caja obliga a abrir caja antes de vender y rompería los tests de ventas.
   // Los tests de restaurante/caja los activan a mano.
   const todos = await Modulo.bulkCreate(
-    ['Inventario', 'Ventas', 'Compras', 'Proveedores', 'Informes', 'Clientes', 'Servicios', 'Pedidos', 'Recetas', 'Caja', 'Gastos', 'Cuentas por cobrar', 'Cuentas por pagar', 'Roles y permisos']
+    ['Inventario', 'Ventas', 'Compras', 'Proveedores', 'Informes', 'Clientes', 'Servicios', 'Pedidos', 'Recetas', 'Caja', 'Gastos', 'Cuentas por cobrar', 'Cuentas por pagar', 'Roles y permisos', 'Mesas', 'Cocina']
       .map((nombre_codigo, i) => ({ id: i + 1, nombre_codigo })),
     { returning: true }
   );
-  const modulos = todos.filter((m) => !['Recetas', 'Caja', 'Cuentas por cobrar', 'Cuentas por pagar', 'Roles y permisos'].includes(m.nombre_codigo));
+  const modulos = todos.filter((m) => !['Recetas', 'Caja', 'Cuentas por cobrar', 'Cuentas por pagar', 'Roles y permisos', 'Mesas', 'Cocina'].includes(m.nombre_codigo));
 
   const empresa = await Empresa.create({ nombre: 'TestCo', nit: '900123456', tipo_empresa: 'SIMPLE' });
   await empresa.setModulos(modulos.map((m) => m.id));
@@ -85,4 +85,25 @@ async function seedBase(models) {
   return { empresa, usuario, usuarioSesiones, producto, servicio, cliente, proveedor };
 }
 
-module.exports = { resetDb, seedBase };
+/** Deja la empresa con los módulos base + los extra indicados (el catálogo debe existir: lo crea seedBase). */
+async function activarModulos(models, empresa, invalidar, extra = []) {
+  const todos = await models.Modulo.findAll();
+  const base = ['Inventario', 'Ventas', 'Compras', 'Proveedores', 'Informes', 'Clientes', 'Servicios', 'Pedidos', 'Gastos', 'Cuentas por cobrar', 'Cuentas por pagar'];
+  const nombres = new Set([...base, ...extra]);
+  await empresa.setModulos(todos.filter((m) => nombres.has(m.nombre_codigo)).map((m) => m.id));
+  invalidar(); // el cambio directo no pasa por el controlador
+}
+
+/** Crea un usuario de la empresa e inicia sesión con él. */
+async function loginNuevoUsuario(request, app, models, empresa, { username, rolId = 3, nombre = username }) {
+  const u = await models.Usuario.create({
+    rolId, nombre, username, contrasena_hash: await bcrypt.hash('Clave1234', 10), estado: true, must_change_password: false,
+  });
+  await u.setEmpresas([empresa.id]);
+  const a = request.agent(app);
+  const res = await a.post('/api/auth/login').send({ username, contrasena: 'Clave1234' });
+  if (res.status !== 200) throw new Error(`No se pudo iniciar sesión como ${username}: ${res.status}`);
+  return { agent: a, usuario: u };
+}
+
+module.exports = { resetDb, seedBase, activarModulos, loginNuevoUsuario };

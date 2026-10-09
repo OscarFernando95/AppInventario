@@ -1,6 +1,7 @@
 'use strict';
 
-const { sequelize, Modificador, ModificadorItem, Producto } = require('../models');
+const { sequelize, Modificador, ModificadorItem, Producto, GrupoModificador } = require('../models');
+const { opcionesDe } = require('../middlewares/opciones');
 const { ValidationError } = require('../utils/errors');
 const { auditar } = require('../utils/audit');
 
@@ -17,6 +18,15 @@ function traducirDuplicado(err) {
     return new ValidationError('Ya existe un modificador con ese nombre.');
   }
   return err;
+}
+
+/** El grupo de un modificador solo se guarda con la opción encendida y debe ser de la empresa. */
+async function aplicarGrupo(req, datos) {
+  if (!(await opcionesDe(req)).modificadores_grupos) { delete datos.grupoId; return; }
+  if (datos.grupoId) {
+    const n = await GrupoModificador.count({ where: { id: datos.grupoId, empresaId: req.empresaId } });
+    if (!n) throw new ValidationError('Grupo inválido.');
+  }
 }
 
 /** Los ingredientes de un modificador: de la empresa, sin repetir y que no sean platos. */
@@ -39,6 +49,7 @@ exports.getModificadores = async (req, res) => {
 
 exports.createModificador = async (req, res) => {
   const { items, ...datos } = req.body;
+  await aplicarGrupo(req, datos);
   try {
     const id = await sequelize.transaction(async (t) => {
       const limpios = await validarItems(req, items, t);
@@ -57,6 +68,7 @@ exports.createModificador = async (req, res) => {
 
 exports.updateModificador = async (req, res) => {
   const { items, ...datos } = req.body;
+  await aplicarGrupo(req, datos);
   try {
     const ok = await sequelize.transaction(async (t) => {
       const mod = await Modificador.findOne({ where: { id: req.params.id, empresaId: req.empresaId }, transaction: t, lock: t.LOCK.UPDATE });

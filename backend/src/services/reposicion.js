@@ -7,10 +7,12 @@
  *   VENTA / INSUMO  -> su stock.
  *   RECETA          -> porciones enteras que se pueden preparar con los ingredientes.
  *   PREPARACION     -> unidades que se pueden producir con los ingredientes (puede ser fraccionario).
+ *                      Si es POR LOTES tiene stock propio: su disponible es su stock (y su `consumo`, lo que
+ *                      gasta producir una unidad, sirve para pedir los ingredientes).
  * Un producto tiene alerta si define un mínimo (> 0) y el disponible llegó a él (o se agotó).
  */
 
-const { TIPOS_CON_RECETA, construirMapaRecetas, consumoBase, porcionesDisponibles, redondear3 } = require('./recetas');
+const { TIPOS_CON_RECETA, construirMapaRecetas, consumoBase, porcionesDisponibles, esPorLotes, redondear3 } = require('./recetas');
 
 const EPS = 1e-9;
 // Unidades "medibles" que admiten decimales al pedir (kg, g, lb, oz, L, ml); cajas, bultos, etc. se piden enteros.
@@ -51,16 +53,25 @@ function analizarProductos(productos) {
   const resultado = new Map();
 
   for (const p of productos) {
+    if (p.tipo === 'COMBO') continue; // se calcula al final: depende de la disponibilidad de sus componentes
     let disponible;
     let consumo = null;
     if (TIPOS_CON_RECETA.includes(p.tipo)) {
-      try { consumo = consumoBase(p.id, recetas, 1); } catch { consumo = new Map(); } // ciclo: dato inconsistente
-      disponible = p.tipo === 'RECETA' ? porcionesDisponibles(consumo, stockPorId) : unidadesProducibles(consumo, stockPorId);
+      try { consumo = consumoBase(p.id, recetas, 1, new Map(), [], true); } catch { consumo = new Map(); } // ciclo: dato inconsistente
+      if (esPorLotes(p)) disponible = Number(p.stock_actual);
+      else disponible = p.tipo === 'RECETA' ? porcionesDisponibles(consumo, stockPorId) : unidadesProducibles(consumo, stockPorId);
     } else {
       disponible = Number(p.stock_actual);
     }
     const estado = estadoStock(disponible, p.stock_minimo);
     resultado.set(p.id, { disponible, estado, alerta: Number(p.stock_minimo) > 0 && estado !== 'OK', consumo });
+  }
+  // Un combo está disponible mientras haya de TODOS sus componentes: los que se pueden armar con el más escaso.
+  for (const p of productos.filter((x) => x.tipo === 'COMBO')) {
+    const partes = p.combo || [];
+    const disponible = partes.length === 0 ? 0 : Math.max(0, Math.floor(Math.min(...partes.map((c) => (resultado.get(c.productoId)?.disponible ?? 0) / Number(c.cantidad))) + 1e-9));
+    // Un combo no se repone ni alerta: no tiene stock propio (se reponen sus ingredientes).
+    resultado.set(p.id, { disponible, estado: estadoStock(disponible, 0), alerta: false, consumo: null });
   }
   return resultado;
 }
@@ -90,7 +101,8 @@ function calcularReposicion(productos, analisis = analizarProductos(productos)) 
   for (const p of productos) {
     const a = analisis.get(p.id);
     if (!TIPOS_CON_RECETA.includes(p.tipo) || !a.alerta || !a.consumo) continue;
-    const objetivo = objetivoDe(p);
+    // Una preparación por lotes ya tiene existencias: solo se piden los ingredientes de lo que falta producir.
+    const objetivo = esPorLotes(p) ? Math.max(0, objetivoDe(p) - a.disponible) : objetivoDe(p);
     for (const [id, porUnidad] of a.consumo) {
       requeridoPlatos.set(id, (requeridoPlatos.get(id) || 0) + porUnidad * objetivo);
       paraPlatos.set(id, [...(paraPlatos.get(id) || []), p.nombre_producto]);
@@ -99,7 +111,7 @@ function calcularReposicion(productos, analisis = analizarProductos(productos)) 
 
   const sugerencias = [];
   for (const p of productos) {
-    if (TIPOS_CON_RECETA.includes(p.tipo)) continue;
+    if (TIPOS_CON_RECETA.includes(p.tipo) || p.tipo === 'COMBO') continue;
     const stock = Number(p.stock_actual);
     const a = analisis.get(p.id);
     const objetivoPropio = a.alerta ? objetivoDe(p) : 0;

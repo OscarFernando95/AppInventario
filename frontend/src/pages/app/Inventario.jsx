@@ -4,8 +4,11 @@ import api from '../../api/axios';
 import { PackageOpen, Plus, Upload, FileDown, CheckCircle2, AlertTriangle, Edit, Trash2, UtensilsCrossed } from 'lucide-react';
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import { useMenu } from '../../hooks/useMenu';
+import { redimensionarImagen } from '../../utils/imagen';
 import { useAuthStore } from '../../store/authStore';
 import { usePermisos } from '../../hooks/usePermisos';
+import { useOpciones } from '../../hooks/useOpciones';
 import SearchableSelect from '../../components/SearchableSelect';
 import { UNIDADES, unidadCorta, factorEstandar, etiquetaPresentacion, presentacionDe } from '../../utils/unidades';
 import FormError from '../../components/FormError';
@@ -21,7 +24,8 @@ import { TableState } from '../../components/ui/DataState';
 const EMPTY_FORM = {
   codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
   porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: '',
-  tipo: 'VENTA', receta: [], costo_promedio: '', rendimiento: '',
+  tipo: 'VENTA', receta: [], costo_promedio: '', rendimiento: '', por_lotes: false, vida_util_dias: '', estacion: '', combo: [], tiempo_objetivo_min: '', // combo: [{ productoId, cantidad }]
+  categoriaId: '', orden_menu: '', imagenNueva: undefined, // menú: undefined = no tocar la foto; '' = quitarla; texto = foto nueva
   unidad_compra: '', factor_compra: '', presOtra: false, // presentación de compra (kg, caja…)
   stock_minimo: '', stock_objetivo: '', // alerta de reposición
 };
@@ -31,10 +35,13 @@ const TIPOS = {
   INSUMO: { label: 'Insumo', tone: 'bg-amber-100 text-amber-800' },
   PREPARACION: { label: 'Preparación', tone: 'bg-violet-100 text-violet-800' },
   RECETA: { label: 'Plato', tone: 'bg-brand-100 text-brand-800' },
+  COMBO: { label: 'Combo', tone: 'bg-rose-100 text-rose-800' },
 };
 
 /** Tipos con receta (sin stock propio) y tipos que no llevan precio de venta. */
 const CON_RECETA = ['RECETA', 'PREPARACION'];
+/** Tipos sin stock ni compra propios (platos, preparaciones y combos). */
+const SIN_STOCK = [...CON_RECETA, 'COMBO'];
 const SIN_PRECIO = ['INSUMO', 'PREPARACION'];
 
 const IMPORT_OPCIONES_INICIALES = { modoCantidad: 'sumar', modoPrecio: 'conservar' };
@@ -58,6 +65,27 @@ const Inventario = () => {
   const conRecetas = useAuthStore((st) => (st.activeEmpresa?.modulos || []).includes('Recetas'));
   const verCostos = usePermisos().can('costos.ver'); // sin él no se muestran ni se editan costos ni márgenes
   const columnaCosto = conRecetas && verCostos;
+  // Estaciones de preparación (solo si la empresa usa Mesas): a qué pantalla llega la comanda de cada plato.
+  const menu = useMenu();
+  const [errorFoto, setErrorFoto] = useState(null);
+  const elegirFoto = async (e) => {
+    const archivo = e.target.files?.[0];
+    e.target.value = '';
+    if (!archivo) return;
+    try {
+      setErrorFoto(null);
+      setFormData((f) => ({ ...f, imagenNueva: '' }));
+      const url = await redimensionarImagen(archivo);
+      setFormData((f) => ({ ...f, imagenNueva: url }));
+    } catch (err) {
+      setErrorFoto(err.message);
+    }
+  };
+  const conMesas = useAuthStore((st) => (st.activeEmpresa?.modulos || []).includes('Mesas'));
+  const { data: tableroConfig } = useEmpresaQuery(['mesas', 'config'], '/mesas', { enabled: conMesas });
+  const estaciones = tableroConfig?.config?.estaciones || ['Cocina'];
+  // Objetivo de preparación por plato (solo con la opción «Alertas de demora en cocina»).
+  const conAlertas = useOpciones().opcion('cocina_alertas', false);
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState(null);
@@ -91,8 +119,15 @@ const Inventario = () => {
   // Ingredientes posibles: todo lo que no sea un plato (y no el propio plato).
   const opcionesIngrediente = useMemo(
     () => productos
-      .filter((p) => p.tipo !== 'RECETA' && p.id !== editId)
+      .filter((p) => !['RECETA', 'COMBO'].includes(p.tipo) && p.id !== editId)
       .map((p) => ({ value: String(p.id), label: `${p.nombre_producto} (${unidadCorta(p.unidad_medida)})`, keywords: p.codigo })),
+    [productos, editId]
+  );
+  // Componentes posibles de un combo: platos y productos de venta (no insumos, preparaciones ni otros combos).
+  const opcionesComponente = useMemo(
+    () => productos
+      .filter((p) => ['VENTA', 'RECETA'].includes(p.tipo) && p.id !== editId)
+      .map((p) => ({ value: String(p.id), label: `${p.nombre_producto} · ${TIPOS[p.tipo].label}`, keywords: p.codigo })),
     [productos, editId]
   );
   const productoPorId = useMemo(() => new Map(productos.map((p) => [p.id, p])), [productos]);
@@ -125,8 +160,16 @@ const Inventario = () => {
       porcentaje_iva: p.porcentaje_iva ?? '19', unidad_medida: p.unidad_medida || '94',
       codigo_estandar: p.codigo_estandar || '',
       tipo: p.tipo || 'VENTA',
-      costo_promedio: CON_RECETA.includes(p.tipo) ? '' : String(Number(p.costo_promedio ?? 0) || ''),
+      combo: (p.combo || []).map((c) => ({ productoId: String(c.productoId), cantidad: String(Number(c.cantidad)) })),
+      costo_promedio: SIN_STOCK.includes(p.tipo) ? '' : String(Number(p.costo_promedio ?? 0) || ''),
       rendimiento: p.tipo === 'PREPARACION' ? String(Number(p.rendimiento)) : '',
+      por_lotes: p.tipo === 'PREPARACION' && !!p.por_lotes,
+      vida_util_dias: p.vida_util_dias ? String(p.vida_util_dias) : '',
+      estacion: p.estacion || '',
+      categoriaId: p.categoriaId ? String(p.categoriaId) : '',
+      orden_menu: p.orden_menu != null ? String(p.orden_menu) : '',
+      imagenNueva: undefined,
+      tiempo_objetivo_min: p.tiempo_objetivo_min ? String(p.tiempo_objetivo_min) : '',
       stock_minimo: Number(p.stock_minimo) ? String(Number(p.stock_minimo)) : '',
       stock_objetivo: p.stock_objetivo != null ? String(Number(p.stock_objetivo)) : '',
       unidad_compra: p.unidad_compra || '',
@@ -157,16 +200,27 @@ const Inventario = () => {
     setFormError(null);
 
     const esPlato = CON_RECETA.includes(formData.tipo);
+    const sinCompra = SIN_STOCK.includes(formData.tipo); // no se compra ni lleva stock propio
     const payload = {
       ...formData,
       // Un insumo / preparación no se vende: el precio no aplica (el backend lo exige, va en 0).
       precio_unitario: SIN_PRECIO.includes(formData.tipo) ? (formData.precio_unitario || 0) : formData.precio_unitario,
-      costo_promedio: esPlato || formData.costo_promedio === '' ? undefined : Number(formData.costo_promedio),
+      costo_promedio: sinCompra || formData.costo_promedio === '' ? undefined : Number(formData.costo_promedio),
       rendimiento: formData.tipo === 'PREPARACION' ? Number(formData.rendimiento) : undefined,
+      por_lotes: formData.tipo === 'PREPARACION' ? !!formData.por_lotes : undefined,
+      estacion: ['VENTA', 'RECETA', 'COMBO'].includes(formData.tipo) ? (formData.estacion || null) : undefined,
+      categoriaId: menu.conCategorias && ['VENTA', 'RECETA', 'COMBO'].includes(formData.tipo) ? (formData.categoriaId === '' ? null : Number(formData.categoriaId)) : undefined,
+      orden_menu: menu.conCategorias && ['VENTA', 'RECETA', 'COMBO'].includes(formData.tipo) ? (formData.orden_menu === '' ? null : Number(formData.orden_menu)) : undefined,
+      imagen: menu.conFotos ? formData.imagenNueva : undefined,
+      imagenNueva: undefined,
+      // Objetivo de preparación: solo con «Alertas de demora en cocina» encendida (si no, ni se manda).
+      tiempo_objetivo_min: conAlertas && ['VENTA', 'RECETA'].includes(formData.tipo) ? (formData.tiempo_objetivo_min === '' ? null : Number(formData.tiempo_objetivo_min)) : undefined,
+      vida_util_dias: formData.tipo === 'PREPARACION' && formData.por_lotes ? (formData.vida_util_dias === '' ? null : Number(formData.vida_util_dias)) : undefined,
       // Presentación de compra: vacía = se compra en la unidad base (null la quita al editar).
-      unidad_compra: esPlato ? undefined : (formData.unidad_compra.trim() || null),
-      factor_compra: !esPlato && formData.unidad_compra.trim() ? Number(formData.factor_compra) : undefined,
+      unidad_compra: sinCompra ? undefined : (formData.unidad_compra.trim() || null),
+      factor_compra: !sinCompra && formData.unidad_compra.trim() ? Number(formData.factor_compra) : undefined,
       presOtra: undefined,
+      combo: formData.tipo === 'COMBO' ? formData.combo.map((c) => ({ productoId: Number(c.productoId), cantidad: Number(c.cantidad) })) : undefined,
       stock_minimo: Number(formData.stock_minimo) || 0,
       stock_objetivo: formData.stock_objetivo === '' ? null : Number(formData.stock_objetivo),
       receta: undefined,
@@ -176,6 +230,10 @@ const Inventario = () => {
     }
     if (formData.tipo === 'PREPARACION' && !(payload.rendimiento > 0)) {
       return setFormError('Indica cuánto rinde la preparación (p. ej. 1000 ml).');
+    }
+    if (formData.tipo === 'COMBO') {
+      if (formData.combo.length < 2) return setFormError('Un combo necesita al menos dos productos.');
+      if (formData.combo.some((c) => !c.productoId || !(Number(c.cantidad) > 0))) return setFormError('Cada componente necesita un producto y una cantidad mayor a 0.');
     }
     if (esPlato) {
       const items = formData.receta.filter((r) => r.insumoId || r.cantidad);
@@ -191,7 +249,7 @@ const Inventario = () => {
       delete payload.stock_actual;
       guardar.mutate(payload);
     } else {
-      guardar.mutate({ ...payload, stock_actual: esPlato ? 0 : (parseFloat(formData.stock_actual) || 0) });
+      guardar.mutate({ ...payload, stock_actual: sinCompra ? 0 : (parseFloat(formData.stock_actual) || 0) });
     }
   };
 
@@ -297,10 +355,12 @@ const Inventario = () => {
               </Td>
               <Td align="center">
                 <span className={`inline-block px-4 py-1.5 rounded-full text-xs font-semibold tracking-wide whitespace-nowrap ${stockTone(p)}`}>
-                  {p.tipo === 'RECETA'
-                    ? `${formatCantidad(p.disponible)} porciones`
+                  {p.tipo === 'RECETA' || p.tipo === 'COMBO'
+                    ? `${formatCantidad(p.disponible)} ${p.tipo === 'COMBO' ? 'combos' : 'porciones'}`
                     : p.tipo === 'PREPARACION'
-                      ? `${formatCantidad(p.disponible)} ${unidadCorta(p.unidad_medida)} producibles`
+                      ? (p.por_lotes
+                        ? `${formatCantidad(p.stock_actual)} ${unidadCorta(p.unidad_medida)} preparados`
+                        : `${formatCantidad(p.disponible)} ${unidadCorta(p.unidad_medida)} producibles`)
                       : `${formatCantidad(p.stock_actual)} ${unidadCorta(p.unidad_medida)}`}
                 </span>
                 {Number(p.stock_minimo) > 0 && (
@@ -336,14 +396,15 @@ const Inventario = () => {
         <form onSubmit={handleSubmit} className="space-y-4">
           <FormError message={formError} onDismiss={() => setFormError(null)} />
 
-          {conRecetas && (
+          {(conRecetas || menu.conCombos) && (
             <Field
               label="¿Qué vas a registrar?"
               hint={{
                 VENTA: 'Se compra y se vende tal cual (gaseosa, snack…).',
                 INSUMO: 'Ingrediente: se compra y se gasta en recetas; no se vende solo.',
-                PREPARACION: 'Sub-receta (salsa, masa…): se prepara en lotes y la usan otros platos; no se vende ni se compra.',
+                PREPARACION: 'Sub-receta (salsa, masa…): la usan otros platos; no se vende ni se compra.',
                 RECETA: 'Plato o bebida preparada: al venderlo descuenta sus ingredientes.',
+                COMBO: 'Varios platos o productos a un solo precio (café + croissant): al venderlo descuenta lo de cada componente.',
               }[formData.tipo]}
             >
               <select className="input-field" value={formData.tipo} onChange={(e) => setFormData({ ...formData, tipo: e.target.value })}>
@@ -351,6 +412,7 @@ const Inventario = () => {
                 <option value="INSUMO">Insumo (ingrediente)</option>
                 <option value="PREPARACION">Preparación (sub-receta)</option>
                 <option value="RECETA">Plato (con receta)</option>
+                {menu.conCombos && <option value="COMBO">Combo (varios productos juntos)</option>}
               </select>
             </Field>
           )}
@@ -378,9 +440,9 @@ const Inventario = () => {
               <Field label="Rendimiento de la receta" required hint="Cuánto produce esta receta, en la unidad de medida (p. ej. 1000 ml).">
                 <input type="number" step="any" min="0" className="input-field" placeholder="1000" value={formData.rendimiento} onChange={(e) => setFormData({ ...formData, rendimiento: e.target.value })} />
               </Field>
-            ) : formData.tipo === 'RECETA' ? (
-              <Field label="Disponibilidad" hint="Sale de los ingredientes: se calcula sola.">
-                <input className="input-field bg-slate-50 text-slate-500" readOnly value={editId ? `${formatCantidad(productoPorId.get(editId)?.porciones_disponibles ?? 0)} porciones` : 'Se calcula con la receta'} />
+            ) : formData.tipo === 'RECETA' || formData.tipo === 'COMBO' ? (
+              <Field label="Disponibilidad" hint={formData.tipo === 'COMBO' ? 'Sale de lo que haya de cada componente: se calcula sola.' : 'Sale de los ingredientes: se calcula sola.'}>
+                <input className="input-field bg-slate-50 text-slate-500" readOnly value={editId ? `${formatCantidad(productoPorId.get(editId)?.porciones_disponibles ?? 0)} ${formData.tipo === 'COMBO' ? 'combos' : 'porciones'}` : 'Se calcula solo'} />
               </Field>
             ) : editId ? (
               <Field label="Stock actual" hint="El stock se ajusta con Compras y Ventas, no aquí.">
@@ -393,7 +455,7 @@ const Inventario = () => {
             )}
           </div>
 
-          {columnaCosto && !CON_RECETA.includes(formData.tipo) && (
+          {columnaCosto && !SIN_STOCK.includes(formData.tipo) && (
             <Field
               label={`Costo por ${unidadCorta(formData.unidad_medida)} ($)`}
               hint="Con cada compra se recalcula como promedio ponderado. Úsalo para fijar el costo inicial."
@@ -405,7 +467,81 @@ const Inventario = () => {
             </Field>
           )}
 
-          <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">
+          {(menu.conCategorias || menu.conFotos) && ['VENTA', 'RECETA', 'COMBO'].includes(formData.tipo) && (
+            <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">
+              <legend className="px-2 text-sm font-semibold text-brand-800">En el menú</legend>
+              {menu.conCategorias && (
+                <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr] gap-4">
+                  <Field label="Categoría">
+                    <select className="input-field" value={formData.categoriaId} onChange={(e) => setFormData({ ...formData, categoriaId: e.target.value })}>
+                      <option value="">Sin categoría</option>
+                      {menu.categorias.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Posición en la categoría" hint="Menor sale primero. Vacío = por nombre.">
+                    <input type="number" min="0" className="input-field" value={formData.orden_menu} onChange={(e) => setFormData({ ...formData, orden_menu: e.target.value })} />
+                  </Field>
+                </div>
+              )}
+              {menu.conFotos && (
+                <div className="flex items-center gap-4">
+                  {(formData.imagenNueva || (formData.imagenNueva === undefined && editId && menu.imagenes[editId])) ? (
+                    <img src={formData.imagenNueva || menu.imagenes[editId]} alt="Foto del producto" className="w-20 h-20 object-cover rounded-xl border border-slate-200" />
+                  ) : <div className="w-20 h-20 rounded-xl border border-dashed border-slate-300 grid place-items-center text-xs text-slate-400">Sin foto</div>}
+                  <div className="space-y-1.5">
+                    <label className="btn-secondary text-sm cursor-pointer inline-flex">
+                      Elegir foto
+                      <input type="file" accept="image/*" className="sr-only" aria-label="Foto del producto" onChange={elegirFoto} />
+                    </label>
+                    {(formData.imagenNueva || (formData.imagenNueva === undefined && editId && menu.imagenes[editId])) && (
+                      <button type="button" className="block text-xs font-semibold text-red-700 hover:underline" onClick={() => setFormData({ ...formData, imagenNueva: '' })}>Quitar foto</button>
+                    )}
+                    <p className="text-xs text-slate-500">Se reduce sola a un tamaño liviano.</p>
+                    {errorFoto && <p role="alert" className="text-xs font-medium text-red-700">{errorFoto}</p>}
+                  </div>
+                </div>
+              )}
+            </fieldset>
+          )}
+          {conMesas && ['VENTA', 'RECETA'].includes(formData.tipo) && estaciones.length > 1 && (
+            <Field label="Estación que lo prepara" hint="A qué pantalla de preparación llega su comanda (Cocina, Barra…). Vacío = la primera.">
+              <select className="input-field sm:w-60" value={formData.estacion} onChange={(e) => setFormData({ ...formData, estacion: e.target.value })}>
+                <option value="">{estaciones[0]} (por omisión)</option>
+                {estaciones.slice(1).map((e) => <option key={e} value={e}>{e}</option>)}
+              </select>
+            </Field>
+          )}
+          {conAlertas && ['VENTA', 'RECETA'].includes(formData.tipo) && (
+            <Field label="Tiempo objetivo de preparación (min)" hint="Si en cocina pasa de este tiempo, el plato se marca como demorado. Vacío = sin objetivo propio.">
+              <input
+                type="number" min="1" max="600" step="1" className="input-field sm:w-40" placeholder="Sin objetivo"
+                value={formData.tiempo_objetivo_min} onChange={(e) => setFormData({ ...formData, tiempo_objetivo_min: e.target.value })}
+              />
+            </Field>
+          )}
+          {formData.tipo === 'PREPARACION' && (
+            <label className="flex items-start gap-3 rounded-xl border border-slate-200 p-4 text-sm text-slate-700 cursor-pointer">
+              <input
+                type="checkbox" className="mt-0.5 w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600"
+                checked={!!formData.por_lotes} onChange={(e) => setFormData({ ...formData, por_lotes: e.target.checked })}
+              />
+              <span>
+                <strong className="text-slate-800">Prepararla por lotes (con su propio stock)</strong>
+                <span className="block text-xs text-slate-500 mt-0.5">
+                  Registras «hoy preparé 2 litros» en Recetas → Producción: se descuentan los ingredientes y se suma el stock de la
+                  preparación. Al vender un plato se descuenta ella, no sus ingredientes; si no hay, no se puede vender.
+                  Sin marcar, los ingredientes se descuentan al vender cada plato.
+                </span>
+              </span>
+            </label>
+          )}
+          {formData.tipo === 'PREPARACION' && formData.por_lotes && (
+            <Field label="Vida útil de un lote (días)" hint="Opcional. Con ella se sabe cuándo vence cada lote y qué parte del stock hay que descartar.">
+              <input type="number" min="1" step="1" className="input-field sm:w-48" placeholder="3" value={formData.vida_util_dias} onChange={(e) => setFormData({ ...formData, vida_util_dias: e.target.value })} />
+            </Field>
+          )}
+
+          {formData.tipo !== 'COMBO' && <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">
             <legend className="px-2 text-sm font-semibold text-brand-800">Alerta de reposición</legend>
             <p className="text-xs text-slate-500">
               Avisa cuando {formData.tipo === 'RECETA' ? 'las porciones que se pueden preparar' : formData.tipo === 'PREPARACION' ? 'las unidades que se pueden producir' : 'el stock'} lleguen
@@ -419,9 +555,9 @@ const Inventario = () => {
                 <input type="number" step="any" min="0" className="input-field" placeholder="Automático" value={formData.stock_objetivo} onChange={(e) => setFormData({ ...formData, stock_objetivo: e.target.value })} />
               </Field>
             </div>
-          </fieldset>
+          </fieldset>}
 
-          {!CON_RECETA.includes(formData.tipo) && (
+          {!SIN_STOCK.includes(formData.tipo) && (
             <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">
               <legend className="px-2 text-sm font-semibold text-brand-800">Presentación de compra (opcional)</legend>
               <p className="text-xs text-slate-500">
@@ -450,6 +586,36 @@ const Inventario = () => {
                   </Field>
                 )}
               </div>
+            </fieldset>
+          )}
+
+          {formData.tipo === 'COMBO' && (
+            <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">
+              <legend className="px-2 text-sm font-semibold text-brand-800">Qué incluye el combo</legend>
+              {formData.combo.map((c, idx) => {
+                const comp = productoPorId.get(Number(c.productoId));
+                return (
+                  <div key={idx} className="grid grid-cols-[1fr_6rem_auto] gap-2 items-end">
+                    <Field label={idx === 0 ? 'Plato o producto' : undefined}>
+                      <SearchableSelect
+                        options={opcionesComponente} value={c.productoId} placeholder="Buscar plato o producto…" allowClear={false}
+                        onChange={(v) => setFormData((f) => ({ ...f, combo: f.combo.map((x, i) => (i === idx ? { ...x, productoId: v } : x)) }))}
+                      />
+                    </Field>
+                    <Field label={idx === 0 ? `Cantidad${comp ? ` (${comp.tipo === 'RECETA' ? 'porc.' : unidadCorta(comp.unidad_medida)})` : ''}` : undefined}>
+                      <input
+                        type="number" step="any" min="0" className="input-field" aria-label={`Cantidad de ${comp?.nombre_producto || 'componente'}`}
+                        value={c.cantidad} onChange={(e) => setFormData((f) => ({ ...f, combo: f.combo.map((x, i) => (i === idx ? { ...x, cantidad: e.target.value } : x)) }))}
+                      />
+                    </Field>
+                    <button type="button" className="btn-icon mb-0.5" aria-label="Quitar componente" onClick={() => setFormData((f) => ({ ...f, combo: f.combo.filter((_, i) => i !== idx) }))}><Trash2 className="w-4 h-4" /></button>
+                  </div>
+                );
+              })}
+              <button type="button" className="btn-secondary gap-2 text-sm" onClick={() => setFormData((f) => ({ ...f, combo: [...f.combo, { productoId: '', cantidad: '1' }] }))}>
+                <Plus className="w-4 h-4" aria-hidden="true" /> Agregar componente
+              </button>
+              <p className="text-xs text-slate-500">Un combo necesita al menos dos. Su costo y su disponibilidad salen de los componentes.</p>
             </fieldset>
           )}
 
