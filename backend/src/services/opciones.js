@@ -21,6 +21,11 @@ const OPCIONES = [
   { clave: 'unir_cuentas', grupo: 'Mesas', tipo: 'bool', defecto: true, modulos: ['Mesas'], etiqueta: 'Unir cuentas', descripcion: 'Juntar la cuenta de dos mesas en una.' },
   { clave: 'cuenta_por_persona', grupo: 'Mesas', tipo: 'bool', defecto: true, modulos: ['Mesas'], etiqueta: 'Pedir y cobrar por persona', descripcion: 'Asignar cada pedido a una persona de la mesa y cobrarle a cada quien lo suyo.' },
   { clave: 'propina', grupo: 'Mesas', tipo: 'bool', defecto: true, modulos: ['Mesas'], etiqueta: 'Propina al cobrar', descripcion: 'Ofrecer la propina voluntaria al cobrar una cuenta de mesa.' },
+  // ── Lista de espera, bloqueos, ocupación y calendario (nuevas: nacen apagadas) ─────────────
+  { clave: 'lista_espera', grupo: 'Mesas', tipo: 'bool', defecto: false, modulos: ['Mesas'], etiqueta: 'Lista de espera', descripcion: 'Anotar a los clientes sin reserva que esperan mesa, avisarles por WhatsApp y sentarlos cuando se libere una.' },
+  { clave: 'bloqueo_mesas', grupo: 'Mesas', tipo: 'bool', defecto: false, modulos: ['Mesas'], etiqueta: 'Bloqueo de mesas', descripcion: 'Sacar una mesa de servicio por un rato (evento, mantenimiento): no se puede abrir cuenta ni reservarla.' },
+  { clave: 'tiempo_ocupacion', grupo: 'Mesas', tipo: 'bool', defecto: false, modulos: ['Mesas'], etiqueta: 'Tiempo de ocupación', descripcion: 'Informe de cuánto dura cada mesa ocupada y cuántas veces rota por día.' },
+  { clave: 'reservas_calendario', grupo: 'Mesas', tipo: 'bool', defecto: false, modulos: ['Mesas'], requiere: ['reservas'], etiqueta: 'Calendario de reservas', descripcion: 'Ver las reservas de cualquier día y de la semana completa, no solo las de hoy.' },
 ];
 
 const POR_CLAVE = new Map(OPCIONES.map((o) => [o.clave, o]));

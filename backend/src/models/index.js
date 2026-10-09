@@ -38,6 +38,8 @@ const CuentaItem = require('./CuentaItem');
 const Comanda = require('./Comanda');
 const Reserva = require('./Reserva');
 const PropinaReparto = require('./PropinaReparto');
+const ListaEspera = require('./ListaEspera');
+const MesaBloqueo = require('./MesaBloqueo');
 const Modificador = require('./Modificador');
 const ModificadorItem = require('./ModificadorItem');
 
@@ -203,6 +205,17 @@ CajaMovimiento.hasMany(PropinaReparto, { foreignKey: 'movimientoId', as: 'repart
 PropinaReparto.belongsTo(CajaMovimiento, { foreignKey: 'movimientoId' });
 PropinaReparto.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
 
+// Lista de espera y bloqueo de mesas.
+Empresa.hasMany(ListaEspera, { foreignKey: 'empresaId' });
+ListaEspera.belongsTo(Empresa, { foreignKey: 'empresaId' });
+ListaEspera.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'registro' });
+ListaEspera.belongsTo(Cuenta, { foreignKey: 'cuentaId', as: 'cuenta' });
+Empresa.hasMany(MesaBloqueo, { foreignKey: 'empresaId' });
+MesaBloqueo.belongsTo(Empresa, { foreignKey: 'empresaId' });
+MesaBloqueo.belongsTo(Mesa, { foreignKey: 'mesaId', as: 'mesa' });
+Mesa.hasMany(MesaBloqueo, { foreignKey: 'mesaId', as: 'bloqueos' });
+MesaBloqueo.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'registro' });
+
 // Modificadores de platos.
 Empresa.hasMany(Modificador, { foreignKey: 'empresaId' });
 Modificador.belongsTo(Empresa, { foreignKey: 'empresaId' });
@@ -220,5 +233,5 @@ LogEvento.belongsTo(Empresa, { foreignKey: 'empresaId' });
 module.exports = {
   sequelize, Empresa, Role, Usuario, Modulo, Departamento, Municipio, ActividadCiiu, Sesion,
   Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle,
-  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle, RolEmpresa, UsuarioEmpresa, Produccion, Mesa, Cuenta, CuentaItem, Comanda, Reserva, PropinaReparto,
+  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle, RolEmpresa, UsuarioEmpresa, Produccion, Mesa, Cuenta, CuentaItem, Comanda, Reserva, PropinaReparto, ListaEspera, MesaBloqueo,
 };

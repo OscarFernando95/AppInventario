@@ -6,9 +6,14 @@ const { ValidationError } = require('../utils/errors');
 const { auditar } = require('../utils/audit');
 const { detalleDeCuenta } = require('../services/cuentaService');
 const { fechaISO } = require('../services/lotes');
+const { opcionesDe } = require('../middlewares/opciones');
+const { exigirMesaSinBloqueo, exigirReservaSinBloqueo } = require('../services/bloqueosDb');
+const { diasEntre } = require('../services/ocupacion');
 
 // Dos reservas de la misma mesa deben quedar separadas por al menos este tiempo.
 const VENTANA_MIN = 90;
+// Máximo de días que trae el calendario de una sola vez.
+const DIAS_MAX_CALENDARIO = 14;
 
 const INCLUDE = [
   { model: Mesa, as: 'mesa', attributes: ['id', 'nombre'] },
@@ -37,10 +42,18 @@ async function validarMesaLibre(empresaId, mesaId, fechaHora, ignorarId, transac
 /** Reservas de un día (hoy por omisión), de la más próxima a la más lejana. */
 exports.getReservas = async (req, res) => {
   const dia = req.query.fecha || fechaISO();
+  let primero = dia; let ultimo = dia;
+  // Con «Calendario de reservas» encendido se puede pedir un rango (`desde`/`hasta`, hasta 14 días); apagado, se ignora.
+  if ((req.query.desde || req.query.hasta) && (await opcionesDe(req)).reservas_calendario) {
+    primero = req.query.desde || req.query.hasta;
+    ultimo = req.query.hasta || req.query.desde;
+    if (ultimo < primero) throw new ValidationError('La fecha «desde» no puede ser posterior a «hasta».');
+    if (diasEntre(primero, ultimo) > DIAS_MAX_CALENDARIO) throw new ValidationError(`El rango puede ser de ${DIAS_MAX_CALENDARIO} días como máximo.`);
+  }
   const reservas = await Reserva.findAll({
     where: {
       empresaId: req.empresaId,
-      fecha_hora: { [Op.between]: [new Date(`${dia}T00:00:00`), new Date(`${dia}T23:59:59.999`)] },
+      fecha_hora: { [Op.between]: [new Date(`${primero}T00:00:00`), new Date(`${ultimo}T23:59:59.999`)] },
       ...(req.query.estado ? { estado: req.query.estado } : {}),
     },
     include: INCLUDE,
@@ -53,6 +66,7 @@ exports.createReserva = async (req, res) => {
   const reserva = await sequelize.transaction(async (t) => {
     if (new Date(req.body.fecha_hora).getTime() < Date.now() - 15 * 60_000) throw new ValidationError('La fecha de la reserva ya pasó.');
     await validarMesaLibre(req.empresaId, req.body.mesaId, req.body.fecha_hora, null, t);
+    await exigirReservaSinBloqueo(req, req.body.mesaId, req.body.fecha_hora, t);
     return Reserva.create({ ...req.body, mesaId: req.body.mesaId || null, empresaId: req.empresaId, usuarioId: req.userId }, { transaction: t });
   });
   const completa = await Reserva.findByPk(reserva.id, { include: INCLUDE });
@@ -68,7 +82,10 @@ exports.updateReserva = async (req, res) => {
     const cambios = { ...req.body };
     const sigue = (cambios.estado || r.estado) === 'PENDIENTE';
     if (sigue && (cambios.mesaId !== undefined || cambios.fecha_hora !== undefined)) {
-      await validarMesaLibre(req.empresaId, cambios.mesaId !== undefined ? cambios.mesaId : r.mesaId, cambios.fecha_hora || r.fecha_hora, r.id, t);
+      const mesaId = cambios.mesaId !== undefined ? cambios.mesaId : r.mesaId;
+      const fechaHora = cambios.fecha_hora || r.fecha_hora;
+      await validarMesaLibre(req.empresaId, mesaId, fechaHora, r.id, t);
+      await exigirReservaSinBloqueo(req, mesaId, fechaHora, t);
     }
     await r.update(cambios, { transaction: t });
     return r;
@@ -91,6 +108,7 @@ exports.sentarReserva = async (req, res) => {
     const mesa = await Mesa.findOne({ where: { id: mesaId, empresaId: req.empresaId }, transaction: t });
     if (!mesa || !mesa.activa) throw new ValidationError('Mesa inválida o inactiva.');
     if (await Cuenta.findOne({ where: { mesaId, estado: 'ABIERTA' }, transaction: t })) throw new ValidationError(`«${mesa.nombre}» ya tiene una cuenta abierta.`);
+    await exigirMesaSinBloqueo(req, mesa, t);
     try {
       const cuenta = await Cuenta.create({
         empresaId: req.empresaId, mesaId, usuarioId: req.userId, comensales: r.personas, nota: `Reserva de ${r.nombre}`, abierta_en: new Date(),

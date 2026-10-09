@@ -106,9 +106,34 @@ const reservaUpdate = reserva.partial().extend({
 });
 const reservaListQuery = z.object({
   fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD).').optional(),
+  // Rango de días (solo con «Calendario de reservas» encendido; si no, se ignora).
+  desde: fechaDia,
+  hasta: fechaDia,
   estado: z.enum(['PENDIENTE', 'SENTADA', 'CANCELADA', 'NO_LLEGO']).optional(),
 });
 const reservaSentar = z.object({ mesaId: idOpc });
+
+// --- Lista de espera ---
+const listaEspera = z.object({
+  nombre: z.string().trim().min(1, 'Indica el nombre de quien espera.').max(120),
+  telefono: z.string().trim().max(40).optional().nullable().transform((v) => v || undefined),
+  personas: z.coerce.number({ error: 'Indica cuántas personas.' }).int().min(1, 'Indica cuántas personas.').max(500),
+  nota: textoOpc,
+});
+const listaEsperaUpdate = z.object({ estado: z.enum(['CANCELADO', 'NO_LLEGO'], { error: 'Estado no válido.' }) });
+const listaEsperaListQuery = z.object({ estado: z.enum(['ESPERANDO', 'SENTADO', 'CANCELADO', 'NO_LLEGO'], { error: 'Estado no válido.' }).optional() });
+const listaEsperaSentar = z.object({ mesaId: idRef });
+
+// --- Bloqueo de mesas ---
+const bloqueo = z.object({
+  mesaId: idRef,
+  desde: z.coerce.date({ error: 'Fecha y hora de inicio inválidas.' }),
+  hasta: z.coerce.date({ error: 'Fecha y hora de fin inválidas.' }),
+  motivo: z.string().trim().max(200).optional().nullable().transform((v) => v || undefined),
+}).refine((d) => d.hasta > d.desde, { message: 'El bloqueo debe terminar después de empezar.', path: ['hasta'] });
+
+// --- Tiempo de ocupación ---
+const ocupacionQuery = z.object({ desde: fechaDia, hasta: fechaDia });
 
 // --- Comandas ---
 const ESTADOS_COMANDA = ['PENDIENTE', 'LISTA', 'ENTREGADA'];
@@ -121,4 +146,5 @@ const comandaEstado = z.object({ estado: z.enum(ESTADOS_COMANDA, { error: 'Estad
 module.exports = {
   idParam, mesa, mesaUpdate, mesaConfig, mesaPesos, mesaPlano, cuentaAbrir, cuentaUpdate, cuentaListQuery, itemAgregar, itemEditar, itemAnular,
   cuentaMover, cuentaUnir, cuentaCancelar, reserva, reservaUpdate, reservaListQuery, reservaSentar, cuentaCobrar, comandaListQuery, comandaEstado, ESTADOS_COMANDA,
+  listaEspera, listaEsperaUpdate, listaEsperaListQuery, listaEsperaSentar, bloqueo, ocupacionQuery,
 };

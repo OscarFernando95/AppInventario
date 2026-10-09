@@ -210,6 +210,14 @@ const EVENTOS = {
   plano_actualizado: { modulo: 'Mesas', accion: () => 'Acomodó el plano del local', descripcion: (d) => plural(d.mesas || 0, 'mesa', 'mesas') },
   mesa_creada: { modulo: 'Mesas', accion: () => 'Creó una mesa', descripcion: (d) => ref(d.nombre, d.mesaId) },
   mesa_actualizada: { modulo: 'Mesas', accion: (d) => (d.activa === false ? 'Desactivó una mesa' : 'Modificó una mesa'), descripcion: (d) => ref(d.nombre, d.mesaId) },
+  lista_espera_agregada: { modulo: 'Mesas', accion: () => 'Anotó a alguien en la lista de espera', descripcion: (d) => `${d.nombre} · ${plural(d.personas || 0, 'persona', 'personas')}` },
+  lista_espera_actualizada: {
+    modulo: 'Mesas',
+    accion: (d) => (d.estado === 'SENTADO' ? 'Sentó a alguien de la lista de espera' : d.estado === 'NO_LLEGO' ? 'Marcó «no llegó» en la lista de espera' : 'Sacó a alguien de la lista de espera'),
+    descripcion: (d) => `${d.nombre}${d.mesa ? ` · ${d.mesa}` : ''}`,
+  },
+  mesa_bloqueada: { modulo: 'Mesas', accion: () => 'Bloqueó una mesa', descripcion: (d) => `${d.mesa || 'Mesa'}${d.desde && d.hasta ? ` · de ${d.desde} a ${d.hasta}` : ''}${d.motivo ? ` · ${d.motivo}` : ''}` },
+  mesa_desbloqueada: { modulo: 'Mesas', accion: () => 'Desbloqueó una mesa', descripcion: (d) => d.mesa || 'Mesa' },
   // Gastos
   gasto_creado: {
     modulo: 'Gastos',
