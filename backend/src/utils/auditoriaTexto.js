@@ -26,7 +26,7 @@ const sustantivo = (d) => SUSTANTIVO_PRODUCTO[d.tipo] || 'producto';
 const ref = (nombre, id, prefijo = '#') => (nombre ? `«${nombre}»` : (id != null ? `${prefijo}${id}` : ''));
 
 /** Módulos por los que se puede filtrar la vista (orden = orden del menú del filtro). */
-const MODULOS = ['Ventas', 'Cuentas por cobrar', 'Compras', 'Cuentas por pagar', 'Pedidos', 'Inventario', 'Caja', 'Mesas', 'Gastos', 'Clientes', 'Proveedores', 'Servicios', 'Recetas', 'Usuarios'];
+const MODULOS = ['Ventas', 'Cuentas por cobrar', 'Compras', 'Cuentas por pagar', 'Pedidos', 'Inventario', 'Caja', 'Mesas', 'Menú', 'Gastos', 'Clientes', 'Proveedores', 'Servicios', 'Recetas', 'Usuarios'];
 
 const EVENTOS = {
   // Ventas
@@ -205,6 +205,17 @@ const EVENTOS = {
     accion: (d) => (d.perfil ? 'Aplicó un perfil de opciones' : 'Cambió las opciones del restaurante'),
     descripcion: (d) => [d.perfil ? `perfil «${d.perfil}»` : null, d.activadas ? `activó: ${d.activadas}` : null, d.desactivadas ? `apagó: ${d.desactivadas}` : null, d.ajustadas ? `ajustó: ${d.ajustadas}` : null].filter(Boolean).join(' · ') || 'Sin cambios',
   },
+  categoria_menu_creada: { modulo: 'Menú', accion: () => 'Creó una categoría del menú', descripcion: (d) => ref(d.nombre, d.categoriaId) },
+  categoria_menu_actualizada: { modulo: 'Menú', accion: (d) => (d.activa === false ? 'Desactivó una categoría del menú' : 'Modificó una categoría del menú'), descripcion: (d) => ref(d.nombre, d.categoriaId) },
+  categorias_menu_ordenadas: { modulo: 'Menú', accion: () => 'Reordenó las categorías del menú', descripcion: (d) => plural(d.categorias || 0, 'categoría', 'categorías') },
+  producto_agotado: {
+    modulo: 'Menú',
+    accion: (d) => (d.agotado ? 'Marcó un plato como agotado hoy' : 'Volvió a habilitar un plato agotado'),
+    descripcion: (d) => ref(d.productoNombre, d.productoId),
+  },
+  precio_horario_creado: { modulo: 'Menú', accion: () => 'Creó una oferta por horario', descripcion: (d) => ref(d.nombre, d.reglaId) },
+  precio_horario_actualizado: { modulo: 'Menú', accion: (d) => (d.activo === false ? 'Apagó una oferta por horario' : 'Modificó una oferta por horario'), descripcion: (d) => ref(d.nombre, d.reglaId) },
+  precio_horario_eliminado: { modulo: 'Menú', accion: () => 'Eliminó una oferta por horario', descripcion: (d) => ref(d.nombre, d.reglaId) },
   estaciones_cambiadas: { modulo: 'Mesas', accion: () => 'Cambió las estaciones de preparación', descripcion: (d) => d.estaciones },
   propina_pesos_cambiados: { modulo: 'Mesas', accion: () => 'Cambió el reparto de propinas', descripcion: (d) => `Pesos de ${plural(d.personas || 0, 'persona', 'personas')}` },
   plano_actualizado: { modulo: 'Mesas', accion: () => 'Acomodó el plano del local', descripcion: (d) => plural(d.mesas || 0, 'mesa', 'mesas') },

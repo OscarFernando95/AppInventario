@@ -37,6 +37,8 @@ const Cuenta = require('./Cuenta');
 const CuentaItem = require('./CuentaItem');
 const Comanda = require('./Comanda');
 const Reserva = require('./Reserva');
+const CategoriaMenu = require('./CategoriaMenu');
+const PrecioHorario = require('./PrecioHorario');
 const PropinaReparto = require('./PropinaReparto');
 const Modificador = require('./Modificador');
 const ModificadorItem = require('./ModificadorItem');
@@ -203,6 +205,14 @@ CajaMovimiento.hasMany(PropinaReparto, { foreignKey: 'movimientoId', as: 'repart
 PropinaReparto.belongsTo(CajaMovimiento, { foreignKey: 'movimientoId' });
 PropinaReparto.belongsTo(Usuario, { foreignKey: 'usuarioId', as: 'usuario' });
 
+// Menú: categorías y precios por horario.
+Empresa.hasMany(CategoriaMenu, { foreignKey: 'empresaId' });
+CategoriaMenu.belongsTo(Empresa, { foreignKey: 'empresaId' });
+CategoriaMenu.hasMany(Producto, { foreignKey: 'categoriaId', as: 'productos' });
+Producto.belongsTo(CategoriaMenu, { foreignKey: 'categoriaId', as: 'categoria' });
+Empresa.hasMany(PrecioHorario, { foreignKey: 'empresaId' });
+PrecioHorario.belongsTo(Empresa, { foreignKey: 'empresaId' });
+
 // Modificadores de platos.
 Empresa.hasMany(Modificador, { foreignKey: 'empresaId' });
 Modificador.belongsTo(Empresa, { foreignKey: 'empresaId' });
@@ -220,5 +230,5 @@ LogEvento.belongsTo(Empresa, { foreignKey: 'empresaId' });
 module.exports = {
   sequelize, Empresa, Role, Usuario, Modulo, Departamento, Municipio, ActividadCiiu, Sesion,
   Producto, Proveedor, Cliente, Servicio, Compra, CompraDetalle, Venta, VentaDetalle, Pedido, PedidoDetalle,
-  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle, RolEmpresa, UsuarioEmpresa, Produccion, Mesa, Cuenta, CuentaItem, Comanda, Reserva, PropinaReparto,
+  LogEvento, RecetaItem, Caja, AjusteInventario, Modificador, ModificadorItem, Gasto, CajaMovimiento, AnulacionVenta, AbonoVenta, PagoCompra, DevolucionVenta, DevolucionVentaDetalle, RolEmpresa, UsuarioEmpresa, Produccion, Mesa, Cuenta, CuentaItem, Comanda, Reserva, PropinaReparto, CategoriaMenu, PrecioHorario,
 };

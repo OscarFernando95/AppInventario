@@ -1,7 +1,7 @@
 'use strict';
 
 const { Op } = require('sequelize');
-const { sequelize, Cuenta, CuentaItem, Comanda, Mesa, Producto, Servicio, Empresa } = require('../models');
+const { sequelize, Cuenta, CuentaItem, Comanda, Mesa, Producto, Servicio, Empresa, PrecioHorario } = require('../models');
 const { ValidationError, ForbiddenError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { buildListWhere } = require('../utils/listFilters');
@@ -11,6 +11,8 @@ const { invalidateDashboard } = require('./reporteController');
 const { invalidateInforme } = require('./informeController');
 const { cargarModificadoresLinea } = require('../services/ventaService');
 const { opcionesDe } = require('../middlewares/opciones');
+const { promoVigente } = require('../services/precios');
+const { fechaISO } = require('../services/lotes');
 const { TIPOS_NO_VENDIBLES } = require('../services/recetas');
 const {
   nombreDeCuenta, detalleDeCuenta, cuentasAbiertas, detalleDeComanda, cuentaAbiertaBloqueada, cobrarCuenta,
@@ -91,15 +93,22 @@ const mismosExtras = (a, b) => JSON.stringify([...(a || [])].sort((x, y) => x - 
 exports.agregarItem = async (req, res) => {
   const { productoId, servicioId, cantidad, modificadores, nota } = req.body;
   // Con «pedir por persona» apagado el ítem no se asigna a nadie (aunque llegue el dato).
-  const comensal = (await opcionesDe(req)).cuenta_por_persona ? req.body.comensal : undefined;
+  const ef = await opcionesDe(req);
+  const comensal = ef.cuenta_por_persona ? req.body.comensal : undefined;
   const ok = await sequelize.transaction(async (t) => {
     const cuenta = await cuentaAbiertaBloqueada(req, t, req.params.id);
     if (!cuenta) return false;
     validarComensal(cuenta, comensal);
 
+    let promo = null; // oferta por horario vigente al pedirlo
     if (productoId) {
       const prod = await Producto.findOne({ where: { id: productoId, empresaId: req.empresaId }, transaction: t });
       if (!prod) throw new ValidationError('Producto inválido.');
+      if (ef.agotados_manuales && prod.agotado_dia === fechaISO()) throw new ValidationError(`«${prod.nombre_producto}» está agotado por hoy.`);
+      if (ef.precios_horario) {
+        const reglas = await PrecioHorario.findAll({ where: { empresaId: req.empresaId, activo: true }, raw: true, transaction: t });
+        promo = promoVigente(prod.toJSON(), reglas);
+      }
       if (TIPOS_NO_VENDIBLES.includes(prod.tipo)) {
         throw new ValidationError(`"${prod.nombre_producto}" es un ${prod.tipo === 'INSUMO' ? 'insumo' : 'ingrediente preparado'}; no se vende directamente.`);
       }
@@ -113,7 +122,7 @@ exports.agregarItem = async (req, res) => {
     await cargarModificadoresLinea(mods, req.empresaId, t); // existen, activos y de la empresa
 
     const iguales = await CuentaItem.findOne({
-      where: { cuentaId: cuenta.id, estado: 'ACTIVO', comandaId: null, ventaId: null, productoId: productoId || null, servicioId: servicioId || null, nota: nota || null, comensal: comensal || null },
+      where: { cuentaId: cuenta.id, estado: 'ACTIVO', comandaId: null, ventaId: null, productoId: productoId || null, servicioId: servicioId || null, nota: nota || null, comensal: comensal || null, precio_promo: promo ? promo.precio : null },
       transaction: t,
     });
     if (iguales && mismosExtras(iguales.modificadores, mods)) {
@@ -121,7 +130,7 @@ exports.agregarItem = async (req, res) => {
     } else {
       await CuentaItem.create({
         cuentaId: cuenta.id, productoId: productoId || null, servicioId: servicioId || null, cantidad,
-        modificadores: mods.length ? mods : null, nota: nota || null, comensal: comensal || null, usuarioId: req.userId,
+        modificadores: mods.length ? mods : null, nota: nota || null, comensal: comensal || null, usuarioId: req.userId, precio_promo: promo ? promo.precio : null, promo: promo ? promo.promo : null,
       }, { transaction: t });
     }
     return true;

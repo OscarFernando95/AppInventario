@@ -37,6 +37,10 @@ const producto = z.object({
   rendimiento: cantidadReceta.optional(),
   // Solo preparaciones: con stock propio, se producen por lotes (módulo Recetas, «Producción»).
   por_lotes: z.boolean().optional(),
+  // Menú (solo se guardan con las opciones de menú encendidas): categoría, orden dentro de ella y foto pequeña (data URL).
+  categoriaId: z.preprocess((v) => (v === '' ? null : v), idRef.nullish()),
+  orden_menu: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().int().min(0).max(9999).nullish()),
+  imagen: z.preprocess((v) => (v === '' ? null : v), z.string().max(150_000).regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/, 'La foto debe ser una imagen JPG, PNG o WebP.').nullish()),
   // Estación que lo prepara (Cocina, Barra…): a dónde van sus comandas. Vacío = la primera.
   estacion: z.string().trim().max(30).nullish().transform((v) => (v === undefined ? undefined : (v || null))),
   // Solo preparaciones por lotes: días que dura un lote (vacío/null = no vence).

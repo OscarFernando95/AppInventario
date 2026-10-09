@@ -1,5 +1,9 @@
 const ExcelJS = require('exceljs');
-const { sequelize, Producto, RecetaItem, ModificadorItem, Empresa } = require('../models');
+const { literal } = require('sequelize');
+const { sequelize, Producto, RecetaItem, ModificadorItem, Empresa, CategoriaMenu, PrecioHorario } = require('../models');
+const { opcionesDe } = require('../middlewares/opciones');
+const { promoVigente } = require('../services/precios');
+const { fechaISO } = require('../services/lotes');
 const { ValidationError } = require('../utils/errors');
 const { invalidateDashboard } = require('./reporteController');
 const { COLUMNAS, normalizarCodigo, leerWorkbook, validarFilas } = require('../utils/xlsxImport');
@@ -14,15 +18,19 @@ const { tiene } = require('../middlewares/auth');
 /** Sin el permiso costos.ver el producto sale sin costo ni margen (en el listado y en las respuestas de crear/editar). */
 const CAMPOS_DE_COSTO = ['costo', 'costo_promedio', 'margen', 'margen_pct'];
 function segunPermisoDeCostos(req, producto) {
-  if (tiene(req, 'costos.ver')) return producto;
   const json = typeof producto.toJSON === 'function' ? producto.toJSON() : { ...producto };
+  delete json.imagen; // la foto no viaja en estas respuestas (GET /api/menu/imagenes)
+  if (tiene(req, 'costos.ver')) return json;
   for (const campo of CAMPOS_DE_COSTO) delete json[campo];
   return json;
 }
 
 exports.getProductos = async (req, res) => {
+  const ef = await opcionesDe(req);
   const productos = await Producto.findAll({
     where: { empresaId: req.empresaId },
+    // La foto pesa: va por aparte (GET /api/menu/imagenes); aquí solo se dice si tiene.
+    attributes: { exclude: ['imagen'], include: [[literal('("Producto"."imagen" IS NOT NULL)'), 'tiene_imagen']] },
     include: [{ model: RecetaItem, as: 'receta', attributes: ['insumoId', 'cantidad'] }],
     order: [['nombre_producto', 'ASC']],
   });
@@ -35,8 +43,18 @@ exports.getProductos = async (req, res) => {
     if (esPorLotes(p) && !(Number(p.costo_promedio) > 0)) costoPorId.set(p.id, costoDeConsumo(analisis.get(p.id).consumo, costoPorId));
   }
 
+  // Menú (opciones encendidas): agotado por hoy y precio de horario vigente. Apagadas, el listado queda como siempre.
+  const hoy = fechaISO();
+  const reglas = ef.precios_horario ? (await PrecioHorario.findAll({ where: { empresaId: req.empresaId, activo: true }, raw: true })) : [];
+  const ahora = new Date();
+
   res.json(json.map((p) => {
     const a = analisis.get(p.id);
+    if (ef.agotados_manuales) p.agotado_hoy = p.agotado_dia === hoy;
+    if (reglas.length && ['VENTA', 'RECETA', 'COMBO'].includes(p.tipo)) {
+      const promo = promoVigente(p, reglas, ahora);
+      if (promo) { p.precio_vigente = promo.precio; p.promo_nombre = promo.promo; }
+    }
     // Disponible = lo que realmente se puede vender/usar: stock (producto, insumo), porciones (plato)
     // o unidades producibles (preparación). Con él y el mínimo sale el estado de reposición.
     p.disponible = a.disponible;
@@ -155,9 +173,24 @@ async function validarEstacion(req, estacion) {
   if (!lista.includes(estacion)) throw new ValidationError(`La estación «${estacion}» no existe: elige ${lista.map((e) => `«${e}»`).join(', ')}.`);
 }
 
+/**
+ * Los campos de menú (categoría, orden, foto) solo se guardan con su opción encendida; con la opción apagada se ignoran
+ * (así una empresa que no los usa no los toca por error). La categoría debe ser de la empresa.
+ */
+async function aplicarOpcionesDeMenu(req, datos) {
+  const ef = await opcionesDe(req);
+  if (!ef.menu_categorias) { delete datos.categoriaId; delete datos.orden_menu; }
+  if (!ef.menu_fotos) delete datos.imagen;
+  if (datos.categoriaId) {
+    const cat = await CategoriaMenu.count({ where: { id: datos.categoriaId, empresaId: req.empresaId } });
+    if (!cat) throw new ValidationError('Categoría inválida.');
+  }
+}
+
 exports.createProducto = async (req, res) => {
   const { receta: recetaBody, ...datos } = req.body;
   await validarEstacion(req, datos.estacion);
+  await aplicarOpcionesDeMenu(req, datos);
   const tipo = datos.tipo || 'VENTA';
   validarObjetivo(datos.stock_minimo ?? 0, datos.stock_objetivo);
 
@@ -185,6 +218,7 @@ exports.updateProducto = async (req, res) => {
   const { id } = req.params;
   const { receta: recetaBody, ...datos } = req.body;
   await validarEstacion(req, datos.estacion);
+  await aplicarOpcionesDeMenu(req, datos);
 
   const producto = await sequelize.transaction(async (t) => {
     const actual = await Producto.findOne({ where: { id, empresaId: req.empresaId }, transaction: t, lock: t.LOCK.UPDATE });

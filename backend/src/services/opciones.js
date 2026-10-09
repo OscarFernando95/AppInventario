@@ -14,6 +14,9 @@
  * Tipos: 'bool', 'int' ({ min, max }) y 'lista' (textos cortos; { max, largo }).
  */
 
+// Módulos que hacen que una empresa sea de restaurante / cafetería (el comercio puro no tiene ninguno).
+const MENU = ['Mesas', 'Recetas'];
+
 const OPCIONES = [
   // ── Mesas y reservas (ya existían: encendidas) ─────────────────────────────────────────────
   { clave: 'reservas', grupo: 'Mesas', tipo: 'bool', defecto: true, modulos: ['Mesas'], etiqueta: 'Reservas', descripcion: 'Registrar reservas de mesa, recordarlas por WhatsApp y sentarlas al llegar.' },
@@ -21,6 +24,12 @@ const OPCIONES = [
   { clave: 'unir_cuentas', grupo: 'Mesas', tipo: 'bool', defecto: true, modulos: ['Mesas'], etiqueta: 'Unir cuentas', descripcion: 'Juntar la cuenta de dos mesas en una.' },
   { clave: 'cuenta_por_persona', grupo: 'Mesas', tipo: 'bool', defecto: true, modulos: ['Mesas'], etiqueta: 'Pedir y cobrar por persona', descripcion: 'Asignar cada pedido a una persona de la mesa y cobrarle a cada quien lo suyo.' },
   { clave: 'propina', grupo: 'Mesas', tipo: 'bool', defecto: true, modulos: ['Mesas'], etiqueta: 'Propina al cobrar', descripcion: 'Ofrecer la propina voluntaria al cobrar una cuenta de mesa.' },
+
+  // ── Menú (nuevas: apagadas). Aplican a empresas con Mesas o Recetas (restaurante / cafetería), no a comercio puro ──
+  { clave: 'menu_categorias', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: MENU, etiqueta: 'Categorías del menú', descripcion: 'Agrupar los productos en categorías (entradas, bebidas, postres…) con orden propio, en el catálogo del mesero y del mostrador.' },
+  { clave: 'menu_fotos', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: MENU, etiqueta: 'Fotos de los platos', descripcion: 'Mostrar una foto pequeña de cada plato o producto en el catálogo.' },
+  { clave: 'agotados_manuales', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: MENU, etiqueta: 'Agotado por hoy', descripcion: 'Marcar a mano un plato como agotado: no se puede pedir ni vender hasta mañana.' },
+  { clave: 'precios_horario', grupo: 'Menú', tipo: 'bool', defecto: false, modulos: MENU, etiqueta: 'Precios por horario', descripcion: 'Happy hour y ofertas por día y hora: el precio baja solo mientras la oferta rige.' },
 ];
 
 const POR_CLAVE = new Map(OPCIONES.map((o) => [o.clave, o]));

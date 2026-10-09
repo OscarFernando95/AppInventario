@@ -10,7 +10,8 @@ const redondear3 = (n) => Math.round((Number(n) + Number.EPSILON) * 1000) / 1000
 
 /** Precio unitario de una línea de la cuenta: precio de lista (IVA incluido) + extras de sus modificadores. */
 function precioDeItem(item) {
-  const base = Number(item.producto ? item.producto.precio_unitario : item.servicio?.precio || 0);
+  // Con una oferta por horario vigente al pedirlo, el ítem conserva ese precio (el de lista solo si no hubo oferta).
+  const base = item.precio_promo != null ? Number(item.precio_promo) : Number(item.producto ? item.producto.precio_unitario : item.servicio?.precio || 0);
   const extras = (item.modsDetalle || []).reduce((a, m) => a + Number(m.precio_extra || 0), 0);
   return redondear2(base + extras);
 }

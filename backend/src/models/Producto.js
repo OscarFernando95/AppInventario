@@ -89,6 +89,11 @@ const Producto = sequelize.define('Producto', {
     allowNull: false,
     defaultValue: false,
   },
+  // Menú: categoría y orden dentro de ella, foto (data URL pequeña) y último día en que se marcó «agotado hoy».
+  categoriaId: { type: DataTypes.INTEGER, allowNull: true },
+  orden_menu: { type: DataTypes.INTEGER, allowNull: true },
+  imagen: { type: DataTypes.TEXT, allowNull: true },
+  agotado_dia: { type: DataTypes.DATEONLY, allowNull: true },
   // Estación que prepara este plato o bebida (Cocina, Barra…); vacío = la primera de la empresa.
   estacion: { type: DataTypes.STRING(30), allowNull: true },
   // Solo preparaciones por lotes: días que dura un lote (vacío = no vence).

@@ -4,6 +4,8 @@ import api from '../../api/axios';
 import { PackageOpen, Plus, Upload, FileDown, CheckCircle2, AlertTriangle, Edit, Trash2, UtensilsCrossed } from 'lucide-react';
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
+import { useMenu } from '../../hooks/useMenu';
+import { redimensionarImagen } from '../../utils/imagen';
 import { useAuthStore } from '../../store/authStore';
 import { usePermisos } from '../../hooks/usePermisos';
 import SearchableSelect from '../../components/SearchableSelect';
@@ -22,6 +24,7 @@ const EMPTY_FORM = {
   codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
   porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: '',
   tipo: 'VENTA', receta: [], costo_promedio: '', rendimiento: '', por_lotes: false, vida_util_dias: '', estacion: '',
+  categoriaId: '', orden_menu: '', imagenNueva: undefined, // menú: undefined = no tocar la foto; '' = quitarla; texto = foto nueva
   unidad_compra: '', factor_compra: '', presOtra: false, // presentación de compra (kg, caja…)
   stock_minimo: '', stock_objetivo: '', // alerta de reposición
 };
@@ -59,6 +62,21 @@ const Inventario = () => {
   const verCostos = usePermisos().can('costos.ver'); // sin él no se muestran ni se editan costos ni márgenes
   const columnaCosto = conRecetas && verCostos;
   // Estaciones de preparación (solo si la empresa usa Mesas): a qué pantalla llega la comanda de cada plato.
+  const menu = useMenu();
+  const [errorFoto, setErrorFoto] = useState(null);
+  const elegirFoto = async (e) => {
+    const archivo = e.target.files?.[0];
+    e.target.value = '';
+    if (!archivo) return;
+    try {
+      setErrorFoto(null);
+      setFormData((f) => ({ ...f, imagenNueva: '' }));
+      const url = await redimensionarImagen(archivo);
+      setFormData((f) => ({ ...f, imagenNueva: url }));
+    } catch (err) {
+      setErrorFoto(err.message);
+    }
+  };
   const conMesas = useAuthStore((st) => (st.activeEmpresa?.modulos || []).includes('Mesas'));
   const { data: tableroConfig } = useEmpresaQuery(['mesas', 'config'], '/mesas', { enabled: conMesas });
   const estaciones = tableroConfig?.config?.estaciones || ['Cocina'];
@@ -134,6 +152,9 @@ const Inventario = () => {
       por_lotes: p.tipo === 'PREPARACION' && !!p.por_lotes,
       vida_util_dias: p.vida_util_dias ? String(p.vida_util_dias) : '',
       estacion: p.estacion || '',
+      categoriaId: p.categoriaId ? String(p.categoriaId) : '',
+      orden_menu: p.orden_menu != null ? String(p.orden_menu) : '',
+      imagenNueva: undefined,
       stock_minimo: Number(p.stock_minimo) ? String(Number(p.stock_minimo)) : '',
       stock_objetivo: p.stock_objetivo != null ? String(Number(p.stock_objetivo)) : '',
       unidad_compra: p.unidad_compra || '',
@@ -172,6 +193,10 @@ const Inventario = () => {
       rendimiento: formData.tipo === 'PREPARACION' ? Number(formData.rendimiento) : undefined,
       por_lotes: formData.tipo === 'PREPARACION' ? !!formData.por_lotes : undefined,
       estacion: ['VENTA', 'RECETA'].includes(formData.tipo) ? (formData.estacion || null) : undefined,
+      categoriaId: menu.conCategorias && ['VENTA', 'RECETA', 'COMBO'].includes(formData.tipo) ? (formData.categoriaId === '' ? null : Number(formData.categoriaId)) : undefined,
+      orden_menu: menu.conCategorias && ['VENTA', 'RECETA', 'COMBO'].includes(formData.tipo) ? (formData.orden_menu === '' ? null : Number(formData.orden_menu)) : undefined,
+      imagen: menu.conFotos ? formData.imagenNueva : undefined,
+      imagenNueva: undefined,
       vida_util_dias: formData.tipo === 'PREPARACION' && formData.por_lotes ? (formData.vida_util_dias === '' ? null : Number(formData.vida_util_dias)) : undefined,
       // Presentación de compra: vacía = se compra en la unidad base (null la quita al editar).
       unidad_compra: esPlato ? undefined : (formData.unidad_compra.trim() || null),
@@ -417,6 +442,42 @@ const Inventario = () => {
             </Field>
           )}
 
+          {(menu.conCategorias || menu.conFotos) && ['VENTA', 'RECETA', 'COMBO'].includes(formData.tipo) && (
+            <fieldset className="rounded-xl border border-slate-200 p-4 space-y-3">
+              <legend className="px-2 text-sm font-semibold text-brand-800">En el menú</legend>
+              {menu.conCategorias && (
+                <div className="grid grid-cols-1 sm:grid-cols-[2fr_1fr] gap-4">
+                  <Field label="Categoría">
+                    <select className="input-field" value={formData.categoriaId} onChange={(e) => setFormData({ ...formData, categoriaId: e.target.value })}>
+                      <option value="">Sin categoría</option>
+                      {menu.categorias.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Posición en la categoría" hint="Menor sale primero. Vacío = por nombre.">
+                    <input type="number" min="0" className="input-field" value={formData.orden_menu} onChange={(e) => setFormData({ ...formData, orden_menu: e.target.value })} />
+                  </Field>
+                </div>
+              )}
+              {menu.conFotos && (
+                <div className="flex items-center gap-4">
+                  {(formData.imagenNueva || (formData.imagenNueva === undefined && editId && menu.imagenes[editId])) ? (
+                    <img src={formData.imagenNueva || menu.imagenes[editId]} alt="Foto del producto" className="w-20 h-20 object-cover rounded-xl border border-slate-200" />
+                  ) : <div className="w-20 h-20 rounded-xl border border-dashed border-slate-300 grid place-items-center text-xs text-slate-400">Sin foto</div>}
+                  <div className="space-y-1.5">
+                    <label className="btn-secondary text-sm cursor-pointer inline-flex">
+                      Elegir foto
+                      <input type="file" accept="image/*" className="sr-only" aria-label="Foto del producto" onChange={elegirFoto} />
+                    </label>
+                    {(formData.imagenNueva || (formData.imagenNueva === undefined && editId && menu.imagenes[editId])) && (
+                      <button type="button" className="block text-xs font-semibold text-red-700 hover:underline" onClick={() => setFormData({ ...formData, imagenNueva: '' })}>Quitar foto</button>
+                    )}
+                    <p className="text-xs text-slate-500">Se reduce sola a un tamaño liviano.</p>
+                    {errorFoto && <p role="alert" className="text-xs font-medium text-red-700">{errorFoto}</p>}
+                  </div>
+                </div>
+              )}
+            </fieldset>
+          )}
           {conMesas && ['VENTA', 'RECETA'].includes(formData.tipo) && estaciones.length > 1 && (
             <Field label="Estación que lo prepara" hint="A qué pantalla de preparación llega su comanda (Cocina, Barra…). Vacío = la primera.">
               <select className="input-field sm:w-60" value={formData.estacion} onChange={(e) => setFormData({ ...formData, estacion: e.target.value })}>

@@ -28,7 +28,7 @@ async function cargarModsDe(items, empresaId, transaction) {
 function itemJson(item, modsPorId) {
   const j = item.toJSON ? item.toJSON() : item;
   const modsDetalle = (j.modificadores || []).map((id) => modsPorId.get(id)).filter(Boolean);
-  const precio = precioDeItem({ producto: j.producto, servicio: j.servicio, modsDetalle });
+  const precio = precioDeItem({ producto: j.producto, servicio: j.servicio, modsDetalle, precio_promo: j.precio_promo });
   return {
     id: j.id,
     productoId: j.productoId,
@@ -38,6 +38,8 @@ function itemJson(item, modsPorId) {
     unidad_medida: j.producto?.unidad_medida,
     cantidad: Number(j.cantidad),
     precio_unitario: precio,
+    promo: j.precio_promo != null ? j.promo : null,
+    precio_lista: j.producto ? Number(j.producto.precio_unitario) : (j.servicio ? Number(j.servicio.precio) : null),
     subtotal: Math.round(Number(j.cantidad) * precio * 100) / 100,
     modificadores: modsDetalle,
     nota: j.nota,
@@ -198,6 +200,7 @@ async function cobrarCuenta(req, t, cuentaId, body) {
     servicioId: item.servicioId || undefined,
     cantidad,
     modificadores: item.modificadores || undefined,
+    precio_promo: item.precio_promo ?? undefined, // precio de horario con que se pidió (la venta lo respeta)
   }));
   const { venta, calc, clienteNombre, aCredito, diasCredito, numItems } = await registrarVenta(req, t, {
     clienteId: body.clienteId,

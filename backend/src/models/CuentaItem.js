@@ -10,6 +10,9 @@ const CuentaItem = sequelize.define('CuentaItem', {
   cantidad: { type: DataTypes.DECIMAL(12, 3), allowNull: false },
   modificadores: { type: DataTypes.JSONB, allowNull: true },
   nota: { type: DataTypes.STRING(200), allowNull: true },
+  // Precio de horario (happy hour) con que se pidió el ítem y nombre de la oferta; vacío = precio de lista.
+  precio_promo: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
+  promo: { type: DataTypes.STRING(80), allowNull: true },
   // Persona de la mesa a la que pertenece el ítem (1, 2, 3…); vacío = de todos / para compartir.
   comensal: { type: DataTypes.INTEGER, allowNull: true },
   usuarioId: { type: DataTypes.INTEGER, allowNull: false },

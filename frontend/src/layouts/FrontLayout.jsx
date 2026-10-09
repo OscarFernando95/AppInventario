@@ -4,7 +4,8 @@ import { useAuthStore } from '../store/authStore';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../api/axios';
 import { usePermisos } from '../hooks/usePermisos';
-import { KeyRound, Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins, PackagePlus, ReceiptText, WalletCards, Armchair, CookingPot, SlidersHorizontal } from 'lucide-react';
+import { useOpciones } from '../hooks/useOpciones';
+import { KeyRound, Package, ShoppingCart, Truck, FileText, Settings, LogOut, LayoutDashboard, Boxes, Users, Briefcase, ClipboardList, Menu, X, ScrollText, Wallet, ChefHat, ClipboardCheck, HandCoins, PackagePlus, ReceiptText, WalletCards, Armchair, CookingPot, SlidersHorizontal, UtensilsCrossed } from 'lucide-react';
 
 // Títulos con tilde para las rutas cuyo nombre se escribe sin ella.
 const TITULOS = {
@@ -19,6 +20,7 @@ const FrontLayout = () => {
   const queryClient = useQueryClient();
   const [menuOpen, setMenuOpen] = useState(false);
   const { can, puedeEntrar } = usePermisos();
+  const { opcion } = useOpciones();
 
   // Los módulos habilitados viajan en la sesión; si el administrador los cambia
   // (p. ej. activa o quita Caja) se refrescan al volver a la pestaña, sin cerrar sesión.
@@ -83,6 +85,8 @@ const FrontLayout = () => {
   );
 
   if (can('usuarios.gestionar')) menu.push({ name: 'Administración', path: '/app/admin', icon: Settings });
+  // «Menú» aparece solo si su permiso y alguna de sus funciones (categorías, ofertas…) están encendidas.
+  if (can('menu.gestionar') && (opcion('menu_categorias') || opcion('precios_horario'))) menu.push({ name: 'Menú', path: '/app/menu', icon: UtensilsCrossed });
   // Las opciones de restaurante/cafetería solo existen para empresas que tienen Mesas o Recetas (una de comercio no las ve).
   if (can('opciones.gestionar') && (puedeEntrar('Mesas') || puedeEntrar('Recetas'))) menu.push({ name: 'Opciones', path: '/app/opciones', icon: SlidersHorizontal });
   if (can('roles.gestionar') && puedeEntrar('Roles y permisos')) menu.push({ name: 'Roles y permisos', path: '/app/roles', icon: KeyRound });

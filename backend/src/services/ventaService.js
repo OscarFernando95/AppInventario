@@ -6,6 +6,8 @@ const { calcularVenta } = require('./calculo');
 const { calcularVencimiento, redondear2 } = require('./cartera');
 const { TIPOS_NO_VENDIBLES, redondear3, consumoConModificadores } = require('./recetas');
 const { cargarRecetas } = require('./recetasDb');
+const { opcionesDe } = require('../middlewares/opciones');
+const { fechaISO } = require('./lotes');
 
 // Descuento máximo permitido sobre el precio de lista de una línea (%). Por
 // defecto 100 (se puede llegar a $0). Poner p.ej. 50 para no vender por debajo
@@ -76,6 +78,7 @@ async function registrarVenta(req, t, body, { cuentaId = null, propina = 0 } = {
     if (!clienteId) throw new ValidationError('Una venta a crédito necesita un cliente.');
   }
   const diasCredito = aCredito ? (dias_credito ?? 30) : null;
+  const ef = await opcionesDe(req); // funciones opcionales encendidas de esta empresa
 
   let clienteNombre = null;
   let clienteRow = null;
@@ -113,6 +116,7 @@ async function registrarVenta(req, t, body, { cuentaId = null, propina = 0 } = {
     let nombre = '';
     let costoUnitario = 0; // costo de lo vendido por unidad (foto para rentabilidad)
     let modsLinea = [];
+    let extrasMods = 0; // lo que suman los modificadores al precio
     let consumoLinea = null; // inventario descontado por esta línea (para anulaciones)
 
     if (item.modificadores?.length && !item.productoId) {
@@ -133,12 +137,14 @@ async function registrarVenta(req, t, body, { cuentaId = null, propina = 0 } = {
       porcentajeIva = Number(prod.porcentaje_iva || 0);
       precioBase = Number(prod.precio_unitario);
       nombre = prod.nombre_producto;
+      if (ef.agotados_manuales && prod.agotado_dia === fechaISO()) throw new ValidationError(`«${prod.nombre_producto}» está agotado por hoy.`);
       if (prod.tipo === 'RECETA') {
         // Plato: descuenta sus ingredientes (sub-recetas y modificadores incluidos);
         // su propio stock no cuenta.
         modsLinea = await cargarModificadoresLinea(item.modificadores, req.empresaId, t);
         recetas ??= await cargarRecetas(req.empresaId, { transaction: t });
-        precioBase += modsLinea.reduce((a, m) => a + m.precio_extra, 0);
+        extrasMods = modsLinea.reduce((a, m) => a + m.precio_extra, 0);
+        precioBase += extrasMods;
         const r = await descontarConsumo(prod, consumoConModificadores(prod.id, recetas, modsLinea), cantidad, t);
         costoUnitario = r.costoPorcion;
         consumoLinea = r.consumo;
@@ -157,6 +163,8 @@ async function registrarVenta(req, t, body, { cuentaId = null, propina = 0 } = {
     }
 
     // El precio de venta no puede superar el de lista ni bajar del piso permitido.
+    // Oferta por horario con la que se pidió (cuentas de mesa): se vende a ese precio + extras, sin descuento adicional.
+    if (precioVenta == null && item.precio_promo != null && ef.precios_horario) precioVenta = Number(item.precio_promo) + extrasMods;
     if (precioVenta == null) precioVenta = precioBase;
     if (precioVenta > precioBase + 0.005) {
       throw new ValidationError(`El precio de "${nombre}" no puede superar el precio de lista (${precioBase}).`);
