@@ -1,7 +1,7 @@
 'use strict';
 
-const { fn, col } = require('sequelize');
-const { sequelize, Caja, CajaMovimiento, Venta, Usuario, Empresa, AbonoVenta, PropinaReparto, UsuarioEmpresa } = require('../models');
+const { Op, fn, col } = require('sequelize');
+const { sequelize, Caja, CajaMovimiento, Venta, Usuario, Empresa, AbonoVenta, PropinaReparto, UsuarioEmpresa, Cuenta, Comanda } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { buildListWhere } = require('../utils/listFilters');
@@ -199,13 +199,26 @@ exports.registrarRetiro = async (req, res) => {
   res.status(201).json(mov);
 };
 
-/** Personas de la empresa a quienes se puede repartir una entrega de propinas. */
+/**
+ * Personas de la empresa a quienes se puede repartir una entrega de propinas, con su peso en el reparto y si
+ * hoy trabajaron (abrieron una cuenta o una caja, enviaron una comanda o vendieron).
+ */
 exports.getPersonal = async (req, res) => {
-  const enlaces = await UsuarioEmpresa.findAll({ where: { empresaId: req.empresaId }, attributes: ['usuarioId'], raw: true });
+  const enlaces = await UsuarioEmpresa.findAll({ where: { empresaId: req.empresaId }, attributes: ['usuarioId', 'propina_peso'], raw: true });
   const personas = await Usuario.findAll({
     where: { id: enlaces.map((e) => e.usuarioId), estado: true }, attributes: ['id', 'nombre'], order: [['nombre', 'ASC']], raw: true,
   });
-  res.json(personas);
+  const inicio = new Date(); inicio.setHours(0, 0, 0, 0);
+  const hoy = { [Op.gte]: inicio };
+  const [cuentas, comandas, ventas, cajas] = await Promise.all([
+    Cuenta.findAll({ where: { empresaId: req.empresaId, abierta_en: hoy }, attributes: ['usuarioId'], group: ['usuarioId'], raw: true }),
+    Comanda.findAll({ where: { empresaId: req.empresaId, enviada_en: hoy }, attributes: ['usuarioId'], group: ['usuarioId'], raw: true }),
+    Venta.findAll({ where: { empresaId: req.empresaId, fecha: hoy }, attributes: ['usuarioId'], group: ['usuarioId'], raw: true }),
+    Caja.findAll({ where: { empresaId: req.empresaId, fecha_apertura: hoy }, attributes: ['usuarioId'], group: ['usuarioId'], raw: true }),
+  ]);
+  const activos = new Set([...cuentas, ...comandas, ...ventas, ...cajas].map((r) => r.usuarioId));
+  const peso = new Map(enlaces.map((e) => [e.usuarioId, Number(e.propina_peso)]));
+  res.json(personas.map((p) => ({ ...p, peso: peso.get(p.id) ?? 1, trabajo_hoy: activos.has(p.id) })));
 };
 
 /** Propinas del rango: lo recibido en ventas, lo entregado y cuánto le tocó a cada persona. */

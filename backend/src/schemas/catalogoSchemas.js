@@ -37,6 +37,8 @@ const producto = z.object({
   rendimiento: cantidadReceta.optional(),
   // Solo preparaciones: con stock propio, se producen por lotes (módulo Recetas, «Producción»).
   por_lotes: z.boolean().optional(),
+  // Estación que lo prepara (Cocina, Barra…): a dónde van sus comandas. Vacío = la primera.
+  estacion: z.string().trim().max(30).nullish().transform((v) => (v === undefined ? undefined : (v || null))),
   // Solo preparaciones por lotes: días que dura un lote (vacío/null = no vence).
   vida_util_dias: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().int().min(1).max(3650).nullish()),
   // VENTA (por defecto) | INSUMO | PREPARACION | RECETA. Distinto de VENTA exige el módulo Recetas.

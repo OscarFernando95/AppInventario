@@ -23,6 +23,12 @@ afterAll(async () => { await models.sequelize.close(); });
 
 const get = (url, quien = agent) => conEmpresa(quien.get(url));
 const post = (url, body = {}, quien = agent) => conEmpresa(quien.post(url)).send(body);
+/** Envía a cocina; con una sola estación devuelve esa comanda como cuerpo (y `todas` con todas las creadas). */
+const enviar = async (cuentaId, quien = agent) => {
+  const r = await post(`/api/cuentas/${cuentaId}/enviar`, {}, quien);
+  if (r.status !== 201) return r;
+  return { status: r.status, body: { ...r.body.comandas[0], todas: r.body.comandas } };
+};
 const stockDe = async (id) => Number((await models.Producto.findByPk(id)).stock_actual);
 
 describe('Mesas', () => {
@@ -153,19 +159,19 @@ describe('Cuentas abiertas, pedidos y comandas', () => {
   });
 
   it('enviar a cocina crea la comanda con lo pendiente; sin nada nuevo se rechaza', async () => {
-    const res = await post(`/api/cuentas/${cuenta.id}/enviar`, {}, mesero);
+    const res = await enviar(cuenta.id, mesero);
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ estado: 'PENDIENTE', cuenta: 'Mesa 1', mesero: 'Mesero Uno' });
     expect(res.body.items.map((i) => [i.nombre, i.cantidad])).toEqual([['Gaseosa', 3], ['Pizza', 1]]);
     expect(res.body.items[1]).toMatchObject({ modificadores: ['Extra queso'], nota: 'Sin cebolla' });
 
-    const vacio = await post(`/api/cuentas/${cuenta.id}/enviar`);
+    const vacio = await enviar(cuenta.id);
     expect(vacio.status).toBe(400);
     expect(vacio.body.error).toMatch(/No hay ítems nuevos/);
 
     // lo nuevo va en otra comanda, sin repetir lo ya enviado
     await agregar(cuenta.id, { productoId: gaseosa.id, cantidad: 1 });
-    const segunda = await post(`/api/cuentas/${cuenta.id}/enviar`);
+    const segunda = await enviar(cuenta.id);
     expect(segunda.status).toBe(201);
     expect(segunda.body.items.map((i) => [i.nombre, i.cantidad])).toEqual([['Gaseosa', 1]]);
     const c = (await get(`/api/cuentas/${cuenta.id}`)).body;
@@ -185,7 +191,7 @@ describe('Cuentas abiertas, pedidos y comandas', () => {
   it('el administrador anula un ítem enviado: queda tachado en la comanda y no cuenta en el total', async () => {
     // se agrega una segunda pizza, se envía y se anula
     await agregar(cuenta.id, { productoId: pizza.id, cantidad: 1 });
-    const envio = await post(`/api/cuentas/${cuenta.id}/enviar`);
+    const envio = await enviar(cuenta.id);
     const nuevo = envio.body.items[0];
     const res = await post(`/api/cuentas/${cuenta.id}/items/${nuevo.id}/anular`, { motivo: 'El cliente se arrepintió' });
     expect(res.status).toBe(200);
@@ -331,7 +337,7 @@ describe('Cobro, división de cuenta y propina', () => {
   it('cancelar: una cuenta con pedidos enviados solo la cancela quien puede anularlos; una cobrada en parte, nadie', async () => {
     const c4 = (await post('/api/cuentas', { mesaId: mesa.id })).body;
     await agregar(c4.id, { productoId: cerveza.id });
-    await post(`/api/cuentas/${c4.id}/enviar`);
+    await enviar(c4.id);
     expect((await post(`/api/cuentas/${c4.id}/cancelar`, { motivo: 'Se fueron' }, mesero)).status).toBe(403);
     const res = await post(`/api/cuentas/${c4.id}/cancelar`, { motivo: 'Se fueron sin pedir' });
     expect(res.status).toBe(200);

@@ -6,10 +6,10 @@ const {
 } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { registrarVenta } = require('./ventaService');
-const { precioDeItem, repartirItems, totalesDeCuenta, redondear3 } = require('./cuentas');
+const { precioDeItem, repartirItems, totalesDeCuenta, totalesPorComensal, redondear3 } = require('./cuentas');
 
 const INCLUDE_ITEM = [
-  { model: Producto, as: 'producto', attributes: ['id', 'nombre_producto', 'codigo', 'tipo', 'precio_unitario', 'porcentaje_iva', 'unidad_medida'] },
+  { model: Producto, as: 'producto', attributes: ['id', 'nombre_producto', 'codigo', 'tipo', 'precio_unitario', 'porcentaje_iva', 'unidad_medida', 'estacion'] },
   { model: Servicio, as: 'servicio', attributes: ['id', 'nombre', 'precio', 'porcentaje_iva'] },
 ];
 
@@ -41,6 +41,8 @@ function itemJson(item, modsPorId) {
     subtotal: Math.round(Number(j.cantidad) * precio * 100) / 100,
     modificadores: modsDetalle,
     nota: j.nota,
+    comensal: j.comensal,
+    estacion: j.producto ? j.producto.estacion : null,
     estado: j.estado,
     comandaId: j.comandaId,
     enviado: !!j.comandaId,
@@ -77,6 +79,7 @@ async function detalleDeCuenta(empresaId, cuentaId, transaction) {
     comensales: j.comensales, nota: j.nota, abierta_en: j.abierta_en, cerrada_en: j.cerrada_en, motivo_cancelacion: j.motivo_cancelacion,
     items, comandas: j.comandas, ventas: j.ventas.map((v) => ({ ...v, total: Number(v.total), propina: Number(v.propina) })),
     totales: totalesDeCuenta(items.map((i) => ({ ...i, precio: i.precio_unitario }))),
+    por_comensal: totalesPorComensal(items.map((i) => ({ ...i, precio: i.precio_unitario }))),
   };
 }
 
@@ -126,11 +129,12 @@ async function detalleDeComanda(empresaId, comandaId, transaction) {
 function comandaJson(comanda, mods) {
   const items = comanda.items.map((i) => {
     const j = itemJson(i, mods);
-    return { id: j.id, nombre: j.nombre, cantidad: j.cantidad, modificadores: j.modificadores.map((m) => m.nombre), nota: j.nota, anulado: j.estado === 'ANULADO' };
+    return { id: j.id, nombre: j.nombre, cantidad: j.cantidad, modificadores: j.modificadores.map((m) => m.nombre), nota: j.nota, comensal: j.comensal, anulado: j.estado === 'ANULADO' };
   });
   return {
     id: comanda.id,
     estado: comanda.estado,
+    estacion: comanda.estacion,
     enviada_en: comanda.enviada_en,
     lista_en: comanda.lista_en,
     entregada_en: comanda.entregada_en,
@@ -143,9 +147,9 @@ function comandaJson(comanda, mods) {
 }
 
 /** Comandas en los estados pedidos (por omisión, las que cocina aún tiene a la vista), de la más antigua a la más nueva. */
-async function listarComandas(empresaId, estados = ['PENDIENTE', 'LISTA']) {
+async function listarComandas(empresaId, estados = ['PENDIENTE', 'LISTA'], estacion) {
   const comandas = await Comanda.findAll({
-    where: { empresaId, estado: { [Op.in]: estados } },
+    where: { empresaId, estado: { [Op.in]: estados }, ...(estacion ? { estacion } : {}) },
     include: [
       { model: Cuenta, as: 'cuenta', include: [{ model: Mesa, as: 'mesa', attributes: ['id', 'nombre'] }] },
       { model: Usuario, as: 'mesero', attributes: ['id', 'nombre'] },
@@ -208,7 +212,7 @@ async function cobrarCuenta(req, t, cuentaId, body) {
   for (const { item, restante } of reparto.partir) {
     await CuentaItem.create({
       cuentaId: cuenta.id, productoId: item.productoId, servicioId: item.servicioId, cantidad: restante, modificadores: item.modificadores,
-      nota: item.nota, usuarioId: item.usuarioId, comandaId: item.comandaId, estado: 'ACTIVO',
+      nota: item.nota, comensal: item.comensal, usuarioId: item.usuarioId, comandaId: item.comandaId, estado: 'ACTIVO',
     }, { transaction: t });
   }
   for (const { item, cantidad } of reparto.cobrar) {
@@ -216,7 +220,11 @@ async function cobrarCuenta(req, t, cuentaId, body) {
   }
 
   const quedan = await CuentaItem.count({ where: { cuentaId: cuenta.id, estado: 'ACTIVO', ventaId: null }, transaction: t });
-  if (quedan === 0) await cuenta.update({ estado: 'COBRADA', cerrada_en: new Date() }, { transaction: t });
+  if (quedan === 0) {
+    await cuenta.update({ estado: 'COBRADA', cerrada_en: new Date() }, { transaction: t });
+    // Si ya se pagó todo, lo que cocina tuviera pendiente de esta cuenta ya se sirvió: sale de su pantalla.
+    await Comanda.update({ estado: 'ENTREGADA', entregada_en: new Date() }, { where: { cuentaId: cuenta.id, estado: { [Op.in]: ['PENDIENTE', 'LISTA'] } }, transaction: t });
+  }
 
   return { cuenta, venta, calc, clienteNombre, aCredito, diasCredito, numItems, cuentaCerrada: quedan === 0 };
 }

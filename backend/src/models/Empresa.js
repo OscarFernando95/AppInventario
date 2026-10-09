@@ -94,6 +94,10 @@ const Empresa = sequelize.define('Empresa', {
   propina_sugerida_pct: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 10 },
   // Un faltante al contar por encima de este % del consumo teórico se marca como alerta.
   desviacion_alerta_pct: { type: DataTypes.DECIMAL(5, 2), allowNull: false, defaultValue: 5 },
+  // Estaciones de preparación (cada una ve sus comandas) y a quién avisar cuando salta una alerta de desviación.
+  estaciones: { type: DataTypes.JSONB, allowNull: false, defaultValue: ['Cocina'] },
+  alerta_whatsapp: { type: DataTypes.STRING(30), allowNull: true },
+  alerta_correo: { type: DataTypes.STRING(120), allowNull: true },
   capital_inicial: {
     type: DataTypes.DECIMAL(14, 2),
     allowNull: false,

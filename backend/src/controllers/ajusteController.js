@@ -8,7 +8,7 @@ const { buildListWhere } = require('../utils/listFilters');
 const { auditar } = require('../utils/audit');
 const { unidadCorta } = require('../utils/unidades');
 const { tiene } = require('../middlewares/auth');
-const { armarDesviaciones } = require('../services/desviaciones');
+const { armarDesviaciones, armarRanking } = require('../services/desviaciones');
 const { umbralDeAlerta, eventosDeConteo } = require('../services/desviacionesDb');
 const { invalidateDashboard } = require('./reporteController');
 const { TIPOS_CON_RECETA, esPorLotes, redondear3 } = require('../services/recetas');
@@ -109,6 +109,7 @@ exports.registrarConteo = async (req, res) => {
   }
   res.status(201).json({
     ajustados: resultado.ajustes.length, sin_cambio: resultado.sinCambio, valor_total: valor, ajustes: resultado.ajustes, umbral_pct: umbral,
+    contacto: alertas.length > 0 ? await contactoDeAlertas(req.empresaId) : undefined,
     alertas: alertas.map((a) => ({
       productoId: a.productoId, nombre_producto: a.nombre_producto, unidad_medida: a.unidad_medida, faltante: a.faltante, consumo_teorico: a.consumo_teorico,
       desviacion_pct: a.desviacion_pct, ...(tiene(req, 'costos.ver') ? { valor: a.valor_conteo } : {}),
@@ -161,11 +162,12 @@ function condicionDeFechas(columna, { desde, hasta }, replacements) {
  */
 exports.getDesviaciones = async (req, res) => {
   const umbral = await umbralDeAlerta(req.empresaId);
+  const contacto = await contactoDeAlertas(req.empresaId);
   // Modo «entre conteos»: cada conteo contra el anterior del mismo producto (en vez de un rango de fechas fijo).
   if (req.query.modo === 'conteos') {
     const eventos = await eventosDeConteo(req.empresaId, { desde: req.query.desde, hasta: req.query.hasta, umbral });
     if (!tiene(req, 'costos.ver')) for (const e of eventos) delete e.valor_conteo;
-    return res.json({ modo: 'conteos', umbral_pct: umbral, eventos, alertas: eventos.filter((e) => e.alerta).length });
+    return res.json({ modo: 'conteos', umbral_pct: umbral, contacto, eventos, alertas: eventos.filter((e) => e.alerta).length });
   }
   const replacements = { empresaId: req.empresaId };
   const fechasVenta = condicionDeFechas('v."fecha"', req.query, replacements);
@@ -207,6 +209,7 @@ exports.getDesviaciones = async (req, res) => {
 
   const informe = armarDesviaciones({ productos, ventas, producciones, ajustes });
   informe.umbral_pct = umbral;
+  informe.contacto = contacto;
   for (const f of informe.filas) f.alerta = f.desviacion_pct != null && f.desviacion_pct >= umbral;
   if (!tiene(req, 'costos.ver')) {
     for (const f of informe.filas) { delete f.valor_conteo; delete f.valor_mermas; delete f.costo_unitario; }
@@ -215,10 +218,43 @@ exports.getDesviaciones = async (req, res) => {
   res.json(informe);
 };
 
-/** Cambia el % de faltante a partir del cual un conteo se marca como alerta. */
+/** A quién se avisa cuando salta una alerta de desviación. */
+async function contactoDeAlertas(empresaId) {
+  const e = await Empresa.findByPk(empresaId, { attributes: ['alerta_whatsapp', 'alerta_correo'] });
+  return { whatsapp: e?.alerta_whatsapp || null, correo: e?.alerta_correo || null };
+}
+
+/** Cambia el % de faltante a partir del cual un conteo es una alerta y/o a quién se avisa (WhatsApp, correo). */
 exports.setUmbralDesviacion = async (req, res) => {
-  const { desviacion_alerta_pct: pct } = req.body;
-  await Empresa.update({ desviacion_alerta_pct: pct }, { where: { id: req.empresaId } });
-  auditar(req, 'desviacion_umbral', { pct });
-  res.json({ umbral_pct: pct });
+  const { desviacion_alerta_pct: pct, alerta_whatsapp: whatsapp, alerta_correo: correo } = req.body;
+  await Empresa.update({
+    ...(pct !== undefined ? { desviacion_alerta_pct: pct } : {}),
+    ...(whatsapp !== undefined ? { alerta_whatsapp: whatsapp } : {}),
+    ...(correo !== undefined ? { alerta_correo: correo } : {}),
+  }, { where: { id: req.empresaId } });
+  if (pct !== undefined) auditar(req, 'desviacion_umbral', { pct });
+  if (whatsapp !== undefined || correo !== undefined) auditar(req, 'desviacion_contacto', { whatsapp: !!whatsapp, correo: !!correo });
+  res.json({ umbral_pct: await umbralDeAlerta(req.empresaId), contacto: await contactoDeAlertas(req.empresaId) });
+};
+
+/** Lo que más dinero se perdió en un mes (por defecto el actual): faltantes al contar + mermas, por producto. */
+exports.getRankingPerdidas = async (req, res) => {
+  if (!tiene(req, 'costos.ver')) return res.status(403).json({ error: 'El ranking de pérdidas muestra costos: necesitas el permiso para ver costos.' });
+  const hoy = new Date();
+  const mes = req.query.mes || `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}`;
+  const [anio, m] = mes.split('-').map(Number);
+  const desde = new Date(anio, m - 1, 1);
+  const hasta = new Date(anio, m, 1);
+  const ajustes = await sequelize.query(
+    `SELECT a."productoId", a."tipo", SUM(a."diferencia") AS diferencia, SUM(a."valor") AS valor, COUNT(*) AS num
+       FROM "ajustes_inventario" a
+      WHERE a."empresaId" = :empresaId AND a."fecha" >= :desde AND a."fecha" < :hasta AND a."tipo" IN ('CONTEO', 'MERMA', 'VENCIDO', 'CONSUMO_INTERNO')
+      GROUP BY a."productoId", a."tipo"`,
+    { type: QueryTypes.SELECT, replacements: { empresaId: req.empresaId, desde, hasta } }
+  );
+  const ids = [...new Set(ajustes.map((a) => Number(a.productoId)))];
+  const productos = ids.length
+    ? await Producto.findAll({ where: { id: ids, empresaId: req.empresaId }, attributes: ['id', 'nombre_producto', 'codigo', 'unidad_medida'], raw: true })
+    : [];
+  res.json({ mes, ...armarRanking({ productos, ajustes }) });
 };

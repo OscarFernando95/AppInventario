@@ -43,7 +43,14 @@ const rangoQuery = z.object({ desde: fechaDia, hasta: fechaDia });
 
 // Informe de desviaciones: por rango de fechas (por omisión) o «entre conteos».
 const desviacionesQuery = z.object({ desde: fechaDia, hasta: fechaDia, modo: z.enum(['rango', 'conteos']).optional() });
-const umbralDesviacion = z.object({ desviacion_alerta_pct: z.coerce.number().min(0).max(100).transform((n) => Math.round(n * 100) / 100) });
+const telefono = z.string().trim().max(30).regex(/^[+\d][\d\s()-]{5,}$/, 'Teléfono no válido.');
+// Límite de alerta de desviaciones y a quién avisar (WhatsApp / correo). Se puede mandar uno solo; '' o null borra el contacto.
+const umbralDesviacion = z.object({
+  desviacion_alerta_pct: z.coerce.number().min(0).max(100).transform((n) => Math.round(n * 100) / 100).optional(),
+  alerta_whatsapp: z.preprocess((v) => (v === '' ? null : v), telefono.nullish()),
+  alerta_correo: z.preprocess((v) => (v === '' ? null : v), z.string().trim().email('Correo no válido.').max(120).nullish()),
+}).refine((d) => d.desviacion_alerta_pct !== undefined || d.alerta_whatsapp !== undefined || d.alerta_correo !== undefined, { message: 'No hay nada que cambiar.' });
+const rankingQuery = z.object({ mes: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Mes inválido (YYYY-MM).').optional() });
 
 // --- Producción de preparaciones por lotes ---
 const produccionCreate = z.object({
@@ -80,5 +87,5 @@ const modificador = z.object({
 const modificadorUpdate = modificador.partial();
 
 module.exports = {
-  TIPOS_SALIDA, ajusteSalida, conteoFisico, ajusteListQuery, rangoQuery, desviacionesQuery, umbralDesviacion, produccionCreate, produccionListQuery, sugerenciasQuery, modificador, modificadorUpdate,
+  TIPOS_SALIDA, ajusteSalida, conteoFisico, ajusteListQuery, rangoQuery, desviacionesQuery, umbralDesviacion, rankingQuery, produccionCreate, produccionListQuery, sugerenciasQuery, modificador, modificadorUpdate,
 };

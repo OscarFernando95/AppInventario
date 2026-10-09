@@ -111,3 +111,55 @@ describe('esquemas nuevos', () => {
     expect(sugerenciasQuery.parse({})).toEqual({ dias: 14, cobertura: 1 });
   });
 });
+
+describe('totalesPorComensal y ranking de pérdidas', () => {
+  const { totalesPorComensal } = require('../src/services/cuentas');
+  const { armarRanking } = require('../src/services/desviaciones');
+  const { mesaConfig, mesaPesos, mesaPlano, itemAgregar, itemEditar } = require('../src/schemas/mesaSchemas');
+  const { umbralDesviacion, rankingQuery } = require('../src/schemas/restauranteSchemas');
+
+  it('suma por persona; lo de todos va al final; lo cobrado no es pendiente; lo anulado no cuenta', () => {
+    const t = totalesPorComensal([
+      { estado: 'ACTIVO', comensal: 2, cantidad: 1, precio: 5000, ventaId: null },
+      { estado: 'ACTIVO', comensal: 1, cantidad: 2, precio: 3000, ventaId: null },
+      { estado: 'ACTIVO', comensal: 1, cantidad: 1, precio: 4000, ventaId: 9 },
+      { estado: 'ACTIVO', comensal: null, cantidad: 1, precio: 20000, ventaId: null },
+      { estado: 'ANULADO', comensal: 2, cantidad: 1, precio: 99999, ventaId: null },
+    ]);
+    expect(t.map((g) => [g.comensal, g.total, g.pendiente])).toEqual([[1, 10000, 6000], [2, 5000, 5000], [null, 20000, 20000]]);
+  });
+
+  it('ranking: faltantes + mermas por producto, de lo que más costó a lo que menos; sobrantes no cuentan', () => {
+    const r = armarRanking({
+      productos: [{ id: 1, nombre_producto: 'Queso' }, { id: 2, nombre_producto: 'Pan' }, { id: 3, nombre_producto: 'Sal' }],
+      ajustes: [
+        { productoId: 1, tipo: 'CONTEO', diferencia: -40, valor: -400, num: 2 },
+        { productoId: 1, tipo: 'MERMA', diferencia: -10, valor: -100, num: 1 },
+        { productoId: 2, tipo: 'VENCIDO', diferencia: -3, valor: -1500, num: 1 },
+        { productoId: 3, tipo: 'CONTEO', diferencia: 5, valor: 50, num: 1 },
+      ],
+    });
+    expect(r.filas.map((f) => [f.nombre_producto, f.faltante_valor, f.mermas_valor, f.perdida_total])).toEqual([['Pan', 0, 1500, 1500], ['Queso', 400, 100, 500]]);
+    expect(r.totales).toEqual({ faltantes: 400, mermas: 1600, perdida: 2000 });
+  });
+
+  it('esquemas: estaciones únicas (1 a 6), pesos y plano en rango, comensal 1–50, contactos válidos', () => {
+    expect(mesaConfig.safeParse({ estaciones: ['Cocina', 'Barra'] }).success).toBe(true);
+    expect(mesaConfig.safeParse({ estaciones: ['Cocina', 'cocina'] }).success).toBe(false);
+    expect(mesaConfig.safeParse({ estaciones: [] }).success).toBe(false);
+    expect(mesaConfig.safeParse({}).success).toBe(false);
+    expect(mesaPesos.safeParse({ pesos: [{ usuarioId: 1, peso: 1.5 }] }).success).toBe(true);
+    expect(mesaPesos.safeParse({ pesos: [{ usuarioId: 1, peso: -1 }] }).success).toBe(false);
+    expect(mesaPlano.safeParse({ posiciones: [{ id: 1, x: 10, y: 90 }, { id: 2, x: null, y: null }] }).success).toBe(true);
+    expect(mesaPlano.safeParse({ posiciones: [{ id: 1, x: 101, y: 5 }] }).success).toBe(false);
+    expect(itemAgregar.parse({ productoId: 1, comensal: '2' }).comensal).toBe(2);
+    expect(itemAgregar.safeParse({ productoId: 1, comensal: 0 }).success).toBe(false);
+    expect(itemEditar.parse({ comensal: '' }).comensal).toBeNull();
+    expect(umbralDesviacion.safeParse({ alerta_whatsapp: '300 111 2233', alerta_correo: 'a@b.co' }).success).toBe(true);
+    expect(umbralDesviacion.safeParse({ alerta_correo: 'no-es-correo' }).success).toBe(false);
+    expect(umbralDesviacion.safeParse({}).success).toBe(false);
+    expect(umbralDesviacion.parse({ alerta_whatsapp: '' }).alerta_whatsapp).toBeNull();
+    expect(rankingQuery.safeParse({ mes: '2026-10' }).success).toBe(true);
+    expect(rankingQuery.safeParse({ mes: '2026-13' }).success).toBe(false);
+  });
+});

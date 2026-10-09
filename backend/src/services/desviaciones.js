@@ -128,4 +128,49 @@ function evaluarEventosDeConteo(filas, umbralPct) {
   });
 }
 
-module.exports = { armarDesviaciones, evaluarEventosDeConteo };
+/**
+ * Ranking de pérdidas de un periodo (lógica pura): por producto, lo que se perdió por faltantes al contar y por
+ * mermas reconocidas (merma, vencido, consumo interno), de lo que más dinero costó a lo que menos.
+ * `ajustes` = [{ productoId, tipo, diferencia, valor, num }] agrupados por producto y tipo; `productos` = [{ id, nombre_producto, codigo, unidad_medida }].
+ */
+function armarRanking({ productos, ajustes }) {
+  const porId = new Map(productos.map((p) => [p.id, p]));
+  const filas = new Map();
+  const fila = (id) => {
+    if (!filas.has(id)) {
+      const p = porId.get(id) || {};
+      filas.set(id, {
+        productoId: id, nombre_producto: p.nombre_producto, codigo: p.codigo, unidad_medida: p.unidad_medida,
+        faltante_cantidad: 0, faltante_valor: 0, mermas_cantidad: 0, mermas_valor: 0, conteos: 0,
+      });
+    }
+    return filas.get(id);
+  };
+  for (const a of ajustes) {
+    const f = fila(Number(a.productoId));
+    if (a.tipo === 'CONTEO') {
+      f.conteos += Number(a.num || 0);
+      if (Number(a.diferencia) < 0) { f.faltante_cantidad += -Number(a.diferencia); f.faltante_valor += -Number(a.valor); }
+    } else if (TIPOS_MERMA.includes(a.tipo)) {
+      f.mermas_cantidad += -Number(a.diferencia);
+      f.mermas_valor += -Number(a.valor);
+    }
+  }
+  const lista = [...filas.values()]
+    .map((f) => ({
+      ...f,
+      faltante_cantidad: redondear3(f.faltante_cantidad), faltante_valor: redondear2(f.faltante_valor),
+      mermas_cantidad: redondear3(f.mermas_cantidad), mermas_valor: redondear2(f.mermas_valor),
+      perdida_total: redondear2(f.faltante_valor + f.mermas_valor),
+    }))
+    .filter((f) => f.perdida_total > 0)
+    .sort((a, b) => b.perdida_total - a.perdida_total);
+  const totales = {
+    faltantes: redondear2(lista.reduce((a, f) => a + f.faltante_valor, 0)),
+    mermas: redondear2(lista.reduce((a, f) => a + f.mermas_valor, 0)),
+    perdida: redondear2(lista.reduce((a, f) => a + f.perdida_total, 0)),
+  };
+  return { filas: lista, totales };
+}
+
+module.exports = { armarDesviaciones, evaluarEventosDeConteo, armarRanking };

@@ -1,7 +1,7 @@
 'use strict';
 
 const { Op } = require('sequelize');
-const { sequelize, Cuenta, CuentaItem, Comanda, Mesa, Producto, Servicio } = require('../models');
+const { sequelize, Cuenta, CuentaItem, Comanda, Mesa, Producto, Servicio, Empresa } = require('../models');
 const { ValidationError, ForbiddenError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { buildListWhere } = require('../utils/listFilters');
@@ -77,14 +77,22 @@ exports.updateCuenta = async (req, res) => {
   res.json(await detalleDeCuenta(req.empresaId, req.params.id));
 };
 
+/** El ítem es de una persona de la mesa: no puede ser mayor que los comensales de la cuenta (si se indicaron). */
+function validarComensal(cuenta, comensal) {
+  if (comensal && cuenta.comensales && comensal > cuenta.comensales) {
+    throw new ValidationError(`Esta cuenta tiene ${cuenta.comensales} comensal(es): no existe la persona ${comensal}.`);
+  }
+}
+
 /** Mismo plato/producto, mismos extras y misma nota, aún sin enviar: se suma a la línea existente. */
 const mismosExtras = (a, b) => JSON.stringify([...(a || [])].sort((x, y) => x - y)) === JSON.stringify([...(b || [])].sort((x, y) => x - y));
 
 exports.agregarItem = async (req, res) => {
-  const { productoId, servicioId, cantidad, modificadores, nota } = req.body;
+  const { productoId, servicioId, cantidad, modificadores, nota, comensal } = req.body;
   const ok = await sequelize.transaction(async (t) => {
     const cuenta = await cuentaAbiertaBloqueada(req, t, req.params.id);
     if (!cuenta) return false;
+    validarComensal(cuenta, comensal);
 
     if (productoId) {
       const prod = await Producto.findOne({ where: { id: productoId, empresaId: req.empresaId }, transaction: t });
@@ -102,7 +110,7 @@ exports.agregarItem = async (req, res) => {
     await cargarModificadoresLinea(mods, req.empresaId, t); // existen, activos y de la empresa
 
     const iguales = await CuentaItem.findOne({
-      where: { cuentaId: cuenta.id, estado: 'ACTIVO', comandaId: null, ventaId: null, productoId: productoId || null, servicioId: servicioId || null, nota: nota || null },
+      where: { cuentaId: cuenta.id, estado: 'ACTIVO', comandaId: null, ventaId: null, productoId: productoId || null, servicioId: servicioId || null, nota: nota || null, comensal: comensal || null },
       transaction: t,
     });
     if (iguales && mismosExtras(iguales.modificadores, mods)) {
@@ -110,7 +118,7 @@ exports.agregarItem = async (req, res) => {
     } else {
       await CuentaItem.create({
         cuentaId: cuenta.id, productoId: productoId || null, servicioId: servicioId || null, cantidad,
-        modificadores: mods.length ? mods : null, nota: nota || null, usuarioId: req.userId,
+        modificadores: mods.length ? mods : null, nota: nota || null, comensal: comensal || null, usuarioId: req.userId,
       }, { transaction: t });
     }
     return true;
@@ -133,10 +141,14 @@ exports.editarItem = async (req, res) => {
     const cuenta = await cuentaAbiertaBloqueada(req, t, req.params.id);
     if (!cuenta) return false;
     const item = await itemEditable(t, cuenta, req.params.itemId);
-    if (item.comandaId) throw new ValidationError('Este ítem ya se envió a cocina: anúlalo y vuelve a pedirlo.');
+    // A quién pertenece un ítem se puede cambiar siempre; su cantidad y nota, solo antes de enviarlo a cocina.
+    if (item.comandaId && (req.body.cantidad !== undefined || req.body.nota !== undefined)) {
+      throw new ValidationError('Este ítem ya se envió a cocina: anúlalo y vuelve a pedirlo.');
+    }
     const cambios = {};
     if (req.body.cantidad !== undefined) cambios.cantidad = req.body.cantidad;
     if (req.body.nota !== undefined) cambios.nota = req.body.nota;
+    if (req.body.comensal !== undefined) { validarComensal(cuenta, req.body.comensal); cambios.comensal = req.body.comensal; }
     await item.update(cambios, { transaction: t });
     return true;
   });
@@ -176,26 +188,44 @@ exports.anularItem = async (req, res) => {
   res.json(await detalleDeCuenta(req.empresaId, req.params.id));
 };
 
-/** Envía a cocina todo lo que aún no se ha enviado: crea la comanda (que se imprime o se ve en pantalla). */
+/**
+ * Envía a preparación todo lo que aún no se ha enviado: una comanda por estación (Cocina, Barra…), según la
+ * estación de cada plato. Devuelve las comandas creadas, listas para imprimir o mostrar en pantalla.
+ */
 exports.enviarACocina = async (req, res) => {
-  let nombre; let numItems; let comandaId;
+  let nombre; let numItems; let creadas;
   const ok = await sequelize.transaction(async (t) => {
     const cuenta = await cuentaAbiertaBloqueada(req, t, req.params.id);
     if (!cuenta) return false;
     const nuevos = await CuentaItem.findAll({
-      where: { cuentaId: cuenta.id, estado: 'ACTIVO', comandaId: null, ventaId: null }, order: [['id', 'ASC']], transaction: t, lock: t.LOCK.UPDATE,
+      where: { cuentaId: cuenta.id, estado: 'ACTIVO', comandaId: null, ventaId: null },
+      include: [{ model: Producto, as: 'producto', attributes: ['id', 'estacion'], required: false }],
+      order: [['id', 'ASC']], transaction: t, lock: { level: t.LOCK.UPDATE, of: CuentaItem },
     });
     if (nuevos.length === 0) throw new ValidationError('No hay ítems nuevos para enviar a cocina.');
-    const comanda = await Comanda.create({ empresaId: req.empresaId, cuentaId: cuenta.id, usuarioId: req.userId, enviada_en: new Date() }, { transaction: t });
-    await CuentaItem.update({ comandaId: comanda.id }, { where: { id: nuevos.map((i) => i.id) }, transaction: t });
+
+    const empresa = await Empresa.findByPk(req.empresaId, { attributes: ['estaciones'], transaction: t });
+    const estaciones = Array.isArray(empresa?.estaciones) && empresa.estaciones.length ? empresa.estaciones : ['Cocina'];
+    // Un plato cuya estación ya no existe (se renombró o quitó) va a la primera.
+    const estacionDe = (i) => (i.producto?.estacion && estaciones.includes(i.producto.estacion) ? i.producto.estacion : estaciones[0]);
+    const grupos = new Map();
+    for (const i of nuevos) grupos.set(estacionDe(i), [...(grupos.get(estacionDe(i)) || []), i]);
+
+    creadas = [];
+    const enviada = new Date();
+    for (const estacion of estaciones.filter((e) => grupos.has(e))) {
+      const comanda = await Comanda.create({ empresaId: req.empresaId, cuentaId: cuenta.id, usuarioId: req.userId, estacion, enviada_en: enviada }, { transaction: t });
+      await CuentaItem.update({ comandaId: comanda.id }, { where: { id: grupos.get(estacion).map((i) => i.id) }, transaction: t });
+      creadas.push({ id: comanda.id, estacion, numItems: grupos.get(estacion).length });
+    }
     nombre = nombreDeCuenta(cuenta);
     numItems = nuevos.length;
-    comandaId = comanda.id;
     return true;
   });
   if (!ok) return noEncontrada(res);
-  auditar(req, 'comanda_enviada', { cuentaId: Number(req.params.id), comandaId, cuenta: nombre, numItems });
-  res.status(201).json(await detalleDeComanda(req.empresaId, comandaId));
+  for (const c of creadas) auditar(req, 'comanda_enviada', { cuentaId: Number(req.params.id), comandaId: c.id, cuenta: nombre, numItems: c.numItems, estacion: c.estacion });
+  const comandas = await Promise.all(creadas.map((c) => detalleDeComanda(req.empresaId, c.id)));
+  res.status(201).json({ comandas, numItems });
 };
 
 exports.moverCuenta = async (req, res) => {

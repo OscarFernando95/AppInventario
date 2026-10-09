@@ -55,10 +55,27 @@ function totalesDeCuenta(items) {
   return { total, cobrado, pendiente: redondear2(total - cobrado) };
 }
 
+/**
+ * Lo que debe cada persona de la mesa: total y pendiente por `comensal` (null = para compartir), con el
+ * de cada quien primero. `items` ya valorados ({ estado, ventaId, comensal, cantidad, precio }).
+ */
+function totalesPorComensal(items) {
+  const grupos = new Map();
+  for (const i of items.filter((x) => x.estado === 'ACTIVO')) {
+    const clave = i.comensal ?? null;
+    const g = grupos.get(clave) || { comensal: clave, total: 0, pendiente: 0, items: 0 };
+    const sub = redondear2(Number(i.cantidad) * Number(i.precio));
+    g.total = redondear2(g.total + sub);
+    if (!i.ventaId) { g.pendiente = redondear2(g.pendiente + sub); g.items += 1; }
+    grupos.set(clave, g);
+  }
+  return [...grupos.values()].sort((a, b) => (a.comensal === null) - (b.comensal === null) || a.comensal - b.comensal);
+}
+
 /** Propina sugerida: porcentaje sobre el consumo, redondeada al múltiplo de `paso` pesos más cercano. */
 function propinaSugerida(base, porcentaje, paso = 100) {
   const bruta = (Number(base) * Number(porcentaje)) / 100;
   return paso > 0 ? Math.round(bruta / paso) * paso : redondear2(bruta);
 }
 
-module.exports = { precioDeItem, repartirItems, totalesDeCuenta, propinaSugerida, redondear2, redondear3 };
+module.exports = { precioDeItem, repartirItems, totalesDeCuenta, totalesPorComensal, propinaSugerida, redondear2, redondear3 };

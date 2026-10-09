@@ -7,6 +7,7 @@ const Comanda = sequelize.define('Comanda', {
   empresaId: { type: DataTypes.INTEGER, allowNull: false },
   cuentaId: { type: DataTypes.INTEGER, allowNull: false },
   usuarioId: { type: DataTypes.INTEGER, allowNull: false },
+  estacion: { type: DataTypes.STRING(30), allowNull: true },
   estado: { type: DataTypes.STRING(10), allowNull: false, defaultValue: 'PENDIENTE' },
   enviada_en: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
   lista_en: { type: DataTypes.DATE, allowNull: true },

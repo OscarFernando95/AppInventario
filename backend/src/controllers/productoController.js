@@ -1,5 +1,5 @@
 const ExcelJS = require('exceljs');
-const { sequelize, Producto, RecetaItem, ModificadorItem } = require('../models');
+const { sequelize, Producto, RecetaItem, ModificadorItem, Empresa } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { invalidateDashboard } = require('./reporteController');
 const { COLUMNAS, normalizarCodigo, leerWorkbook, validarFilas } = require('../utils/xlsxImport');
@@ -136,6 +136,7 @@ function limpiarPorTipo(datos, tipo) {
   if (TIPOS_CON_RECETA.includes(tipo)) delete limpio.costo_promedio;
   if (tipo !== 'PREPARACION') { delete limpio.rendimiento; limpio.por_lotes = false; limpio.vida_util_dias = null; }
   if (tipo === 'PREPARACION' && limpio.por_lotes === false) limpio.vida_util_dias = null;
+  if (tipo !== 'VENTA' && tipo !== 'RECETA') limpio.estacion = null; // solo lo que se vende pasa por una estación
   return limpio;
 }
 
@@ -146,8 +147,17 @@ function validarObjetivo(minimo, objetivo) {
   }
 }
 
+/** La estación de un plato debe ser una de las de la empresa (Configurar mesas). */
+async function validarEstacion(req, estacion) {
+  if (!estacion) return;
+  const empresa = await Empresa.findByPk(req.empresaId, { attributes: ['estaciones'] });
+  const lista = Array.isArray(empresa?.estaciones) ? empresa.estaciones : ['Cocina'];
+  if (!lista.includes(estacion)) throw new ValidationError(`La estación «${estacion}» no existe: elige ${lista.map((e) => `«${e}»`).join(', ')}.`);
+}
+
 exports.createProducto = async (req, res) => {
   const { receta: recetaBody, ...datos } = req.body;
+  await validarEstacion(req, datos.estacion);
   const tipo = datos.tipo || 'VENTA';
   validarObjetivo(datos.stock_minimo ?? 0, datos.stock_objetivo);
 
@@ -174,6 +184,7 @@ exports.createProducto = async (req, res) => {
 exports.updateProducto = async (req, res) => {
   const { id } = req.params;
   const { receta: recetaBody, ...datos } = req.body;
+  await validarEstacion(req, datos.estacion);
 
   const producto = await sequelize.transaction(async (t) => {
     const actual = await Producto.findOne({ where: { id, empresaId: req.empresaId }, transaction: t, lock: t.LOCK.UPDATE });

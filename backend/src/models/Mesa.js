@@ -7,6 +7,9 @@ const Mesa = sequelize.define('Mesa', {
   empresaId: { type: DataTypes.INTEGER, allowNull: false },
   nombre: { type: DataTypes.STRING(60), allowNull: false },
   capacidad: { type: DataTypes.INTEGER, allowNull: true },
+  // Posición en el plano del local (% del ancho y del alto); vacío = sin ubicar.
+  pos_x: { type: DataTypes.INTEGER, allowNull: true },
+  pos_y: { type: DataTypes.INTEGER, allowNull: true },
   activa: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
 }, {
   tableName: 'mesas',

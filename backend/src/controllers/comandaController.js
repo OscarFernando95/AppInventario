@@ -6,7 +6,7 @@ const { listarComandas, detalleDeComanda } = require('../services/cuentaService'
 /** Comandas que cocina tiene a la vista (por omisión pendientes y listas), de la más antigua a la más nueva. */
 exports.getComandas = async (req, res) => {
   const estados = req.query.estado ? req.query.estado.split(',') : undefined;
-  res.json(await listarComandas(req.empresaId, estados));
+  res.json(await listarComandas(req.empresaId, estados, req.query.estacion));
 };
 
 exports.getComanda = async (req, res) => {

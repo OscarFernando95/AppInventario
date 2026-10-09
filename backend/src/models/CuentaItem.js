@@ -10,6 +10,8 @@ const CuentaItem = sequelize.define('CuentaItem', {
   cantidad: { type: DataTypes.DECIMAL(12, 3), allowNull: false },
   modificadores: { type: DataTypes.JSONB, allowNull: true },
   nota: { type: DataTypes.STRING(200), allowNull: true },
+  // Persona de la mesa a la que pertenece el ítem (1, 2, 3…); vacío = de todos / para compartir.
+  comensal: { type: DataTypes.INTEGER, allowNull: true },
   usuarioId: { type: DataTypes.INTEGER, allowNull: false },
   comandaId: { type: DataTypes.INTEGER, allowNull: true },
   estado: { type: DataTypes.STRING(10), allowNull: false, defaultValue: 'ACTIVO' },

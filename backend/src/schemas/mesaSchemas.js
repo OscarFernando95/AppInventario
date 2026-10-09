@@ -15,7 +15,22 @@ const mesa = z.object({
   activa: z.boolean().optional(),
 });
 const mesaUpdate = mesa.partial();
-const mesaConfig = z.object({ propina_sugerida_pct: z.coerce.number().min(0).max(30).transform((n) => Math.round(n * 100) / 100) });
+const estacionesLista = z.array(z.string().trim().min(1).max(30)).min(1, 'Deja al menos una estación.').max(6, 'Máximo 6 estaciones.')
+  .refine((l) => new Set(l.map((e) => e.toLowerCase())).size === l.length, 'Hay estaciones repetidas.');
+const mesaConfig = z.object({
+  propina_sugerida_pct: z.coerce.number().min(0).max(30).transform((n) => Math.round(n * 100) / 100).optional(),
+  estaciones: estacionesLista.optional(),
+}).refine((d) => d.propina_sugerida_pct !== undefined || d.estaciones !== undefined, { message: 'No hay nada que cambiar.' });
+const mesaPesos = z.object({
+  pesos: z.array(z.object({ usuarioId: idRef, peso: z.coerce.number().min(0).max(100).transform(redondear2) })).min(1).max(100),
+});
+const mesaPlano = z.object({
+  posiciones: z.array(z.object({
+    id: idRef,
+    x: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().int().min(0).max(100).nullable()),
+    y: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().int().min(0).max(100).nullable()),
+  })).min(1).max(300),
+});
 
 // --- Cuentas ---
 const cuentaAbrir = z.object({
@@ -45,10 +60,13 @@ const itemAgregar = z.object({
   cantidad: cantidadPositiva.optional().default(1),
   modificadores: z.array(z.coerce.number().int().positive()).max(15).optional(),
   nota: z.string().trim().max(200).optional().nullable().transform((v) => v || undefined),
+  // De qué persona de la mesa es el ítem (para cobrarle a cada quien lo suyo).
+  comensal: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().min(1).max(50).optional()),
 }).refine((d) => !!d.productoId !== !!d.servicioId, { message: 'Cada ítem es un producto o un servicio.' });
 
 const itemEditar = z.object({
   cantidad: cantidadPositiva.optional(),
+  comensal: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().int().min(1).max(50).nullish()),
   nota: z.string().trim().max(200).nullish().transform((v) => (v === undefined ? undefined : (v || null))),
 });
 
@@ -95,11 +113,12 @@ const reservaSentar = z.object({ mesaId: idOpc });
 // --- Comandas ---
 const ESTADOS_COMANDA = ['PENDIENTE', 'LISTA', 'ENTREGADA'];
 const comandaListQuery = z.object({
+  estacion: z.string().trim().max(30).optional(),
   estado: z.string().regex(/^(PENDIENTE|LISTA|ENTREGADA)(,(PENDIENTE|LISTA|ENTREGADA))*$/, 'Estado no válido.').optional(),
 });
 const comandaEstado = z.object({ estado: z.enum(ESTADOS_COMANDA, { error: 'Estado no válido.' }) });
 
 module.exports = {
-  idParam, mesa, mesaUpdate, mesaConfig, cuentaAbrir, cuentaUpdate, cuentaListQuery, itemAgregar, itemEditar, itemAnular,
+  idParam, mesa, mesaUpdate, mesaConfig, mesaPesos, mesaPlano, cuentaAbrir, cuentaUpdate, cuentaListQuery, itemAgregar, itemEditar, itemAnular,
   cuentaMover, cuentaUnir, cuentaCancelar, reserva, reservaUpdate, reservaListQuery, reservaSentar, cuentaCobrar, comandaListQuery, comandaEstado, ESTADOS_COMANDA,
 };

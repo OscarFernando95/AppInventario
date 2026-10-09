@@ -89,6 +89,8 @@ const Producto = sequelize.define('Producto', {
     allowNull: false,
     defaultValue: false,
   },
+  // Estación que prepara este plato o bebida (Cocina, Barra…); vacío = la primera de la empresa.
+  estacion: { type: DataTypes.STRING(30), allowNull: true },
   // Solo preparaciones por lotes: días que dura un lote (vacío = no vence).
   vida_util_dias: {
     type: DataTypes.INTEGER,

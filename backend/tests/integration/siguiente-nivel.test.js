@@ -242,7 +242,7 @@ describe('Unir cuentas y reservas', () => {
     const b = (await post('/api/cuentas', { mesaId: m2.id, comensales: 3 })).body;
     await post(`/api/cuentas/${a.id}/items`, { productoId: jugo.id, cantidad: 1 });
     await post(`/api/cuentas/${b.id}/items`, { productoId: jugo.id, cantidad: 2 });
-    const comanda = (await post(`/api/cuentas/${b.id}/enviar`)).body;
+    const comanda = (await post(`/api/cuentas/${b.id}/enviar`)).body.comandas[0];
 
     expect((await post(`/api/cuentas/${a.id}/unir`, { cuentaId: a.id })).status).toBe(400);
     expect((await post(`/api/cuentas/${a.id}/unir`, { cuentaId: 99999 })).status).toBe(404);

@@ -133,6 +133,7 @@ const EVENTOS = {
     accion: () => 'Alerta: faltante de inventario sobre el límite',
     descripcion: (d) => `${ref(d.productoNombre, d.productoId)} · faltaron ${num(d.faltante)}${d.unidad ? ` ${d.unidad}` : ''} (${num(d.pct)} % de lo que debió gastarse; límite ${num(d.umbral)} %)`,
   },
+  desviacion_contacto: { modulo: 'Inventario', accion: () => 'Cambió a quién se avisa de las alertas de desviación', descripcion: (d) => [d.whatsapp ? 'WhatsApp' : null, d.correo ? 'correo' : null].filter(Boolean).join(' y ') || 'Sin contactos' },
   desviacion_umbral: {
     modulo: 'Inventario',
     accion: () => 'Cambió el límite de alerta de desviaciones',
@@ -166,7 +167,7 @@ const EVENTOS = {
   comanda_enviada: {
     modulo: 'Mesas',
     accion: () => 'Envió una comanda a cocina',
-    descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`} · comanda #${d.comandaId} · ${plural(d.numItems || 0, 'ítem', 'ítems')}`,
+    descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`} · comanda #${d.comandaId}${d.estacion ? ` (${d.estacion})` : ''} · ${plural(d.numItems || 0, 'ítem', 'ítems')}`,
   },
   cuenta_item_anulado: {
     modulo: 'Mesas',
@@ -199,6 +200,9 @@ const EVENTOS = {
     descripcion: (d) => `De ${d.desde} a ${d.hacia}`,
   },
   propina_sugerida_cambiada: { modulo: 'Mesas', accion: () => 'Cambió la propina sugerida', descripcion: (d) => (Number(d.pct) > 0 ? `Ahora ${num(d.pct)} %` : 'Ya no se sugiere propina') },
+  estaciones_cambiadas: { modulo: 'Mesas', accion: () => 'Cambió las estaciones de preparación', descripcion: (d) => d.estaciones },
+  propina_pesos_cambiados: { modulo: 'Mesas', accion: () => 'Cambió el reparto de propinas', descripcion: (d) => `Pesos de ${plural(d.personas || 0, 'persona', 'personas')}` },
+  plano_actualizado: { modulo: 'Mesas', accion: () => 'Acomodó el plano del local', descripcion: (d) => plural(d.mesas || 0, 'mesa', 'mesas') },
   mesa_creada: { modulo: 'Mesas', accion: () => 'Creó una mesa', descripcion: (d) => ref(d.nombre, d.mesaId) },
   mesa_actualizada: { modulo: 'Mesas', accion: (d) => (d.activa === false ? 'Desactivó una mesa' : 'Modificó una mesa'), descripcion: (d) => ref(d.nombre, d.mesaId) },
   // Gastos
