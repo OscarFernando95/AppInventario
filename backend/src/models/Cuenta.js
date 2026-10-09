@@ -16,6 +16,8 @@ const Cuenta = sequelize.define('Cuenta', {
   cerrada_en: { type: DataTypes.DATE, allowNull: true },
   motivo_cancelacion: { type: DataTypes.TEXT, allowNull: true },
   cancelada_por: { type: DataTypes.INTEGER, allowNull: true },
+  // Pedir por tiempos: hasta qué tiempo (1 = entrada, 2 = plato fuerte…) ya se disparó. Solo tiene efecto con la opción encendida.
+  tiempo_actual: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
 }, {
   tableName: 'cuentas',
   timestamps: true,

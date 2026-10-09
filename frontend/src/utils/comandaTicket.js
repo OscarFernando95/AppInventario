@@ -33,6 +33,7 @@ export function htmlComanda(comanda, { empresa, reimpresion = false } = {}) {
   h1 { font-size: 20px; text-align: center; margin: 0 0 2px; letter-spacing: 1px; }
   .centro { text-align: center; }
   .sub { font-size: 11px; text-align: center; margin: 0 0 4px; }
+  .tiempo { font-size: 18px; font-weight: 700; text-align: center; margin: 4px 0; border: 2px solid #000; padding: 2px 0; letter-spacing: 1px; }
   .mesa { font-size: 24px; font-weight: 700; text-align: center; margin: 6px 0; border-top: 2px dashed #000; border-bottom: 2px dashed #000; padding: 4px 0; }
   .meta { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 6px; }
   ul { list-style: none; padding: 0; margin: 0; }
@@ -48,6 +49,7 @@ export function htmlComanda(comanda, { empresa, reimpresion = false } = {}) {
 <body>
   <h1>COMANDA #${esc(comanda.id)}${reimpresion ? ' (copia)' : ''}</h1>
   ${comanda.estacion ? `<p class="sub"><strong>${esc(String(comanda.estacion).toUpperCase())}</strong></p>` : ''}
+  ${comanda.tiempo_nombre ? `<p class="tiempo">${esc(String(comanda.tiempo_nombre).toUpperCase())}</p>` : ''}
   ${empresa ? `<p class="sub">${esc(empresa)}</p>` : ''}
   <div class="mesa">${esc(comanda.cuenta || 'Sin mesa')}</div>
   <div class="meta"><span>${esc(dia(comanda.enviada_en))} ${esc(hora(comanda.enviada_en))}</span><span>${comanda.mesero ? `Atiende: ${esc(comanda.mesero)}` : ''}</span></div>

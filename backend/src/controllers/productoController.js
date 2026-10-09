@@ -173,7 +173,7 @@ function limpiarPorTipo(datos, tipo) {
   if (TIPOS_NO_COMPRABLES.includes(tipo)) delete limpio.costo_promedio;
   if (tipo !== 'PREPARACION') { delete limpio.rendimiento; limpio.por_lotes = false; limpio.vida_util_dias = null; }
   if (tipo === 'PREPARACION' && limpio.por_lotes === false) limpio.vida_util_dias = null;
-  if (!['VENTA', 'RECETA', 'COMBO'].includes(tipo)) limpio.estacion = null; // solo lo que se vende pasa por una estación
+  if (!['VENTA', 'RECETA', 'COMBO'].includes(tipo)) { limpio.estacion = null; limpio.tiempo_objetivo_min = null; } // solo lo que se vende pasa por una estación
   return limpio;
 }
 
@@ -193,6 +193,12 @@ async function validarCombo(req, comboBody, comboId, t) {
   const malo = comps.find((c) => !['VENTA', 'RECETA'].includes(c.tipo));
   if (malo) throw new ValidationError(`"${malo.nombre_producto}" no puede ir en un combo: solo platos y productos de venta.`);
   return comboBody;
+}
+
+/** El tiempo objetivo de un plato solo se guarda con «Alertas de demora en cocina» encendida; si no, se ignora. */
+async function ignorarObjetivoSinAlertas(req, datos) {
+  if (datos.tiempo_objetivo_min === undefined) return;
+  if (!(await opcionesDe(req)).cocina_alertas) delete datos.tiempo_objetivo_min;
 }
 
 /** "Reponer hasta" no puede quedar por debajo del mínimo (con los valores que quedarían tras guardar). */
@@ -228,6 +234,7 @@ exports.createProducto = async (req, res) => {
   const { receta: recetaBody, combo: comboBody, ...datos } = req.body;
   await validarEstacion(req, datos.estacion);
   await aplicarOpcionesDeMenu(req, datos);
+  await ignorarObjetivoSinAlertas(req, datos);
   const tipo = datos.tipo || 'VENTA';
   validarObjetivo(datos.stock_minimo ?? 0, datos.stock_objetivo);
 
@@ -258,6 +265,7 @@ exports.updateProducto = async (req, res) => {
   const { receta: recetaBody, combo: comboBody, ...datos } = req.body;
   await validarEstacion(req, datos.estacion);
   await aplicarOpcionesDeMenu(req, datos);
+  await ignorarObjetivoSinAlertas(req, datos);
 
   const producto = await sequelize.transaction(async (t) => {
     const actual = await Producto.findOne({ where: { id, empresaId: req.empresaId }, transaction: t, lock: t.LOCK.UPDATE });

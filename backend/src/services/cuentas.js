@@ -79,4 +79,51 @@ function propinaSugerida(base, porcentaje, paso = 100) {
   return paso > 0 ? Math.round(bruta / paso) * paso : redondear2(bruta);
 }
 
-module.exports = { precioDeItem, repartirItems, totalesDeCuenta, totalesPorComensal, propinaSugerida, redondear2, redondear3 };
+// ── Pedir por tiempos (entrada, plato fuerte, postre…) ────────────────────────────────────────────────
+
+const TIEMPOS_POR_DEFECTO = ['Entrada', 'Plato fuerte', 'Postre'];
+const MAX_TIEMPOS = 4;
+
+/** Nombres de los tiempos de una empresa a partir de lo que tiene guardado (o los de siempre). */
+const nombresDeTiempos = (guardado) => (Array.isArray(guardado) && guardado.length ? guardado : TIEMPOS_POR_DEFECTO);
+
+/** Nombre del tiempo `n` (1..); si la lista se acortó después de pedir, «Tiempo n». */
+const nombreDeTiempo = (nombres, n) => (n == null ? null : (nombres || [])[n - 1] || `Tiempo ${n}`);
+
+/** Ítems (aún sin enviar) cuyo tiempo ya se disparó: los que se pueden mandar a cocina ahora. */
+const itemsEnviables = (pendientes, tiempoActual) => pendientes.filter((i) => (i.tiempo || 1) <= tiempoActual);
+
+/** Siguiente tiempo con pedidos en espera (mayor que el actual), o null si ya no queda ninguno. */
+function siguienteTiempo(pendientes, tiempoActual) {
+  const esperando = pendientes.map((i) => i.tiempo || 1).filter((t) => t > tiempoActual);
+  return esperando.length ? Math.min(...esperando) : null;
+}
+
+/** Cuántos pedidos esperan en cada tiempo: [{ numero, pendientes }] para los `cuantos` tiempos de la empresa. */
+const pendientesPorTiempo = (pendientes, cuantos) => Array.from({ length: cuantos }, (_, k) => ({
+  numero: k + 1,
+  pendientes: pendientes.filter((i) => (i.tiempo || 1) === k + 1).length,
+}));
+
+/**
+ * Agrupa lo que se va a enviar en comandas: una por estación y, con `porTiempo`, una por (tiempo, estación) en orden de
+ * tiempo. Sin `porTiempo` agrupa solo por estación (como siempre) y el tiempo queda en null.
+ * `estacionDe(item)` da la estación ya resuelta de un ítem.
+ */
+function agruparParaEnvio(items, estaciones, estacionDe, porTiempo = false) {
+  const tiempos = porTiempo ? [...new Set(items.map((i) => i.tiempo || 1))].sort((a, b) => a - b) : [null];
+  const grupos = [];
+  for (const tiempo of tiempos) {
+    const delTiempo = porTiempo ? items.filter((i) => (i.tiempo || 1) === tiempo) : items;
+    for (const estacion of estaciones) {
+      const deEstacion = delTiempo.filter((i) => estacionDe(i) === estacion);
+      if (deEstacion.length) grupos.push({ estacion, tiempo, items: deEstacion });
+    }
+  }
+  return grupos;
+}
+
+module.exports = {
+  precioDeItem, repartirItems, totalesDeCuenta, totalesPorComensal, propinaSugerida, redondear2, redondear3,
+  TIEMPOS_POR_DEFECTO, MAX_TIEMPOS, nombresDeTiempos, nombreDeTiempo, itemsEnviables, siguienteTiempo, pendientesPorTiempo, agruparParaEnvio,
+};

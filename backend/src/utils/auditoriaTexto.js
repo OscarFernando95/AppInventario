@@ -167,7 +167,12 @@ const EVENTOS = {
   comanda_enviada: {
     modulo: 'Mesas',
     accion: () => 'Envió una comanda a cocina',
-    descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`} · comanda #${d.comandaId}${d.estacion ? ` (${d.estacion})` : ''} · ${plural(d.numItems || 0, 'ítem', 'ítems')}`,
+    descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`} · comanda #${d.comandaId}${d.estacion ? ` (${d.estacion})` : ''} · ${plural(d.numItems || 0, 'ítem', 'ítems')}${d.tiempo ? ` · tiempo «${d.tiempo}»` : ''}`,
+  },
+  tiempo_disparado: {
+    modulo: 'Mesas',
+    accion: () => 'Disparó un tiempo de servicio',
+    descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`} · «${d.tiempo}» · ${plural(d.numItems || 0, 'ítem', 'ítems')} a cocina`,
   },
   cuenta_item_anulado: {
     modulo: 'Mesas',
