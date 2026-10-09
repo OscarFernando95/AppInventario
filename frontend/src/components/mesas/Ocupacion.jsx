@@ -9,7 +9,7 @@ import { TableState } from '../ui/DataState';
 const Tarjeta = ({ icono, titulo, valor, detalle }) => {
   const Icono = icono;
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+    <div role="group" aria-label={titulo} className="rounded-2xl border border-slate-200 bg-white p-4">
       <p className="flex items-center gap-2 text-sm font-medium text-slate-500"><Icono className="w-4 h-4 text-brand-700" aria-hidden="true" /> {titulo}</p>
       <p className="mt-2 text-2xl font-bold text-slate-900">{valor}</p>
       {detalle && <p className="mt-1 text-xs text-slate-500">{detalle}</p>}

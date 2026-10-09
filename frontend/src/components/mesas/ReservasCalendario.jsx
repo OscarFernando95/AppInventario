@@ -9,12 +9,12 @@ const ESTADOS = { SENTADA: 'Sentada', CANCELADA: 'Cancelada', NO_LLEGO: 'No lleg
  */
 export const BarraCalendario = ({ dia, vista, onDia, onVista }) => {
   const paso = vista === 'semana' ? 7 : 1;
-  const unidad = vista === 'semana' ? 'semana' : 'día';
+  const [anterior, siguiente] = vista === 'semana' ? ['Ir a la semana anterior', 'Ir a la semana siguiente'] : ['Ir al día anterior', 'Ir al día siguiente'];
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button type="button" className="btn-secondary px-2" aria-label={`Ir al ${unidad} anterior`} onClick={() => onDia(sumarDiasISO(dia, -paso))}><ChevronLeft className="w-4 h-4" aria-hidden="true" /></button>
+      <button type="button" className="btn-secondary px-2" aria-label={anterior} onClick={() => onDia(sumarDiasISO(dia, -paso))}><ChevronLeft className="w-4 h-4" aria-hidden="true" /></button>
       <button type="button" className="btn-secondary text-sm" onClick={() => onDia(fechaISOLocal())}>Hoy</button>
-      <button type="button" className="btn-secondary px-2" aria-label={`Ir al ${unidad} siguiente`} onClick={() => onDia(sumarDiasISO(dia, paso))}><ChevronRight className="w-4 h-4" aria-hidden="true" /></button>
+      <button type="button" className="btn-secondary px-2" aria-label={siguiente} onClick={() => onDia(sumarDiasISO(dia, paso))}><ChevronRight className="w-4 h-4" aria-hidden="true" /></button>
       <input
         type="date" aria-label="Fecha de las reservas" className="input-field w-40 py-1.5" value={dia}
         onChange={(e) => e.target.value && onDia(e.target.value)}

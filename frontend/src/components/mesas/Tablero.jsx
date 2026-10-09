@@ -255,7 +255,7 @@ const Reservas = ({ mesas, onSentada }) => {
     <section aria-label={conCalendario ? 'Calendario de reservas' : 'Reservas de hoy'} className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-800"><CalendarClock className="w-5 h-5 text-brand-700" aria-hidden="true" /> {conCalendario ? 'Reservas' : 'Reservas de hoy'} <span className="text-sm font-normal text-slate-500">({pendientes.length} pendientes)</span></h3>
-        <button type="button" className="btn-secondary gap-2" onClick={() => { setFormError(null); if (conCalendario && !form.fecha_hora) setForm((f) => ({ ...f, fecha_hora: `${dia}T20:00` })); setAbierto(true); }}><Plus className="w-4 h-4" aria-hidden="true" /> Nueva reserva</button>
+        <button type="button" className="btn-secondary gap-2" onClick={() => { setFormError(null); if (conCalendario) setForm({ nombre: '', telefono: '', personas: '2', fecha_hora: `${dia}T20:00`, mesaId: '', nota: '' }); setAbierto(true); }}><Plus className="w-4 h-4" aria-hidden="true" /> Nueva reserva</button>
       </div>
       {conCalendario && <BarraCalendario dia={dia} vista={vista} onDia={setDia} onVista={setVista} />}
       {conCalendario && vista === 'semana' ? (
