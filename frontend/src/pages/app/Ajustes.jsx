@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { ClipboardCheck, CheckCircle2, MinusCircle, ScanSearch, TriangleAlert } from 'lucide-react';
+import { ClipboardCheck, CheckCircle2, MinusCircle, ScanSearch, TriangleAlert, MessageCircle, Mail, Trophy } from 'lucide-react';
 import { formatCOP, formatCantidad, fechaLocal } from '../../utils/format';
 import { unidadCorta } from '../../utils/unidades';
+import { enlaceWhatsApp, enlaceCorreo, mensajeAlertas } from '../../utils/avisos';
+import { useAuthStore } from '../../store/authStore';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import FormError from '../../components/FormError';
@@ -32,6 +34,21 @@ const FILTROS_VACIOS = { tipo: '', desde: '', hasta: '' };
 const conStockPropio = (p) => !['RECETA', 'PREPARACION'].includes(p.tipo) || !!p.por_lotes;
 
 const fmtFecha = (v) => new Date(v).toLocaleString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+/** Botones para avisar de una alerta por WhatsApp o correo (abren la aplicación con el mensaje listo). */
+const AvisarAlertas = ({ alertas, contacto, umbral }) => {
+  const empresa = useAuthStore((st) => st.activeEmpresa?.nombre) || 'la empresa';
+  const texto = mensajeAlertas(alertas, empresa, umbral);
+  const wa = enlaceWhatsApp(contacto?.whatsapp, texto);
+  const correo = enlaceCorreo(contacto?.correo, `Alerta de inventario en ${empresa}`, texto);
+  if (!wa && !correo) return <p className="text-xs">Para avisar con un clic, indica a quién en «Avisar a» (pestaña Desviaciones).</p>;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {wa && <a href={wa} target="_blank" rel="noopener noreferrer" className="btn-secondary text-xs gap-1.5"><MessageCircle className="w-3.5 h-3.5" aria-hidden="true" /> Avisar por WhatsApp</a>}
+      {correo && <a href={correo} className="btn-secondary text-xs gap-1.5"><Mail className="w-3.5 h-3.5" aria-hidden="true" /> Avisar por correo</a>}
+    </div>
+  );
+};
 
 /* ───────────────────────── Mermas y ajustes ───────────────────────── */
 const Mermas = () => {
@@ -358,6 +375,7 @@ const Conteo = () => {
                     </li>
                   ))}
                 </ul>
+                <AvisarAlertas alertas={resultado.alertas} contacto={resultado.contacto} umbral={resultado.umbral_pct} />
               </div>
             )}
             <ModalActions>
@@ -387,7 +405,9 @@ const Stat = ({ label, value, tone = 'text-slate-800' }) => (
 
 const Desviaciones = () => {
   const queryClient = useQueryClient();
-  const [modo, setModo] = useState('rango'); // 'rango' (consumo del rango vs conteos del rango) | 'conteos' (cada conteo vs el anterior)
+  const [modo, setModo] = useState('rango'); // 'rango' (consumo del rango vs conteos del rango) | 'conteos' (cada conteo vs el anterior) | 'ranking' (pérdidas del mes)
+  const [mes, setMes] = useState(() => fechaLocal().slice(0, 7));
+  const [contactoEdit, setContactoEdit] = useState({ whatsapp: null, correo: null }); // null = sin tocar
   const [rango, setRango] = useState(() => {
     const hoy = fechaLocal();
     return { desde: `${hoy.slice(0, 8)}01`, hasta: hoy }; // desde el 1 del mes
@@ -401,13 +421,17 @@ const Desviaciones = () => {
     const params = { modo };
     Object.entries(rango).forEach(([k, v]) => { if (v) params[k] = v; });
     return (await api.get('/ajustes/desviaciones', { params })).data;
-  });
+  }, { enabled: modo !== 'ranking' });
+  const { data: ranking, isLoading: cargandoRanking, isError: errorRanking, error: errRanking, refetch: recargarRanking } = useEmpresaQuery(
+    ['ajustes', 'ranking', mes], async () => (await api.get('/ajustes/desviaciones/ranking', { params: { mes } })).data, { enabled: modo === 'ranking', retry: false }
+  );
   const guardarUmbral = useMutation({
-    mutationFn: (pct) => api.put('/ajustes/desviaciones/umbral', { desviacion_alerta_pct: pct }),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['empresa'] }); setUmbralEdit(''); setError(null); },
+    mutationFn: (payload) => api.put('/ajustes/desviaciones/umbral', payload),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['empresa'] }); setUmbralEdit(''); setContactoEdit({ whatsapp: null, correo: null }); setError(null); },
     onError: (err) => setError(apiError(err, 'No se pudo guardar el límite')),
   });
   const umbral = data?.umbral_pct;
+  const contacto = data?.contacto;
   const filas = useMemo(() => {
     const todas = modo === 'conteos' ? (data?.eventos || []) : (data?.filas || []);
     return todas.filter((f) => !soloProblemas || f.estado === 'FALTANTE' || f.faltante > 0);
@@ -433,42 +457,63 @@ const Desviaciones = () => {
 
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div role="radiogroup" aria-label="Cómo comparar" className="inline-flex rounded-xl border border-slate-200 bg-white p-1 text-sm">
-          {[['rango', 'Por fechas'], ['conteos', 'Entre conteos']].map(([v, etiqueta]) => (
+          {[['rango', 'Por fechas'], ['conteos', 'Entre conteos'], ['ranking', 'Ranking del mes']].map(([v, etiqueta]) => (
             <label key={v} className={`px-3 py-1.5 rounded-lg cursor-pointer focus-within:ring-2 focus-within:ring-brand-600 ${modo === v ? 'bg-brand-700 text-white font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}>
               <input type="radio" className="sr-only" name="modo-desviacion" checked={modo === v} onChange={() => setModo(v)} />
               {etiqueta}
             </label>
           ))}
         </div>
-        <form
-          className="flex items-end gap-2"
-          onSubmit={(e) => { e.preventDefault(); if (umbralEdit !== '') guardarUmbral.mutate(Number(umbralEdit)); }}
-        >
-          <Field label="Alertar si falta más de (%)" className="w-44">
-            <input type="number" min="0" max="100" step="any" className="input-field" placeholder={umbral != null ? String(umbral) : '5'} value={umbralEdit} onChange={(e) => setUmbralEdit(e.target.value)} />
-          </Field>
-          <button type="submit" className="btn-secondary" disabled={umbralEdit === '' || guardarUmbral.isPending}>Guardar</button>
-        </form>
+        {modo !== 'ranking' && (
+          <form
+            className="flex flex-wrap items-end gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const payload = {};
+              if (umbralEdit !== '') payload.desviacion_alerta_pct = Number(umbralEdit);
+              if (contactoEdit.whatsapp !== null) payload.alerta_whatsapp = contactoEdit.whatsapp;
+              if (contactoEdit.correo !== null) payload.alerta_correo = contactoEdit.correo;
+              if (Object.keys(payload).length > 0) guardarUmbral.mutate(payload);
+            }}
+          >
+            <Field label="Alertar si falta más de (%)" className="w-44">
+              <input type="number" min="0" max="100" step="any" className="input-field" placeholder={umbral != null ? String(umbral) : '5'} value={umbralEdit} onChange={(e) => setUmbralEdit(e.target.value)} />
+            </Field>
+            <Field label="Avisar a (WhatsApp)" className="w-44">
+              <input className="input-field" inputMode="tel" placeholder="300 111 2233" value={contactoEdit.whatsapp ?? contacto?.whatsapp ?? ''} onChange={(e) => setContactoEdit({ ...contactoEdit, whatsapp: e.target.value })} />
+            </Field>
+            <Field label="Avisar a (correo)" className="w-52">
+              <input type="email" className="input-field" placeholder="dueno@mi-negocio.co" value={contactoEdit.correo ?? contacto?.correo ?? ''} onChange={(e) => setContactoEdit({ ...contactoEdit, correo: e.target.value })} />
+            </Field>
+            <button type="submit" className="btn-secondary mb-0.5" disabled={(umbralEdit === '' && contactoEdit.whatsapp === null && contactoEdit.correo === null) || guardarUmbral.isPending}>Guardar</button>
+          </form>
+        )}
       </div>
       <p className="text-xs text-slate-500">
-        {modo === 'conteos'
+        {modo === 'ranking' ? 'Lo que más dinero perdió el negocio en el mes: faltantes al contar más mermas registradas (merma, vencido y consumo interno).' : modo === 'conteos'
           ? 'Cada conteo se compara con el anterior del mismo producto: lo que se gastó entre uno y otro. El primer conteo de un producto no tiene con qué compararse.'
           : 'Solo aparece diferencia donde hiciste un conteo físico en el rango.'}
-        {umbral != null && ` Límite de alerta actual: ${umbral.toLocaleString('es-CO')} % del consumo.`}
+        {modo !== 'ranking' && umbral != null && ` Límite de alerta actual: ${umbral.toLocaleString('es-CO')} % del consumo.`}
       </p>
 
-      <FilterBar hayFiltros={hayFiltros} onLimpiar={() => setRango({ desde: '', hasta: '' })}>
-        <Field label="Desde" className="w-full sm:w-44">
-          <input type="date" className="input-field" value={rango.desde} onChange={(e) => setRango({ ...rango, desde: e.target.value })} />
+      {modo === 'ranking' ? (
+        <Field label="Mes" className="w-44">
+          <input type="month" className="input-field" value={mes} onChange={(e) => e.target.value && setMes(e.target.value)} />
         </Field>
-        <Field label="Hasta" className="w-full sm:w-44">
-          <input type="date" className="input-field" value={rango.hasta} onChange={(e) => setRango({ ...rango, hasta: e.target.value })} />
-        </Field>
-        <label className="flex items-center gap-2 text-sm text-slate-700 pb-2.5">
-          <input type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600" checked={soloProblemas} onChange={(e) => setSoloProblemas(e.target.checked)} />
-          Solo faltantes
-        </label>
-      </FilterBar>
+      ) : (
+        <FilterBar hayFiltros={hayFiltros} onLimpiar={() => setRango({ desde: '', hasta: '' })}>
+          <Field label="Desde" className="w-full sm:w-44">
+            <input type="date" className="input-field" value={rango.desde} onChange={(e) => setRango({ ...rango, desde: e.target.value })} />
+          </Field>
+          <Field label="Hasta" className="w-full sm:w-44">
+            <input type="date" className="input-field" value={rango.hasta} onChange={(e) => setRango({ ...rango, hasta: e.target.value })} />
+          </Field>
+          <label className="flex items-center gap-2 text-sm text-slate-700 pb-2.5">
+            <input type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600" checked={soloProblemas} onChange={(e) => setSoloProblemas(e.target.checked)} />
+            Solo faltantes
+          </label>
+        </FilterBar>
+      )}
 
       {modo === 'rango' && conValores && (
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
@@ -483,8 +528,46 @@ const Desviaciones = () => {
           <TriangleAlert className="w-4 h-4" aria-hidden="true" /> {data.alertas} conteo(s) con faltante sobre el límite en este rango.
         </p>
       )}
+      {modo === 'conteos' && data?.alertas > 0 && (
+        <AvisarAlertas alertas={(data.eventos || []).filter((e) => e.alerta)} contacto={contacto} umbral={umbral} />
+      )}
 
-      {modo === 'rango' ? (
+      {modo === 'ranking' ? (
+        <>
+          {ranking?.totales && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <Stat label="Perdido en el mes" value={formatCOP(ranking.totales.perdida)} tone="text-red-700" />
+              <Stat label="Faltantes al contar" value={formatCOP(ranking.totales.faltantes)} tone="text-red-700" />
+              <Stat label="Mermas registradas" value={formatCOP(ranking.totales.mermas)} tone="text-amber-700" />
+            </div>
+          )}
+          <TableCard>
+            <THead>
+              <Th className="w-12">#</Th>
+              <Th>Producto</Th>
+              <Th align="right">Faltante al contar</Th>
+              <Th align="right">Mermas</Th>
+              <Th align="right">Pérdida total</Th>
+            </THead>
+            <tbody>
+              <TableState
+                colSpan={5} isLoading={cargandoRanking} isError={errorRanking} error={errRanking} onRetry={recargarRanking}
+                isEmpty={(ranking?.filas || []).length === 0} emptyIcon={Trophy}
+                emptyTitle="Sin pérdidas este mes" emptyHint="Aparecen los productos con faltantes al contar o mermas registradas en el mes."
+              />
+              {(ranking?.filas || []).map((f, i) => (
+                <Tr key={f.productoId}>
+                  <Td className="font-bold text-slate-500">{i + 1}</Td>
+                  <Td className="font-medium text-slate-800">{f.nombre_producto}<span className="block text-xs font-normal text-slate-500">{f.codigo}</span></Td>
+                  <Td align="right" className="whitespace-nowrap">{f.faltante_valor > 0 ? <>{formatCOP(f.faltante_valor)}<span className="block text-[11px] text-slate-500">{formatCantidad(f.faltante_cantidad)} {unidadCorta(f.unidad_medida)}</span></> : <span className="text-slate-400">—</span>}</Td>
+                  <Td align="right" className="whitespace-nowrap">{f.mermas_valor > 0 ? <>{formatCOP(f.mermas_valor)}<span className="block text-[11px] text-slate-500">{formatCantidad(f.mermas_cantidad)} {unidadCorta(f.unidad_medida)}</span></> : <span className="text-slate-400">—</span>}</Td>
+                  <Td align="right" className="font-bold text-red-700 whitespace-nowrap">{formatCOP(f.perdida_total)}</Td>
+                </Tr>
+              ))}
+            </tbody>
+          </TableCard>
+        </>
+      ) : modo === 'rango' ? (
         <TableCard>
           <THead>
             <Th>Producto</Th>

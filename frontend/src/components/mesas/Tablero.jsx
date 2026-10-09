@@ -1,12 +1,15 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Armchair, ShoppingBag, Plus, Settings2, Users, ChefHat, Clock, Pencil, CalendarClock, Phone } from 'lucide-react';
+import { Armchair, ShoppingBag, Plus, Settings2, Users, ChefHat, Clock, Pencil, CalendarClock, Phone, LayoutGrid, Map as MapaIcono, MessageCircle, X, Shapes } from 'lucide-react';
 import api from '../../api/axios';
 import { formatCOP } from '../../utils/format';
 import { apiError } from '../../utils/apiError';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useAhora, hace } from '../../hooks/useAhora';
+import { useAuthStore } from '../../store/authStore';
+import { enlaceWhatsApp, mensajeReserva } from '../../utils/avisos';
+import PlanoEditor, { ASPECTO_PLANO } from './PlanoEditor';
 import FormError from '../FormError';
 import Modal, { ModalActions } from '../ui/Modal';
 import Field from '../ui/Field';
@@ -66,6 +69,23 @@ const ConfigurarMesas = ({ abierto, onClose }) => {
     onError: (err) => setFormError(apiError(err, 'No se pudo guardar la propina sugerida')),
   });
   const pctActual = data?.config?.propina_sugerida_pct;
+  const conCaja = useAuthStore((st) => (st.activeEmpresa?.modulos || []).includes('Caja'));
+  const [estaciones, setEstaciones] = useState(null); // lista en edición (null = la guardada)
+  const estacionesEdit = estaciones ?? data?.config?.estaciones ?? ['Cocina'];
+  const [nuevaEstacion, setNuevaEstacion] = useState('');
+  const guardarEstaciones = useMutation({
+    mutationFn: (lista) => api.put('/mesas/config', { estaciones: lista }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['empresa'] }); setEstaciones(null); setFormError(null); },
+    onError: (err) => setFormError(apiError(err, 'No se pudieron guardar las estaciones')),
+  });
+  const { data: personal = [] } = useEmpresaQuery(['caja', 'personal'], '/caja/personal', { enabled: abierto && conCaja });
+  const [pesos, setPesos] = useState({});
+  const guardarPesos = useMutation({
+    mutationFn: (lista) => api.put('/mesas/propinas/pesos', { pesos: lista }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['empresa'] }); setPesos({}); setFormError(null); },
+    onError: (err) => setFormError(apiError(err, 'No se pudieron guardar los pesos')),
+  });
+  const [plano, setPlano] = useState(false);
 
   return (
     <Modal open={abierto} onClose={onClose} title="Configurar mesas" size="lg">
@@ -90,6 +110,60 @@ const ConfigurarMesas = ({ abierto, onClose }) => {
           </div>
         </form>
 
+        <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 space-y-2">
+          <p className="text-sm font-semibold text-slate-700">Estaciones de preparación</p>
+          <p className="text-xs text-slate-500">Cada plato se prepara en una estación (Cocina, Barra, Postres…) y cada una ve solo sus comandas. Con una sola, todo va junto.</p>
+          <ul className="flex flex-wrap gap-2">
+            {estacionesEdit.map((e) => (
+              <li key={e} className="flex items-center gap-1 rounded-full bg-white border border-slate-300 pl-3 pr-1 py-1 text-sm">
+                {e}
+                <button type="button" className="btn-icon p-1" aria-label={`Quitar la estación ${e}`} disabled={estacionesEdit.length <= 1} onClick={() => setEstaciones(estacionesEdit.filter((x) => x !== e))}><X className="w-3.5 h-3.5" /></button>
+              </li>
+            ))}
+          </ul>
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label="Nueva estación" className="w-52">
+              <input className="input-field" maxLength={30} placeholder="Barra" value={nuevaEstacion} onChange={(e) => setNuevaEstacion(e.target.value)} />
+            </Field>
+            <button
+              type="button" className="btn-secondary mb-5" disabled={!nuevaEstacion.trim() || estacionesEdit.length >= 6}
+              onClick={() => { const n = nuevaEstacion.trim(); if (!estacionesEdit.some((x) => x.toLowerCase() === n.toLowerCase())) setEstaciones([...estacionesEdit, n]); setNuevaEstacion(''); }}
+            >
+              Agregar estación
+            </button>
+            <button type="button" className="btn-primary mb-5" disabled={guardarEstaciones.isPending || JSON.stringify(estacionesEdit) === JSON.stringify(data?.config?.estaciones || ['Cocina'])} onClick={() => guardarEstaciones.mutate(estacionesEdit)}>Guardar estaciones</button>
+          </div>
+        </div>
+
+        {conCaja && (
+          <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 space-y-2">
+            <p className="text-sm font-semibold text-slate-700">Reparto de propinas</p>
+            <p className="text-xs text-slate-500">Cuánto pesa cada persona al repartir las propinas: 1 = parte normal, 0,5 = media parte, 0 = no recibe. Al entregar las propinas se reparte en proporción.</p>
+            <ul className="space-y-1.5">
+              {personal.map((p) => (
+                <li key={p.id} className="flex items-center justify-between gap-3 text-sm">
+                  <span className="truncate">{p.nombre}</span>
+                  <input
+                    type="number" min="0" step="0.25" aria-label={`Peso de ${p.nombre}`} className="input-field w-24 text-right"
+                    value={pesos[p.id] ?? p.peso} onChange={(e) => setPesos((x) => ({ ...x, [p.id]: e.target.value }))}
+                  />
+                </li>
+              ))}
+            </ul>
+            <button
+              type="button" className="btn-secondary" disabled={guardarPesos.isPending || Object.keys(pesos).length === 0}
+              onClick={() => guardarPesos.mutate(Object.entries(pesos).map(([id, peso]) => ({ usuarioId: Number(id), peso: Number(peso) || 0 })))}
+            >
+              Guardar pesos
+            </button>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 border border-slate-200 p-3">
+          <p className="text-sm text-slate-700"><strong>Plano del local:</strong> acomoda las mesas donde están en tu local.</p>
+          <button type="button" className="btn-secondary gap-2" disabled={mesas.filter((m) => m.activa).length === 0} onClick={() => setPlano(true)}><Shapes className="w-4 h-4" aria-hidden="true" /> Acomodar plano</button>
+        </div>
+
         <table className="w-full text-sm">
           <tbody>
             <TableState colSpan={3} isLoading={isLoading} isError={isError} error={error} onRetry={refetch} isEmpty={mesas.length === 0} emptyIcon={Armchair} emptyTitle="Aún no hay mesas" emptyHint="Agrega la primera arriba." />
@@ -111,6 +185,7 @@ const ConfigurarMesas = ({ abierto, onClose }) => {
           </tbody>
         </table>
         <ModalActions><button type="button" className="btn-primary px-6" onClick={onClose}>Listo</button></ModalActions>
+        {plano && <PlanoEditor mesas={mesas.filter((m) => m.activa)} onClose={() => setPlano(false)} />}
       </div>
     </Modal>
   );
@@ -119,6 +194,7 @@ const ConfigurarMesas = ({ abierto, onClose }) => {
 /** Reservas del día: quién viene, cuántos y a qué hora; al llegar se sientan (abren la cuenta). */
 const Reservas = ({ mesas, onSentada }) => {
   const qc = useQueryClient();
+  const nombreEmpresa = useAuthStore((st) => st.activeEmpresa?.nombre) || 'nuestro restaurante';
   const ahora = useAhora();
   const [abierto, setAbierto] = useState(false);
   const [form, setForm] = useState({ nombre: '', telefono: '', personas: '2', fecha_hora: '', mesaId: '', nota: '' });
@@ -183,6 +259,14 @@ const Reservas = ({ mesas, onSentada }) => {
                 </span>
                 {r.estado === 'PENDIENTE' && (
                   <span className="flex gap-2">
+                    {r.telefono && (
+                      <a
+                        href={enlaceWhatsApp(r.telefono, mensajeReserva({ ...r, mesa: r.mesa?.nombre }, nombreEmpresa))} target="_blank" rel="noopener noreferrer"
+                        className="btn-secondary text-xs gap-1" aria-label={`Recordar la reserva de ${r.nombre} por WhatsApp`}
+                      >
+                        <MessageCircle className="w-3.5 h-3.5" aria-hidden="true" /> Recordar
+                      </a>
+                    )}
                     <button type="button" className="btn-primary text-xs" onClick={() => { setFormError(null); setMesaSentar(r.mesaId ? String(r.mesaId) : ''); setSentando(r); }} aria-label={`Sentar la reserva de ${r.nombre}`}>Sentar</button>
                     <button type="button" className="btn-secondary text-xs" disabled={cambiar.isPending} onClick={() => cambiar.mutate({ id: r.id, estado: 'NO_LLEGO' })} aria-label={`${r.nombre} no llegó`}>No llegó</button>
                     <button type="button" className="btn-secondary text-xs" disabled={cambiar.isPending} onClick={() => cambiar.mutate({ id: r.id, estado: 'CANCELADA' })} aria-label={`Cancelar la reserva de ${r.nombre}`}>Cancelar</button>
@@ -247,6 +331,8 @@ const Tablero = ({ onAbrir, consulta }) => {
   const [datos, setDatos] = useState({ comensales: '', etiqueta: '' });
   const [formError, setFormError] = useState(null);
   const [config, setConfig] = useState(false);
+  const [vista, setVistaEstado] = useState(() => { try { return localStorage.getItem('mesas-vista') === 'plano' ? 'plano' : 'lista'; } catch { return 'lista'; } });
+  const setVista = (v) => { setVistaEstado(v); try { localStorage.setItem('mesas-vista', v); } catch { /* sin almacenamiento */ } };
 
   const abrir = useMutation({
     mutationFn: (payload) => api.post('/cuentas', payload),
@@ -275,7 +361,18 @@ const Tablero = ({ onAbrir, consulta }) => {
         <p className="text-sm text-slate-600">
           <strong>{ocupadas}</strong> de {mesas.length} mesas ocupadas{llevar.length ? ` · ${llevar.length} para llevar` : ''}. Se actualiza solo.
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <div role="radiogroup" aria-label="Vista del tablero" className="inline-flex rounded-xl border border-slate-200 bg-white p-0.5 text-sm">
+            {[['lista', 'Tarjetas', LayoutGrid], ['plano', 'Plano', MapaIcono]].map(([v, etiqueta, icono]) => {
+              const Icono = icono;
+              return (
+                <label key={v} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg cursor-pointer focus-within:ring-2 focus-within:ring-brand-600 ${vista === v ? 'bg-brand-700 text-white font-semibold' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <input type="radio" className="sr-only" name="vista-tablero" checked={vista === v} onChange={() => setVista(v)} />
+                  <Icono className="w-4 h-4" aria-hidden="true" /> {etiqueta}
+                </label>
+              );
+            })}
+          </div>
           {can('mesas.gestionar') && <button type="button" className="btn-secondary gap-2" onClick={() => setConfig(true)}><Settings2 className="w-4 h-4" aria-hidden="true" /> Configurar mesas</button>}
           <button type="button" className="btn-primary gap-2" onClick={() => { setFormError(null); setNueva({ llevar: true }); }}><ShoppingBag className="w-4 h-4" aria-hidden="true" /> Cuenta para llevar</button>
         </div>
@@ -287,7 +384,37 @@ const Tablero = ({ onAbrir, consulta }) => {
         </tbody></table></div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
+      {vista === 'plano' && mesas.length > 0 && (
+        <div className="space-y-3">
+          <div
+            role="group" aria-label="Plano del local"
+            className="relative w-full rounded-2xl border border-slate-200 bg-slate-50 overflow-hidden"
+            style={{ aspectRatio: ASPECTO_PLANO, backgroundImage: 'linear-gradient(#eef2f7 1px, transparent 1px), linear-gradient(90deg, #eef2f7 1px, transparent 1px)', backgroundSize: '10% 10%' }}
+          >
+            {mesas.filter((m) => m.pos_x != null && m.pos_y != null).map((m) => (
+              <button
+                key={m.id} type="button" style={{ left: `${m.pos_x}%`, top: `${m.pos_y}%` }}
+                aria-label={m.cuenta ? `Abrir la cuenta de ${m.nombre}` : `Abrir cuenta en ${m.nombre}`}
+                onClick={() => (m.cuenta ? onAbrir(m.cuenta.id) : (setFormError(null), setNueva({ mesa: m })))}
+                className={`absolute -translate-x-1/2 -translate-y-1/2 min-w-24 rounded-xl border-2 px-3 py-2 text-left shadow-sm transition hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 ${
+                  m.cuenta ? 'border-brand-600 bg-brand-50' : m.reserva ? 'border-amber-400 bg-amber-50' : 'border-emerald-300 bg-white'
+                }`}
+              >
+                <span className="block text-sm font-bold text-slate-800">{m.nombre}</span>
+                <span className="block text-[11px] text-slate-600">
+                  {m.cuenta ? <>{formatCOP(m.cuenta.total)} · {hace(m.cuenta.abierta_en, ahora)}</> : m.reserva ? `Reservada ${new Date(m.reserva.fecha_hora).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}` : 'Libre'}
+                </span>
+                {m.cuenta && <span className="block text-[11px]"><EstadoCocina c={m.cuenta} /></span>}
+              </button>
+            ))}
+          </div>
+          {mesas.some((m) => m.pos_x == null || m.pos_y == null) && (
+            <p className="text-xs text-slate-500">Sin ubicar en el plano: {mesas.filter((m) => m.pos_x == null || m.pos_y == null).map((m) => m.nombre).join(', ')}. Acomódalas en «Configurar mesas».</p>
+          )}
+        </div>
+      )}
+
+      <div className={`grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4 ${vista === 'plano' ? 'hidden' : ''}`}>
         {mesas.map((m) => (m.cuenta ? (
           <TarjetaCuenta key={m.id} cuenta={m.cuenta} ahora={ahora} onAbrir={onAbrir} icono={Armchair} titulo={m.nombre} />
         ) : (

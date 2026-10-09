@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../api/axios';
-import { ChefHat, Plus, Trash2, Edit, TrendingUp, Soup, Undo2, Hourglass, Lightbulb } from 'lucide-react';
+import { ChefHat, Plus, Trash2, Edit, TrendingUp, Soup, Undo2, Hourglass, Lightbulb, Tag } from 'lucide-react';
 import { formatCOP, formatCantidad } from '../../utils/format';
 import { unidadCorta } from '../../utils/unidades';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
@@ -11,6 +11,8 @@ import SearchableSelect from '../../components/SearchableSelect';
 import PageHeader from '../../components/ui/PageHeader';
 import Tabs from '../../components/ui/Tabs';
 import { usePermisos } from '../../hooks/usePermisos';
+import { useAuthStore } from '../../store/authStore';
+import { imprimirEtiquetaLote } from '../../utils/etiquetaLote';
 import Modal, { ModalActions } from '../../components/ui/Modal';
 import Field from '../../components/ui/Field';
 import FilterBar from '../../components/ui/FilterBar';
@@ -333,9 +335,12 @@ const LotesYSugerencias = ({ onUsar, onDescartar, descartando }) => {
             </div>
             {!p.vida_util_dias && <p className="text-xs text-slate-500 mt-1">Sin vida útil configurada: en Inventario puedes indicar cuántos días dura un lote.</p>}
             <ul className="mt-2 space-y-1 text-sm">
-              {p.lotes.map((l) => (
+              {p.lotes.map((l, i) => (
                 <li key={l.id} className="flex items-center justify-between gap-2">
-                  <span className="text-slate-700">Lote del {fmtDia(String(l.fecha).slice(0, 10))} · {formatCantidad(l.restante)} {unidadCorta(p.unidad_medida)}</span>
+                  <span className="text-slate-700">
+                    Lote del {fmtDia(String(l.fecha).slice(0, 10))} · {formatCantidad(l.restante)} {unidadCorta(p.unidad_medida)}
+                    {i === 0 && p.lotes.length > 1 && l.estado !== 'VENCIDO' && <span className="ml-2 text-[11px] font-semibold text-brand-700">Usar primero</span>}
+                  </span>
                   <span className="flex items-center gap-2">
                     <span className="text-xs text-slate-500">{l.vence_en ? `vence ${fmtDia(l.vence_en)}` : ''}</span>
                     <span className={`text-[11px] font-semibold rounded px-1.5 py-0.5 ${TONO_LOTE[l.estado]}`}>{TEXTO_LOTE[l.estado]}</span>
@@ -390,7 +395,12 @@ const Produccion = () => {
   const [form, setForm] = useState({ productoId: '', cantidad: '', motivo: '' });
   const [formError, setFormError] = useState(null);
   const [okMsg, setOkMsg] = useState(null);
+  const [ultimoLote, setUltimoLote] = useState(null); // el lote recién producido, para imprimir su etiqueta
   const [offset, setOffset] = useState(0);
+  const nombreEmpresa = useAuthStore((st) => st.activeEmpresa?.nombre);
+  const etiquetar = (r, p) => imprimirEtiquetaLote({
+    id: r.id, cantidad: r.cantidad, fecha: r.fecha, vence_en: r.vence_en, nombre: p?.nombre_producto, unidad: unidadCorta(p?.unidad_medida), usuario: r.Usuario?.nombre,
+  }, { empresa: nombreEmpresa });
   const [deshacer, setDeshacer] = useState(null);
 
   const { data: productos = [] } = useEmpresaQuery(['productos'], '/productos');
@@ -428,6 +438,7 @@ const Produccion = () => {
       refrescar();
       setFormError(null);
       setOkMsg(`Producción registrada: ${formatCantidad(res.data.cantidad)} ${unidadCorta(prep?.unidad_medida)} de ${prep?.nombre_producto}.`);
+      setUltimoLote({ ...res.data, Usuario: { nombre: useAuthStore.getState().user?.nombre }, prep });
       setForm((f) => ({ ...f, cantidad: '', motivo: '' }));
     },
     onError: (err) => { setOkMsg(null); setFormError(apiError(err, 'No se pudo registrar la producción')); },
@@ -460,7 +471,14 @@ const Produccion = () => {
       </p>
 
       <FormError message={formError} onDismiss={() => setFormError(null)} />
-      {okMsg && <p role="status" className="rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-4 py-3">{okMsg}</p>}
+      {okMsg && (
+        <p role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm px-4 py-3">
+          <span>{okMsg}</span>
+          {ultimoLote && okMsg.startsWith('Producción registrada') && (
+            <button type="button" className="btn-secondary text-xs gap-1.5" onClick={() => etiquetar(ultimoLote, ultimoLote.prep)}><Tag className="w-3.5 h-3.5" aria-hidden="true" /> Imprimir etiqueta del lote</button>
+          )}
+        </p>
+      )}
 
       {lotes.length === 0 ? (
         <div className="card-container p-8 text-center text-slate-500">
@@ -521,11 +539,11 @@ const Produccion = () => {
             {verCostos && <Th align="right">Costo del lote</Th>}
             <Th>Registró</Th>
             <Th align="center">Estado</Th>
-            {puedeDeshacer && <Th align="center" className="w-24">Acciones</Th>}
+            <Th align="center" className="w-24">Acciones</Th>
           </THead>
           <tbody>
             <TableState
-              colSpan={5 + (verCostos ? 1 : 0) + (puedeDeshacer ? 1 : 0)} isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
+              colSpan={6 + (verCostos ? 1 : 0)} isLoading={isLoading} isError={isError} error={error} onRetry={refetch}
               isEmpty={(historial?.rows || []).length === 0} emptyIcon={Soup}
               emptyTitle="Aún no hay producciones" emptyHint="Cuando registres un lote aparecerá aquí."
             />
@@ -544,13 +562,14 @@ const Produccion = () => {
                     {r.estado === 'ACTIVA' ? 'ACTIVA' : 'DESHECHA'}
                   </span>
                 </Td>
-                {puedeDeshacer && (
-                  <Td align="center">
-                    {r.estado === 'ACTIVA' && (
-                      <button className="btn-icon" aria-label={`Deshacer la producción #${r.id}`} onClick={() => setDeshacer(r)}><Undo2 className="w-4 h-4" /></button>
-                    )}
-                  </Td>
-                )}
+                <Td align="center" className="whitespace-nowrap">
+                  {r.estado === 'ACTIVA' && (
+                    <button className="btn-icon" aria-label={`Imprimir la etiqueta del lote #${r.id}`} onClick={() => etiquetar(r, r.Producto)}><Tag className="w-4 h-4" /></button>
+                  )}
+                  {puedeDeshacer && r.estado === 'ACTIVA' && (
+                    <button className="btn-icon" aria-label={`Deshacer la producción #${r.id}`} onClick={() => setDeshacer(r)}><Undo2 className="w-4 h-4" /></button>
+                  )}
+                </Td>
               </Tr>
             ))}
           </tbody>

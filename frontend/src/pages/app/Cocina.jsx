@@ -9,6 +9,7 @@ import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import { useAuthStore } from '../../store/authStore';
 import { useAhora, hace } from '../../hooks/useAhora';
 import PageHeader from '../../components/ui/PageHeader';
+import Tabs from '../../components/ui/Tabs';
 import FormError from '../../components/FormError';
 
 /** Color por antigüedad: verde recién llegada, ámbar si se demora, rojo si pasa de 20 minutos. */
@@ -25,7 +26,7 @@ const Tarjeta = ({ comanda, ahora, onEstado, onImprimir, ocupado }) => {
       <header className="flex items-start justify-between gap-2">
         <div>
           <p className="text-xl font-bold text-slate-900">{comanda.cuenta}</p>
-          <p className="text-xs text-slate-500">Comanda #{comanda.id} · {comanda.mesero}</p>
+          <p className="text-xs text-slate-500">Comanda #{comanda.id}{comanda.estacion ? ` · ${comanda.estacion}` : ''} · {comanda.mesero}</p>
         </div>
         <span className="text-sm font-semibold text-slate-700 whitespace-nowrap">hace {hace(comanda.enviada_en, ahora)}</span>
       </header>
@@ -33,7 +34,7 @@ const Tarjeta = ({ comanda, ahora, onEstado, onImprimir, ocupado }) => {
       <ul className="mt-3 space-y-2">
         {comanda.items.map((i) => (
           <li key={i.id} className={i.anulado || cancelada ? 'line-through opacity-60' : ''}>
-            <p className="text-lg font-bold text-slate-900 leading-tight">{formatCantidad(i.cantidad)} × {i.nombre}{i.anulado && <span className="ml-2 text-[10px] font-bold border border-slate-700 rounded px-1 no-underline inline-block">ANULADO</span>}</p>
+            <p className="text-lg font-bold text-slate-900 leading-tight">{formatCantidad(i.cantidad)} × {i.nombre}{i.comensal ? <span className="ml-2 text-xs font-bold bg-slate-800 text-white rounded px-1.5 py-0.5 align-middle no-underline inline-block">P{i.comensal}</span> : null}{i.anulado && <span className="ml-2 text-[10px] font-bold border border-slate-700 rounded px-1 no-underline inline-block">ANULADO</span>}</p>
             {i.modificadores.map((m) => <p key={m} className="text-sm text-slate-700 pl-6">+ {m}</p>)}
             {i.nota && <p className="text-sm font-bold text-amber-800 pl-6">» {i.nota}</p>}
           </li>
@@ -59,7 +60,8 @@ const Cocina = () => {
   const empresa = useAuthStore((s) => s.activeEmpresa);
   const ahora = useAhora(15_000);
   const [error, setError] = useState(null);
-  const { data: comandas = [], isLoading, isError, error: errCarga } = useEmpresaQuery(['comandas'], '/comandas', { refetchInterval: 7_000 });
+  const [estacion, setEstacion] = useState('');
+  const { data: todas = [], isLoading, isError, error: errCarga } = useEmpresaQuery(['comandas'], '/comandas', { refetchInterval: 7_000 });
 
   const cambiar = useMutation({
     mutationFn: ({ id, estado }) => api.post(`/comandas/${id}/estado`, { estado }),
@@ -69,12 +71,23 @@ const Cocina = () => {
   const onEstado = (c, estado) => cambiar.mutate({ id: c.id, estado });
   const onImprimir = (c) => imprimirComanda(c, { empresa: empresa?.nombre, reimpresion: true });
 
+  // Una pantalla por estación (Cocina, Barra…): las pestañas salen de las estaciones que tienen comandas hoy.
+  const estaciones = [...new Set(todas.map((c) => c.estacion).filter(Boolean))].sort();
+  const activa = estaciones.includes(estacion) ? estacion : '';
+  const comandas = activa ? todas.filter((c) => c.estacion === activa) : todas;
   const pendientes = comandas.filter((c) => c.estado === 'PENDIENTE');
   const listas = comandas.filter((c) => c.estado === 'LISTA');
 
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader title="Cocina" description="Las comandas que envían los meseros. Márcalas como listas cuando salgan; se actualiza sola." />
+      {estaciones.length > 1 && (
+        <Tabs
+          tabs={[{ id: '', label: `Todas (${todas.length})` }, ...estaciones.map((e) => ({ id: e, label: `${e} (${todas.filter((c) => c.estacion === e).length})` }))]}
+          value={activa}
+          onChange={setEstacion}
+        />
+      )}
       <FormError message={error || (isError ? apiError(errCarga, 'No se pudieron cargar las comandas') : null)} onDismiss={() => setError(null)} />
 
       {isLoading ? (

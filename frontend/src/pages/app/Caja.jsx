@@ -7,6 +7,7 @@ import { formatCOP } from '../../utils/format';
 import { etiquetaPago } from '../../utils/mediosPago';
 import { CATEGORIAS_GASTO } from '../../utils/gastos';
 import { generateCajaPDF } from '../../utils/generateCajaPDF';
+import { repartirPorPesos } from '../../utils/propinas';
 import { useAuthStore } from '../../store/authStore';
 import { usePermisos } from '../../hooks/usePermisos';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
@@ -81,6 +82,7 @@ const Caja = () => {
   const [egresoForm, setEgresoForm] = useState({ modo: 'RETIRO', concepto: '', monto: '', categoria: 'SERVICIOS' });
   // Entrega de propinas: a quién le toca cuánto ({ [usuarioId]: { sel, monto } }).
   const [reparto, setReparto] = useState({});
+  const [soloHoy, setSoloHoy] = useState(false);
   const { data: personal = [] } = useEmpresaQuery(['caja', 'personal'], '/caja/personal', { enabled: showEgreso && egresoForm.modo === 'PROPINA' });
   const { data: propinas } = useEmpresaQuery(['caja', 'propinas', periodo], async () => {
     const params = {};
@@ -184,6 +186,13 @@ const Caja = () => {
       } else partes = undefined;
     }
     egreso.mutate({ ...egresoForm, concepto: egresoForm.concepto.trim(), monto: Number(egresoForm.monto), reparto: partes });
+  };
+
+  /** Reparte el monto según el peso de cada persona (Configurar mesas); con «solo hoy», solo a quienes trabajaron hoy. */
+  const repartirSegunPesos = () => {
+    const partes = repartirPorPesos(personal, Number(egresoForm.monto) || 0, { soloActivos: soloHoy });
+    setReparto(Object.fromEntries(partes.map((p) => [p.usuarioId, { sel: true, monto: String(p.monto) }])));
+    if (partes.length === 0) setFormError(soloHoy ? 'Nadie con peso mayor a 0 trabajó hoy.' : 'Nadie tiene peso mayor a 0: configúralo en Mesas → Configurar mesas.');
   };
 
   /** Reparte el monto en partes iguales entre quienes están marcados (la última parte absorbe los centavos). */
@@ -562,6 +571,9 @@ const Caja = () => {
                           checked={r.sel} onChange={(e) => setReparto((prev) => ({ ...prev, [p.id]: { ...r, sel: e.target.checked } }))}
                         />
                         <span className="truncate">{p.nombre}</span>
+                        <span className="text-[11px] text-slate-500 whitespace-nowrap">
+                          {p.peso !== 1 ? `peso ${p.peso}` : ''}{p.trabajo_hoy ? `${p.peso !== 1 ? ' · ' : ''}hoy` : ''}
+                        </span>
                       </label>
                       {r.sel && (
                         <input
@@ -573,7 +585,12 @@ const Caja = () => {
                   );
                 })}
               </ul>
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <button type="button" className="btn-secondary text-xs" onClick={repartirSegunPesos} disabled={!(Number(egresoForm.monto) > 0)}>Repartir según los pesos</button>
+                <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                  <input type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600" checked={soloHoy} onChange={(e) => setSoloHoy(e.target.checked)} />
+                  Solo quienes trabajaron hoy
+                </label>
                 <button type="button" className="btn-secondary text-xs" onClick={repartirIgual} disabled={!Object.values(reparto).some((r) => r.sel) || !(Number(egresoForm.monto) > 0)}>Dividir en partes iguales</button>
                 <p className="text-xs text-slate-500">
                   Repartido: {formatCOP(Object.values(reparto).filter((r) => r.sel).reduce((a, r) => a + (Number(r.monto) || 0), 0))} de {formatCOP(Number(egresoForm.monto) || 0)}

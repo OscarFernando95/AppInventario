@@ -26,14 +26,16 @@ const opcionesDePropina = (pct) => [
  * Cobro de una cuenta: se eligen los ítems (y cuántas unidades) que paga esta persona —dividir la cuenta
  * es cobrar varias veces—, se define cliente, forma de pago y propina voluntaria.
  */
-const CobrarModal = ({ cuenta, propinaPct = 10, onClose, onCobrado }) => {
+const CobrarModal = ({ cuenta, propinaPct = 10, persona = null, onClose, onCobrado }) => {
   const qc = useQueryClient();
   const modulos = useAuthStore((s) => s.activeEmpresa?.modulos) || [];
   const conCaja = modulos.includes('Caja');
   const conCredito = modulos.includes('Cuentas por cobrar');
 
   const pendientes = useMemo(() => cuenta.items.filter((i) => i.estado === 'ACTIVO' && !i.ventaId), [cuenta.items]);
-  const [seleccion, setSeleccion] = useState(() => Object.fromEntries(pendientes.map((i) => [i.id, i.cantidad])));
+  // Se abre con todo seleccionado, o solo con lo de una persona si se cobra «por persona».
+  const [seleccion, setSeleccion] = useState(() => Object.fromEntries(pendientes.filter((i) => persona == null || i.comensal === persona).map((i) => [i.id, i.cantidad])));
+  const personas = [...new Set(pendientes.map((i) => i.comensal).filter((c) => c != null))].sort((a, b) => a - b);
   const [form, setForm] = useState({ clienteId: '', forma_pago: '1', medio_pago: '10', dias_credito: '30', descuento: '', propina: '0', propinaOtro: '', partes: '' });
   const [formError, setFormError] = useState(null);
 
@@ -94,6 +96,14 @@ const CobrarModal = ({ cuenta, propinaPct = 10, onClose, onCobrado }) => {
           <div className="flex gap-2 mb-2">
             <button type="button" className="btn-secondary text-xs" onClick={() => setSeleccion(Object.fromEntries(pendientes.map((i) => [i.id, i.cantidad])))}>Toda la cuenta</button>
             <button type="button" className="btn-secondary text-xs" onClick={() => setSeleccion({})}>Ninguno</button>
+            {personas.map((n) => (
+              <button
+                key={n} type="button" className="btn-secondary text-xs" aria-label={`Seleccionar lo de la persona ${n}`}
+                onClick={() => setSeleccion(Object.fromEntries(pendientes.filter((i) => i.comensal === n).map((i) => [i.id, i.cantidad])))}
+              >
+                Persona {n}
+              </button>
+            ))}
           </div>
           <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 max-h-64 overflow-y-auto">
             {pendientes.map((i) => (
@@ -101,7 +111,7 @@ const CobrarModal = ({ cuenta, propinaPct = 10, onClose, onCobrado }) => {
                 <span className="flex-1 min-w-0">
                   <span className="font-medium text-slate-800">{i.nombre}</span>
                   {i.modificadores.length > 0 && <span className="block text-xs text-slate-500">+ {i.modificadores.map((m) => m.nombre).join(', ')}</span>}
-                  <span className="block text-xs text-slate-500">{formatCOP(i.precio_unitario)} c/u · de {formatCantidad(i.cantidad)}</span>
+                  <span className="block text-xs text-slate-500">{formatCOP(i.precio_unitario)} c/u · de {formatCantidad(i.cantidad)}{i.comensal ? ` · Persona ${i.comensal}` : ''}</span>
                 </span>
                 <span className="flex items-center gap-1">
                   <button type="button" className="btn-icon" aria-label={`Menos ${i.nombre}`} onClick={() => cambiarCantidad(i, (Number(seleccion[i.id]) || 0) - 1)}><Minus className="w-4 h-4" /></button>

@@ -21,7 +21,7 @@ import { TableState } from '../../components/ui/DataState';
 const EMPTY_FORM = {
   codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
   porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: '',
-  tipo: 'VENTA', receta: [], costo_promedio: '', rendimiento: '', por_lotes: false, vida_util_dias: '',
+  tipo: 'VENTA', receta: [], costo_promedio: '', rendimiento: '', por_lotes: false, vida_util_dias: '', estacion: '',
   unidad_compra: '', factor_compra: '', presOtra: false, // presentación de compra (kg, caja…)
   stock_minimo: '', stock_objetivo: '', // alerta de reposición
 };
@@ -58,6 +58,10 @@ const Inventario = () => {
   const conRecetas = useAuthStore((st) => (st.activeEmpresa?.modulos || []).includes('Recetas'));
   const verCostos = usePermisos().can('costos.ver'); // sin él no se muestran ni se editan costos ni márgenes
   const columnaCosto = conRecetas && verCostos;
+  // Estaciones de preparación (solo si la empresa usa Mesas): a qué pantalla llega la comanda de cada plato.
+  const conMesas = useAuthStore((st) => (st.activeEmpresa?.modulos || []).includes('Mesas'));
+  const { data: tableroConfig } = useEmpresaQuery(['mesas', 'config'], '/mesas', { enabled: conMesas });
+  const estaciones = tableroConfig?.config?.estaciones || ['Cocina'];
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState(null);
@@ -129,6 +133,7 @@ const Inventario = () => {
       rendimiento: p.tipo === 'PREPARACION' ? String(Number(p.rendimiento)) : '',
       por_lotes: p.tipo === 'PREPARACION' && !!p.por_lotes,
       vida_util_dias: p.vida_util_dias ? String(p.vida_util_dias) : '',
+      estacion: p.estacion || '',
       stock_minimo: Number(p.stock_minimo) ? String(Number(p.stock_minimo)) : '',
       stock_objetivo: p.stock_objetivo != null ? String(Number(p.stock_objetivo)) : '',
       unidad_compra: p.unidad_compra || '',
@@ -166,6 +171,7 @@ const Inventario = () => {
       costo_promedio: esPlato || formData.costo_promedio === '' ? undefined : Number(formData.costo_promedio),
       rendimiento: formData.tipo === 'PREPARACION' ? Number(formData.rendimiento) : undefined,
       por_lotes: formData.tipo === 'PREPARACION' ? !!formData.por_lotes : undefined,
+      estacion: ['VENTA', 'RECETA'].includes(formData.tipo) ? (formData.estacion || null) : undefined,
       vida_util_dias: formData.tipo === 'PREPARACION' && formData.por_lotes ? (formData.vida_util_dias === '' ? null : Number(formData.vida_util_dias)) : undefined,
       // Presentación de compra: vacía = se compra en la unidad base (null la quita al editar).
       unidad_compra: esPlato ? undefined : (formData.unidad_compra.trim() || null),
@@ -411,6 +417,14 @@ const Inventario = () => {
             </Field>
           )}
 
+          {conMesas && ['VENTA', 'RECETA'].includes(formData.tipo) && estaciones.length > 1 && (
+            <Field label="Estación que lo prepara" hint="A qué pantalla de preparación llega su comanda (Cocina, Barra…). Vacío = la primera.">
+              <select className="input-field sm:w-60" value={formData.estacion} onChange={(e) => setFormData({ ...formData, estacion: e.target.value })}>
+                <option value="">{estaciones[0]} (por omisión)</option>
+                {estaciones.slice(1).map((e) => <option key={e} value={e}>{e}</option>)}
+              </select>
+            </Field>
+          )}
           {formData.tipo === 'PREPARACION' && (
             <label className="flex items-start gap-3 rounded-xl border border-slate-200 p-4 text-sm text-slate-700 cursor-pointer">
               <input

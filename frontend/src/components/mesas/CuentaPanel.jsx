@@ -34,7 +34,7 @@ const leerImprimir = (porOmision) => {
 };
 const guardarImprimir = (v) => { try { localStorage.setItem(CLAVE_IMPRIMIR, v ? '1' : '0'); } catch { /* sin almacenamiento: se usa el valor por omisión */ } };
 
-const FilaItem = ({ item, comandaPorId, puedeAnular, acciones, bloqueado }) => {
+const FilaItem = ({ item, comandaPorId, puedeAnular, acciones, bloqueado, comensales, onReasignar }) => {
   const cobrado = !!item.ventaId;
   const anulado = item.estado === 'ANULADO';
   const comanda = item.comandaId ? comandaPorId.get(item.comandaId) : null;
@@ -45,6 +45,15 @@ const FilaItem = ({ item, comandaPorId, puedeAnular, acciones, bloqueado }) => {
           {formatCantidad(item.cantidad)} × {item.nombre}
         </p>
         {item.modificadores.length > 0 && <p className="text-xs text-slate-500">+ {item.modificadores.map((m) => m.nombre).join(', ')}</p>}
+        {comensales > 0 && !cobrado && !anulado && !bloqueado ? (
+          <select
+            aria-label={`Persona de ${item.nombre}`} className="mt-1 rounded-lg border border-slate-200 bg-white text-xs py-0.5 px-1.5 text-slate-700"
+            value={item.comensal ?? ''} onChange={(e) => onReasignar(item, e.target.value)}
+          >
+            <option value="">Para todos</option>
+            {Array.from({ length: comensales }, (_, k) => k + 1).map((n) => <option key={n} value={n}>Persona {n}</option>)}
+          </select>
+        ) : (item.comensal ? <span className="mt-1 inline-block text-[11px] font-semibold bg-slate-100 text-slate-700 rounded px-1.5 py-0.5">Persona {item.comensal}</span> : null)}
         {item.nota && <p className="text-xs font-medium text-amber-800 flex items-center gap-1"><MessageSquareText className="w-3 h-3" aria-hidden="true" /> {item.nota}</p>}
         <p className="mt-0.5 text-[11px] text-slate-500 flex flex-wrap gap-x-2 items-center">
           <span>{formatCOP(item.precio_unitario)} c/u</span>
@@ -95,6 +104,8 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
   const [texto, setTexto] = useState('');
   const [mesaDestino, setMesaDestino] = useState('');
   const [cobrando, setCobrando] = useState(false);
+  const [comensalActivo, setComensalActivo] = useState(null); // para quién se pide ahora (null = para todos)
+  const [cobrarA, setCobrarA] = useState(null); // persona a la que se le cobra lo suyo al abrir el cobro
   const [resultado, setResultado] = useState(null); // respuesta del cobro
   const [aviso, setAviso] = useState(null);
   const [error_, setError] = useState(null);
@@ -105,6 +116,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
 
   const agregar = useMutation({ mutationFn: (b) => api.post(`/cuentas/${cuentaId}/items`, b), onSuccess: aplicar, onError: fallar });
   const editar = useMutation({ mutationFn: ({ id, ...b }) => api.patch(`/cuentas/${cuentaId}/items/${id}`, b), onSuccess: (r) => { aplicar(r); setDialogo(null); }, onError: fallar });
+  const reasignar = (item, valor) => editar.mutate({ id: item.id, comensal: valor === '' ? null : Number(valor) });
   const quitar = useMutation({ mutationFn: (id) => api.delete(`/cuentas/${cuentaId}/items/${id}`), onSuccess: aplicar, onError: fallar });
   const anularItem = useMutation({ mutationFn: ({ id, motivo }) => api.post(`/cuentas/${cuentaId}/items/${id}/anular`, { motivo }), onSuccess: (r) => { aplicar(r); setDialogo(null); }, onError: (e) => { setDialogo(null); fallar(e); } });
   const mover = useMutation({ mutationFn: (mesaId) => api.post(`/cuentas/${cuentaId}/mover`, { mesaId }), onSuccess: (r) => { aplicar(r); setDialogo(null); }, onError: (e) => { setDialogo(null); fallar(e); } });
@@ -123,8 +135,13 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
     onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['empresa'] });
       setError(null);
-      setAviso(`Comanda #${res.data.id} enviada a ${conCocina ? 'cocina' : 'preparación'}.`);
-      if (imprimir) imprimirComanda(res.data, { empresa: activeEmpresa?.nombre });
+      const comandas = res.data.comandas;
+      const destino = comandas.length > 1
+        ? comandas.map((c) => `#${c.id} (${c.estacion})`).join(' y ')
+        : `#${comandas[0].id}${comandas[0].estacion && comandas[0].estacion !== 'Cocina' ? ` (${comandas[0].estacion})` : ''}`;
+      setAviso(`${comandas.length > 1 ? 'Comandas' : 'Comanda'} ${destino} enviada${comandas.length > 1 ? 's' : ''} a ${conCocina ? 'cocina' : 'preparación'}.`);
+      // Un ticket por estación: cada una imprime el suyo.
+      if (imprimir) comandas.forEach((c, i) => setTimeout(() => imprimirComanda(c, { empresa: activeEmpresa?.nombre }), i * 800));
     },
     onError: fallar,
   });
@@ -134,11 +151,11 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
     setError(null);
     setAviso(null);
     if (modsDe(o).length > 0) return setPidiendo({ opcion: o, mods: [], nota: '', cantidad: 1 });
-    agregar.mutate(o.producto ? { productoId: o.producto.id } : { servicioId: o.servicio.id });
+    agregar.mutate({ ...(o.producto ? { productoId: o.producto.id } : { servicioId: o.servicio.id }), ...(comensalActivo ? { comensal: comensalActivo } : {}) });
   };
   const confirmarPedido = (e) => {
     e.preventDefault();
-    agregar.mutate({ productoId: pidiendo.opcion.producto.id, cantidad: pidiendo.cantidad, modificadores: pidiendo.mods, nota: pidiendo.nota.trim() || undefined });
+    agregar.mutate({ productoId: pidiendo.opcion.producto.id, cantidad: pidiendo.cantidad, modificadores: pidiendo.mods, nota: pidiendo.nota.trim() || undefined, ...(comensalActivo ? { comensal: comensalActivo } : {}) });
     setPidiendo(null);
   };
 
@@ -221,6 +238,17 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
         {abierta ? (
           <section aria-label="Catálogo" className="card-container p-4">
             <h4 className="text-sm font-semibold text-slate-700 mb-3">Agregar a la cuenta</h4>
+            {cuenta.comensales > 1 && (
+              <div role="radiogroup" aria-label="Pedir para" className="flex flex-wrap items-center gap-1.5 mb-3 text-xs">
+                <span className="text-slate-500 mr-1">Pedir para:</span>
+                {[null, ...Array.from({ length: cuenta.comensales }, (_, k) => k + 1)].map((n) => (
+                  <label key={n ?? 'todos'} className={`rounded-lg border px-2.5 py-1 cursor-pointer focus-within:ring-2 focus-within:ring-brand-600 ${comensalActivo === n ? 'bg-brand-700 text-white border-brand-700 font-semibold' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
+                    <input type="radio" className="sr-only" name="pedir-para" checked={comensalActivo === n} onChange={() => setComensalActivo(n)} />
+                    {n == null ? 'Todos' : `Persona ${n}`}
+                  </label>
+                ))}
+              </div>
+            )}
             <ProductPicker productos={productos} servicios={servicios} onElegir={elegir} deshabilitado={agregar.isPending} />
           </section>
         ) : <span />}
@@ -231,7 +259,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
             <p className="py-8 text-center text-sm text-slate-500">Aún no hay nada pedido.</p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {cuenta.items.map((i) => <FilaItem key={i.id} item={i} comandaPorId={comandaPorId} puedeAnular={puedeAnular} acciones={acciones} bloqueado={!abierta} />)}
+              {cuenta.items.map((i) => <FilaItem key={i.id} item={i} comandaPorId={comandaPorId} puedeAnular={puedeAnular} acciones={acciones} bloqueado={!abierta} comensales={cuenta.comensales || 0} onReasignar={reasignar} />)}
             </ul>
           )}
 
@@ -239,6 +267,22 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
             {cuenta.totales.cobrado > 0 && <div className="flex justify-between"><dt className="text-slate-500">Ya cobrado</dt><dd className="font-semibold text-emerald-700">{formatCOP(cuenta.totales.cobrado)}</dd></div>}
             <div className="flex justify-between text-lg"><dt className="font-semibold text-slate-800">{cuenta.totales.cobrado > 0 ? 'Falta por cobrar' : 'Total'}</dt><dd className="font-bold text-slate-900">{formatCOP(cuenta.totales.pendiente)}</dd></div>
           </dl>
+
+          {cuenta.por_comensal.some((g) => g.comensal != null) && (
+            <div className="mt-3 pt-3 border-t border-slate-200">
+              <h5 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5">Por persona</h5>
+              <ul className="space-y-1 text-sm">
+                {cuenta.por_comensal.map((g) => (
+                  <li key={g.comensal ?? 'todos'} className="flex items-center justify-between gap-2">
+                    <span>{g.comensal == null ? 'Para todos' : `Persona ${g.comensal}`} <span className="text-slate-500">· {formatCOP(g.total)}{g.pendiente !== g.total ? ` (faltan ${formatCOP(g.pendiente)})` : ''}</span></span>
+                    {abierta && g.comensal != null && g.pendiente > 0 && (
+                      <button type="button" className="btn-secondary text-xs" onClick={() => { setError(null); setCobrarA(g.comensal); setCobrando(true); }} aria-label={`Cobrar lo de la persona ${g.comensal}`}>Cobrar P{g.comensal}</button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {abierta && (
             <div className="mt-4 space-y-3">
@@ -250,7 +294,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
                 <button type="button" className="btn-secondary gap-2" disabled={porEnviar.length === 0 || enviar.isPending} onClick={() => { setAviso(null); enviar.mutate(); }}>
                   <ChefHat className="w-4 h-4" aria-hidden="true" /> {enviar.isPending ? 'Enviando…' : `Enviar (${porEnviar.length})`}
                 </button>
-                <button type="button" className="btn-primary gap-2" disabled={pendientesCobro.length === 0} onClick={() => { setError(null); setCobrando(true); }}>
+                <button type="button" className="btn-primary gap-2" disabled={pendientesCobro.length === 0} onClick={() => { setError(null); setCobrarA(null); setCobrando(true); }}>
                   <Receipt className="w-4 h-4" aria-hidden="true" /> Cobrar
                 </button>
               </div>
@@ -388,7 +432,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
         )}
       </Modal>
 
-      {cobrando && <CobrarModal cuenta={cuenta} propinaPct={propinaPct} onClose={() => setCobrando(false)} onCobrado={(res) => { setCobrando(false); qc.setQueryData(claveCuenta, res.cuenta); setResultado(res); }} />}
+      {cobrando && <CobrarModal cuenta={cuenta} propinaPct={propinaPct} persona={cobrarA} onClose={() => setCobrando(false)} onCobrado={(res) => { setCobrando(false); qc.setQueryData(claveCuenta, res.cuenta); setResultado(res); }} />}
 
       <Modal open={!!resultado} onClose={() => setResultado(null)} title="Cobro registrado" size="md">
         {resultado && (

@@ -1,15 +1,11 @@
+import { esc, imprimirHtml } from './imprimir';
+
 /**
  * Comanda de cocina para imprimir (tiquete angosto de 80 mm).
  *
  * `htmlComanda` arma el documento (pura, se prueba sin navegador); `imprimirComanda` lo imprime desde un
  * iframe oculto, así no depende de ventanas emergentes ni deja archivos en el equipo.
  */
-
-const esc = (v) => String(v ?? '')
-  .replace(/&/g, '&amp;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;');
 
 const cant = (n) => Number(n).toLocaleString('es-CO', { maximumFractionDigits: 3 });
 const hora = (v) => new Date(v).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' });
@@ -22,7 +18,7 @@ const dia = (v) => new Date(v).toLocaleDateString('es-CO', { day: '2-digit', mon
 export function htmlComanda(comanda, { empresa, reimpresion = false } = {}) {
   const items = (comanda.items || []).map((i) => `
     <li class="item${i.anulado ? ' anulado' : ''}">
-      <div class="linea"><span class="cant">${esc(cant(i.cantidad))}×</span> <span class="nombre">${esc(i.nombre)}</span>${i.anulado ? ' <span class="tag">ANULADO</span>' : ''}</div>
+      <div class="linea"><span class="cant">${esc(cant(i.cantidad))}×</span> <span class="nombre">${esc(i.nombre)}</span>${i.comensal ? ` <span class="tag">P${esc(i.comensal)}</span>` : ''}${i.anulado ? ' <span class="tag">ANULADO</span>' : ''}</div>
       ${(i.modificadores || []).map((m) => `<div class="detalle">+ ${esc(m)}</div>`).join('')}
       ${i.nota ? `<div class="nota">» ${esc(i.nota)}</div>` : ''}
     </li>`).join('');
@@ -50,6 +46,7 @@ export function htmlComanda(comanda, { empresa, reimpresion = false } = {}) {
 </style></head>
 <body>
   <h1>COMANDA #${esc(comanda.id)}${reimpresion ? ' (copia)' : ''}</h1>
+  ${comanda.estacion ? `<p class="sub"><strong>${esc(String(comanda.estacion).toUpperCase())}</strong></p>` : ''}
   ${empresa ? `<p class="sub">${esc(empresa)}</p>` : ''}
   <div class="mesa">${esc(comanda.cuenta || 'Sin mesa')}</div>
   <div class="meta"><span>${esc(dia(comanda.enviada_en))} ${esc(hora(comanda.enviada_en))}</span><span>${comanda.mesero ? `Atiende: ${esc(comanda.mesero)}` : ''}</span></div>
@@ -60,19 +57,5 @@ export function htmlComanda(comanda, { empresa, reimpresion = false } = {}) {
 
 /** Imprime la comanda con el diálogo del navegador (elige la impresora de cocina/tiquetera). */
 export function imprimirComanda(comanda, opciones) {
-  const iframe = document.createElement('iframe');
-  iframe.setAttribute('aria-hidden', 'true');
-  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
-  document.body.appendChild(iframe);
-
-  const limpiar = () => setTimeout(() => iframe.remove(), 1000);
-  iframe.onload = () => {
-    try {
-      iframe.contentWindow.focus();
-      iframe.contentWindow.print();
-    } finally {
-      limpiar();
-    }
-  };
-  iframe.srcdoc = htmlComanda(comanda, opciones);
+  imprimirHtml(htmlComanda(comanda, opciones));
 }
