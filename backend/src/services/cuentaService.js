@@ -6,10 +6,14 @@ const {
 } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { registrarVenta } = require('./ventaService');
-const { precioDeItem, repartirItems, totalesDeCuenta, totalesPorComensal, redondear3 } = require('./cuentas');
+const {
+  precioDeItem, repartirItems, totalesDeCuenta, totalesPorComensal, redondear3, nombresDeTiempos, nombreDeTiempo, pendientesPorTiempo,
+} = require('./cuentas');
+const { efectivas } = require('./opciones');
+const { opcionesGuardadas } = require('../middlewares/opciones');
 
 const INCLUDE_ITEM = [
-  { model: Producto, as: 'producto', attributes: ['id', 'nombre_producto', 'codigo', 'tipo', 'precio_unitario', 'porcentaje_iva', 'unidad_medida', 'estacion'] },
+  { model: Producto, as: 'producto', attributes: ['id', 'nombre_producto', 'codigo', 'tipo', 'precio_unitario', 'porcentaje_iva', 'unidad_medida', 'estacion', 'tiempo_objetivo_min'] },
   { model: Servicio, as: 'servicio', attributes: ['id', 'nombre', 'precio', 'porcentaje_iva'] },
 ];
 
@@ -22,6 +26,18 @@ async function cargarModsDe(items, empresaId, transaction) {
   if (ids.length === 0) return new Map();
   const mods = await Modificador.findAll({ where: { id: ids, empresaId }, attributes: ['id', 'nombre', 'precio_extra'], transaction });
   return new Map(mods.map((m) => [m.id, { id: m.id, nombre: m.nombre, precio_extra: Number(m.precio_extra) }]));
+}
+
+/**
+ * Pedir por tiempos de una empresa: si está encendida y cómo se llaman los tiempos. Se lee de lo guardado (con caché);
+ * las pantallas de mesas ya exigen el módulo Mesas, así que no hace falta volver a revisarlo.
+ */
+async function tiemposDeEmpresa(empresaId) {
+  const guardadas = await opcionesGuardadas(empresaId);
+  return {
+    activo: efectivas(guardadas, ['Mesas']).tiempos_servicio === true,
+    nombres: nombresDeTiempos(guardadas.tiempos_nombres),
+  };
 }
 
 /** Ítem de la BD -> JSON para el cliente, con su nombre, precio actual y subtotal. */
@@ -42,6 +58,7 @@ function itemJson(item, modsPorId) {
     modificadores: modsDetalle,
     nota: j.nota,
     comensal: j.comensal,
+    tiempo: j.tiempo,
     estacion: j.producto ? j.producto.estacion : null,
     estado: j.estado,
     comandaId: j.comandaId,
@@ -64,7 +81,7 @@ async function detalleDeCuenta(empresaId, cuentaId, transaction) {
     include: [
       ...INCLUDE_CUENTA,
       { model: CuentaItem, as: 'items', include: INCLUDE_ITEM },
-      { model: Comanda, as: 'comandas', attributes: ['id', 'estado', 'enviada_en', 'lista_en', 'entregada_en'] },
+      { model: Comanda, as: 'comandas', attributes: ['id', 'estado', 'tiempo', 'enviada_en', 'lista_en', 'entregada_en'] },
       { model: Venta, as: 'ventas', attributes: ['id', 'total', 'propina', 'fecha', 'estado', 'forma_pago', 'medio_pago'] },
     ],
     order: [[{ model: CuentaItem, as: 'items' }, 'id', 'ASC'], [{ model: Comanda, as: 'comandas' }, 'id', 'ASC'], [{ model: Venta, as: 'ventas' }, 'id', 'ASC']],
@@ -74,10 +91,18 @@ async function detalleDeCuenta(empresaId, cuentaId, transaction) {
   const j = cuenta.toJSON();
   const mods = await cargarModsDe(j.items, empresaId, transaction);
   const items = cuenta.items.map((i) => itemJson(i, mods));
+  const tiempos = await tiemposDeEmpresa(empresaId);
+  // Con «Pedir por tiempos» apagada la cuenta se ve exactamente igual que siempre (sin campos de tiempos).
+  const porTiempos = tiempos.activo ? {
+    tiempo_actual: j.tiempo_actual,
+    tiempos: pendientesPorTiempo(items.filter((i) => i.estado === 'ACTIVO' && !i.enviado && !i.ventaId), tiempos.nombres.length)
+      .map((t) => ({ ...t, nombre: tiempos.nombres[t.numero - 1] })),
+  } : {};
   return {
+    ...porTiempos,
     id: j.id, estado: j.estado, mesa: j.mesa, etiqueta: j.etiqueta, nombre: nombreDeCuenta(j), mesero: j.mesero,
     comensales: j.comensales, nota: j.nota, abierta_en: j.abierta_en, cerrada_en: j.cerrada_en, motivo_cancelacion: j.motivo_cancelacion,
-    items, comandas: j.comandas, ventas: j.ventas.map((v) => ({ ...v, total: Number(v.total), propina: Number(v.propina) })),
+    items, comandas: j.comandas.map((c) => (c.tiempo == null ? c : { ...c, tiempo_nombre: nombreDeTiempo(tiempos.nombres, c.tiempo) })), ventas: j.ventas.map((v) => ({ ...v, total: Number(v.total), propina: Number(v.propina) })),
     totales: totalesDeCuenta(items.map((i) => ({ ...i, precio: i.precio_unitario }))),
     por_comensal: totalesPorComensal(items.map((i) => ({ ...i, precio: i.precio_unitario }))),
   };
@@ -123,18 +148,24 @@ async function detalleDeComanda(empresaId, comandaId, transaction) {
     order: [[{ model: CuentaItem, as: 'items' }, 'id', 'ASC']],
     transaction,
   });
-  return comanda ? comandaJson(comanda, await cargarModsDe(comanda.items, empresaId, transaction)) : null;
+  if (!comanda) return null;
+  return comandaJson(comanda, await cargarModsDe(comanda.items, empresaId, transaction), (await tiemposDeEmpresa(empresaId)).nombres);
 }
 
-function comandaJson(comanda, mods) {
+function comandaJson(comanda, mods, nombresTiempos) {
   const items = comanda.items.map((i) => {
     const j = itemJson(i, mods);
-    return { id: j.id, nombre: j.nombre, cantidad: j.cantidad, modificadores: j.modificadores.map((m) => m.nombre), nota: j.nota, comensal: j.comensal, anulado: j.estado === 'ANULADO' };
+    return {
+      id: j.id, nombre: j.nombre, cantidad: j.cantidad, modificadores: j.modificadores.map((m) => m.nombre), nota: j.nota, comensal: j.comensal,
+      anulado: j.estado === 'ANULADO', tiempo_objetivo_min: i.producto?.tiempo_objetivo_min ?? null,
+    };
   });
   return {
     id: comanda.id,
     estado: comanda.estado,
     estacion: comanda.estacion,
+    tiempo: comanda.tiempo ?? null,
+    tiempo_nombre: nombreDeTiempo(nombresTiempos, comanda.tiempo ?? null),
     enviada_en: comanda.enviada_en,
     lista_en: comanda.lista_en,
     entregada_en: comanda.entregada_en,
@@ -158,7 +189,8 @@ async function listarComandas(empresaId, estados = ['PENDIENTE', 'LISTA'], estac
     order: [['enviada_en', 'ASC'], [{ model: CuentaItem, as: 'items' }, 'id', 'ASC']],
   });
   const mods = await cargarModsDe(comandas.flatMap((c) => c.items), empresaId);
-  return comandas.map((c) => comandaJson(c, mods));
+  const { nombres } = await tiemposDeEmpresa(empresaId);
+  return comandas.map((c) => comandaJson(c, mods, nombres));
 }
 
 /** Bloquea la cuenta (serializa meseros y cajero sobre la misma cuenta) y exige que siga ABIERTA. */
@@ -212,7 +244,7 @@ async function cobrarCuenta(req, t, cuentaId, body) {
   for (const { item, restante } of reparto.partir) {
     await CuentaItem.create({
       cuentaId: cuenta.id, productoId: item.productoId, servicioId: item.servicioId, cantidad: restante, modificadores: item.modificadores,
-      nota: item.nota, comensal: item.comensal, usuarioId: item.usuarioId, comandaId: item.comandaId, estado: 'ACTIVO',
+      nota: item.nota, comensal: item.comensal, tiempo: item.tiempo, usuarioId: item.usuarioId, comandaId: item.comandaId, estado: 'ACTIVO',
     }, { transaction: t });
   }
   for (const { item, cantidad } of reparto.cobrar) {
@@ -230,5 +262,5 @@ async function cobrarCuenta(req, t, cuentaId, body) {
 }
 
 module.exports = {
-  nombreDeCuenta, detalleDeCuenta, cuentasAbiertas, detalleDeComanda, listarComandas, cuentaAbiertaBloqueada, cobrarCuenta, cargarModsDe,
+  tiemposDeEmpresa, nombreDeCuenta, detalleDeCuenta, cuentasAbiertas, detalleDeComanda, listarComandas, cuentaAbiertaBloqueada, cobrarCuenta, cargarModsDe,
 };

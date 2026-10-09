@@ -21,6 +21,14 @@ const OPCIONES = [
   { clave: 'unir_cuentas', grupo: 'Mesas', tipo: 'bool', defecto: true, modulos: ['Mesas'], etiqueta: 'Unir cuentas', descripcion: 'Juntar la cuenta de dos mesas en una.' },
   { clave: 'cuenta_por_persona', grupo: 'Mesas', tipo: 'bool', defecto: true, modulos: ['Mesas'], etiqueta: 'Pedir y cobrar por persona', descripcion: 'Asignar cada pedido a una persona de la mesa y cobrarle a cada quien lo suyo.' },
   { clave: 'propina', grupo: 'Mesas', tipo: 'bool', defecto: true, modulos: ['Mesas'], etiqueta: 'Propina al cobrar', descripcion: 'Ofrecer la propina voluntaria al cobrar una cuenta de mesa.' },
+
+  // ── Cocina y servicio (nuevas: apagadas) ───────────────────────────────────────────────────
+  { clave: 'tiempos_servicio', grupo: 'Cocina y servicio', tipo: 'bool', defecto: false, modulos: ['Mesas'], etiqueta: 'Pedir por tiempos', descripcion: 'Pedir entrada, plato fuerte y postre en la misma cuenta y enviar a cocina cada tiempo cuando el cliente lo pida.' },
+  { clave: 'tiempos_nombres', grupo: 'Cocina y servicio', tipo: 'lista', defecto: ['Entrada', 'Plato fuerte', 'Postre'], max: 4, largo: 20, modulos: ['Mesas'], requiere: ['tiempos_servicio'], etiqueta: 'Nombres de los tiempos', descripcion: 'Cómo se llama cada tiempo de servicio, en orden (hasta 4).' },
+  { clave: 'cocina_alertas', grupo: 'Cocina y servicio', tipo: 'bool', defecto: false, modulos: ['Cocina'], etiqueta: 'Alertas de demora en cocina', descripcion: 'Marcar en amarillo y en rojo las comandas que se demoran, con tus propios minutos y un tiempo objetivo por plato.' },
+  { clave: 'cocina_amarillo_min', grupo: 'Cocina y servicio', tipo: 'int', defecto: 10, min: 1, max: 120, modulos: ['Cocina'], requiere: ['cocina_alertas'], etiqueta: 'Minutos para marcar en amarillo', descripcion: 'Una comanda pendiente pasa a amarillo cuando lleva esta cantidad de minutos.' },
+  { clave: 'cocina_rojo_min', grupo: 'Cocina y servicio', tipo: 'int', defecto: 20, min: 1, max: 240, modulos: ['Cocina'], requiere: ['cocina_alertas'], etiqueta: 'Minutos para marcar en rojo', descripcion: 'Una comanda pendiente pasa a rojo cuando lleva esta cantidad de minutos (más que los del amarillo).' },
+  { clave: 'cocina_sonido', grupo: 'Cocina y servicio', tipo: 'bool', defecto: false, modulos: ['Cocina'], etiqueta: 'Sonido cuando llega una comanda nueva', descripcion: 'La pantalla de Cocina suena y avisa cuando entra una comanda pendiente (cada dispositivo puede silenciarlo).' },
 ];
 
 const POR_CLAVE = new Map(OPCIONES.map((o) => [o.clave, o]));
@@ -78,6 +86,17 @@ function efectivas(guardadas = {}, modulosEmpresa = []) {
   return resultado;
 }
 
+/** Reglas entre dos opciones (solo se revisan si el cambio toca alguna de ellas). */
+function validarCruzadas(nuevas, cambios) {
+  if ('cocina_amarillo_min' in cambios || 'cocina_rojo_min' in cambios) {
+    const amarillo = nuevas.cocina_amarillo_min ?? POR_CLAVE.get('cocina_amarillo_min').defecto;
+    const rojo = nuevas.cocina_rojo_min ?? POR_CLAVE.get('cocina_rojo_min').defecto;
+    if (!(rojo > amarillo)) {
+      throw new Error(`Los minutos del rojo (${rojo}) deben ser más que los del amarillo (${amarillo}): primero sube el rojo y luego el amarillo.`);
+    }
+  }
+}
+
 /**
  * Aplica cambios a lo guardado. `cambios` = { clave: valor }. Devuelve lo nuevo a guardar o lanza Error si hay una
  * clave desconocida, un valor inválido o se enciende algo cuyas dependencias están apagadas.
@@ -93,11 +112,13 @@ function aplicarCambios(guardadas = {}, cambios = {}, modulosEmpresa = []) {
   const ef = efectivas(nuevas, modulosEmpresa);
   for (const clave of Object.keys(cambios)) {
     const def = POR_CLAVE.get(clave);
-    if (def.tipo === 'bool' && cambios[clave] === true && !ef[clave]) {
-      const falta = (def.requiere || []).find((r) => !ef[r]);
+    // Encender algo (o ajustar un número / una lista) exige que lo que necesita esté activado.
+    if ((def.tipo !== 'bool' || cambios[clave] === true) && (def.requiere || []).some((r) => !ef[r])) {
+      const falta = def.requiere.find((r) => !ef[r]);
       throw new Error(`«${def.etiqueta}» necesita que esté activada «${POR_CLAVE.get(falta)?.etiqueta || falta}».`);
     }
   }
+  validarCruzadas(nuevas, cambios);
   return nuevas;
 }
 

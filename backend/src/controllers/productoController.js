@@ -10,6 +10,7 @@ const { analizarProductos, objetivoDe } = require('../services/reposicion');
 const { cargarRecetas } = require('../services/recetasDb');
 const { margen } = require('../services/costos');
 const { tiene } = require('../middlewares/auth');
+const { opcionesDe } = require('../middlewares/opciones');
 
 /** Sin el permiso costos.ver el producto sale sin costo ni margen (en el listado y en las respuestas de crear/editar). */
 const CAMPOS_DE_COSTO = ['costo', 'costo_promedio', 'margen', 'margen_pct'];
@@ -136,8 +137,14 @@ function limpiarPorTipo(datos, tipo) {
   if (TIPOS_CON_RECETA.includes(tipo)) delete limpio.costo_promedio;
   if (tipo !== 'PREPARACION') { delete limpio.rendimiento; limpio.por_lotes = false; limpio.vida_util_dias = null; }
   if (tipo === 'PREPARACION' && limpio.por_lotes === false) limpio.vida_util_dias = null;
-  if (tipo !== 'VENTA' && tipo !== 'RECETA') limpio.estacion = null; // solo lo que se vende pasa por una estación
+  if (tipo !== 'VENTA' && tipo !== 'RECETA') { limpio.estacion = null; limpio.tiempo_objetivo_min = null; } // solo lo que se vende pasa por una estación
   return limpio;
+}
+
+/** El tiempo objetivo de un plato solo se guarda con «Alertas de demora en cocina» encendida; si no, se ignora. */
+async function ignorarObjetivoSinAlertas(req, datos) {
+  if (datos.tiempo_objetivo_min === undefined) return;
+  if (!(await opcionesDe(req)).cocina_alertas) delete datos.tiempo_objetivo_min;
 }
 
 /** "Reponer hasta" no puede quedar por debajo del mínimo (con los valores que quedarían tras guardar). */
@@ -158,6 +165,7 @@ async function validarEstacion(req, estacion) {
 exports.createProducto = async (req, res) => {
   const { receta: recetaBody, ...datos } = req.body;
   await validarEstacion(req, datos.estacion);
+  await ignorarObjetivoSinAlertas(req, datos);
   const tipo = datos.tipo || 'VENTA';
   validarObjetivo(datos.stock_minimo ?? 0, datos.stock_objetivo);
 
@@ -185,6 +193,7 @@ exports.updateProducto = async (req, res) => {
   const { id } = req.params;
   const { receta: recetaBody, ...datos } = req.body;
   await validarEstacion(req, datos.estacion);
+  await ignorarObjetivoSinAlertas(req, datos);
 
   const producto = await sequelize.transaction(async (t) => {
     const actual = await Producto.findOne({ where: { id, empresaId: req.empresaId }, transaction: t, lock: t.LOCK.UPDATE });

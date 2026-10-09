@@ -62,12 +62,15 @@ const itemAgregar = z.object({
   nota: z.string().trim().max(200).optional().nullable().transform((v) => v || undefined),
   // De qué persona de la mesa es el ítem (para cobrarle a cada quien lo suyo).
   comensal: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().min(1).max(50).optional()),
+  // Tiempo de servicio (1 = entrada, 2 = plato fuerte…). Solo se respeta con la opción «Pedir por tiempos».
+  tiempo: z.preprocess((v) => (v === '' || v === null ? undefined : v), z.coerce.number().int().min(1).max(4).optional()),
 }).refine((d) => !!d.productoId !== !!d.servicioId, { message: 'Cada ítem es un producto o un servicio.' });
 
 const itemEditar = z.object({
   cantidad: cantidadPositiva.optional(),
   comensal: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().int().min(1).max(50).nullish()),
   nota: z.string().trim().max(200).nullish().transform((v) => (v === undefined ? undefined : (v || null))),
+  tiempo: z.preprocess((v) => (v === '' || v === null ? undefined : v), z.coerce.number().int().min(1).max(4).optional()),
 });
 
 const itemAnular = z.object({ motivo: z.string().trim().min(3, 'Indica el motivo.').max(300) });

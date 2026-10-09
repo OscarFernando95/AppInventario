@@ -31,6 +31,7 @@ router.delete('/:id/items/:itemId', validate({ params: itemParams }), asyncHandl
 router.post('/:id/items/:itemId/anular', validate({ params: itemParams, body: itemAnular }), asyncHandler(cuentaController.anularItem));
 
 router.post('/:id/enviar', validate({ params: idParam }), asyncHandler(cuentaController.enviarACocina));
+router.post('/:id/disparar', requireOpcion('tiempos_servicio'), validate({ params: idParam }), asyncHandler(cuentaController.dispararTiempo));
 router.post('/:id/mover', validate({ params: idParam, body: cuentaMover }), asyncHandler(cuentaController.moverCuenta));
 router.post('/:id/unir', requireOpcion('unir_cuentas'), validate({ params: idParam, body: cuentaUnir }), asyncHandler(cuentaController.unirCuentas));
 router.post('/:id/cancelar', validate({ params: idParam, body: cuentaCancelar }), asyncHandler(cuentaController.cancelarCuenta));

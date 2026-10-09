@@ -13,6 +13,8 @@ const CuentaItem = sequelize.define('CuentaItem', {
   // Persona de la mesa a la que pertenece el ítem (1, 2, 3…); vacío = de todos / para compartir.
   comensal: { type: DataTypes.INTEGER, allowNull: true },
   usuarioId: { type: DataTypes.INTEGER, allowNull: false },
+  // Tiempo de servicio al que pertenece el ítem (1..4). Solo se usa con la opción «Pedir por tiempos»; si no, siempre 1.
+  tiempo: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 1 },
   comandaId: { type: DataTypes.INTEGER, allowNull: true },
   estado: { type: DataTypes.STRING(10), allowNull: false, defaultValue: 'ACTIVO' },
   motivo_anulacion: { type: DataTypes.STRING(300), allowNull: true },

@@ -12,6 +12,7 @@ const { invalidateInforme } = require('./informeController');
 const { cargarModificadoresLinea } = require('../services/ventaService');
 const { opcionesDe } = require('../middlewares/opciones');
 const { TIPOS_NO_VENDIBLES } = require('../services/recetas');
+const { nombreDeTiempo, itemsEnviables, siguienteTiempo, agruparParaEnvio } = require('../services/cuentas');
 const {
   nombreDeCuenta, detalleDeCuenta, cuentasAbiertas, detalleDeComanda, cuentaAbiertaBloqueada, cobrarCuenta,
 } = require('../services/cuentaService');
@@ -88,10 +89,21 @@ function validarComensal(cuenta, comensal) {
 /** Mismo plato/producto, mismos extras y misma nota, aún sin enviar: se suma a la línea existente. */
 const mismosExtras = (a, b) => JSON.stringify([...(a || [])].sort((x, y) => x - y)) === JSON.stringify([...(b || [])].sort((x, y) => x - y));
 
+/** El tiempo de servicio debe existir entre los que tiene configurados la empresa (1..N nombres). */
+function validarTiempo(ef, tiempo) {
+  if (tiempo > ef.tiempos_nombres.length) {
+    throw new ValidationError(`No existe el tiempo ${tiempo}: esta empresa usa ${ef.tiempos_nombres.length} (${ef.tiempos_nombres.join(', ')}).`);
+  }
+}
+
 exports.agregarItem = async (req, res) => {
   const { productoId, servicioId, cantidad, modificadores, nota } = req.body;
+  const ef = await opcionesDe(req);
   // Con «pedir por persona» apagado el ítem no se asigna a nadie (aunque llegue el dato).
-  const comensal = (await opcionesDe(req)).cuenta_por_persona ? req.body.comensal : undefined;
+  const comensal = ef.cuenta_por_persona ? req.body.comensal : undefined;
+  // Con «pedir por tiempos» apagado todo es del tiempo 1 (aunque llegue el dato).
+  const tiempo = ef.tiempos_servicio ? (req.body.tiempo || 1) : 1;
+  if (ef.tiempos_servicio) validarTiempo(ef, tiempo);
   const ok = await sequelize.transaction(async (t) => {
     const cuenta = await cuentaAbiertaBloqueada(req, t, req.params.id);
     if (!cuenta) return false;
@@ -113,7 +125,7 @@ exports.agregarItem = async (req, res) => {
     await cargarModificadoresLinea(mods, req.empresaId, t); // existen, activos y de la empresa
 
     const iguales = await CuentaItem.findOne({
-      where: { cuentaId: cuenta.id, estado: 'ACTIVO', comandaId: null, ventaId: null, productoId: productoId || null, servicioId: servicioId || null, nota: nota || null, comensal: comensal || null },
+      where: { cuentaId: cuenta.id, estado: 'ACTIVO', comandaId: null, ventaId: null, productoId: productoId || null, servicioId: servicioId || null, nota: nota || null, comensal: comensal || null, tiempo },
       transaction: t,
     });
     if (iguales && mismosExtras(iguales.modificadores, mods)) {
@@ -121,7 +133,7 @@ exports.agregarItem = async (req, res) => {
     } else {
       await CuentaItem.create({
         cuentaId: cuenta.id, productoId: productoId || null, servicioId: servicioId || null, cantidad,
-        modificadores: mods.length ? mods : null, nota: nota || null, comensal: comensal || null, usuarioId: req.userId,
+        modificadores: mods.length ? mods : null, nota: nota || null, comensal: comensal || null, tiempo, usuarioId: req.userId,
       }, { transaction: t });
     }
     return true;
@@ -140,18 +152,23 @@ async function itemEditable(t, cuenta, itemId) {
 }
 
 exports.editarItem = async (req, res) => {
+  const ef = await opcionesDe(req);
   const ok = await sequelize.transaction(async (t) => {
     const cuenta = await cuentaAbiertaBloqueada(req, t, req.params.id);
     if (!cuenta) return false;
     const item = await itemEditable(t, cuenta, req.params.itemId);
-    // A quién pertenece un ítem se puede cambiar siempre; su cantidad y nota, solo antes de enviarlo a cocina.
+    // Con «pedir por tiempos» apagada el tiempo se ignora (todo es del tiempo 1).
+    const cambiaTiempo = ef.tiempos_servicio && req.body.tiempo !== undefined;
+    // A quién pertenece un ítem se puede cambiar siempre; su cantidad, nota y tiempo, solo antes de enviarlo a cocina.
     if (item.comandaId && (req.body.cantidad !== undefined || req.body.nota !== undefined)) {
       throw new ValidationError('Este ítem ya se envió a cocina: anúlalo y vuelve a pedirlo.');
     }
+    if (item.comandaId && cambiaTiempo) throw new ValidationError('Este ítem ya se envió a cocina: no se le puede cambiar el tiempo.');
     const cambios = {};
     if (req.body.cantidad !== undefined) cambios.cantidad = req.body.cantidad;
     if (req.body.nota !== undefined) cambios.nota = req.body.nota;
-    if (req.body.comensal !== undefined && (await opcionesDe(req)).cuenta_por_persona) { validarComensal(cuenta, req.body.comensal); cambios.comensal = req.body.comensal; }
+    if (cambiaTiempo) { validarTiempo(ef, req.body.tiempo); cambios.tiempo = req.body.tiempo; }
+    if (req.body.comensal !== undefined && ef.cuenta_por_persona) { validarComensal(cuenta, req.body.comensal); cambios.comensal = req.body.comensal; }
     await item.update(cambios, { transaction: t });
     return true;
   });
@@ -192,11 +209,14 @@ exports.anularItem = async (req, res) => {
 };
 
 /**
- * Envía a preparación todo lo que aún no se ha enviado: una comanda por estación (Cocina, Barra…), según la
- * estación de cada plato. Devuelve las comandas creadas, listas para imprimir o mostrar en pantalla.
+ * Envía a preparación lo pendiente de una cuenta: una comanda por estación (Cocina, Barra…) —y, con «Pedir por tiempos»,
+ * una por tiempo— según la estación de cada plato. `modo`: 'enviar' (lo que ya se puede) o 'disparar' (primero sube la
+ * cuenta al siguiente tiempo con pedidos en espera). Devuelve las comandas creadas, listas para imprimir o mostrar.
  */
-exports.enviarACocina = async (req, res) => {
-  let nombre; let numItems; let creadas;
+async function enviarPendientes(req, res, modo) {
+  const ef = await opcionesDe(req);
+  const porTiempo = !!ef.tiempos_servicio;
+  let nombre; let numItems; let creadas; let tiempoDisparado = null;
   const ok = await sequelize.transaction(async (t) => {
     const cuenta = await cuentaAbiertaBloqueada(req, t, req.params.id);
     if (!cuenta) return false;
@@ -205,31 +225,56 @@ exports.enviarACocina = async (req, res) => {
       include: [{ model: Producto, as: 'producto', attributes: ['id', 'estacion'], required: false }],
       order: [['id', 'ASC']], transaction: t, lock: { level: t.LOCK.UPDATE, of: CuentaItem },
     });
-    if (nuevos.length === 0) throw new ValidationError('No hay ítems nuevos para enviar a cocina.');
+    if (nuevos.length === 0) throw new ValidationError(modo === 'disparar' ? 'No hay pedidos en espera: no queda ningún tiempo por disparar.' : 'No hay ítems nuevos para enviar a cocina.');
+
+    let aEnviar = nuevos;
+    if (porTiempo) {
+      let tiempoActual = cuenta.tiempo_actual;
+      if (modo === 'disparar') {
+        const siguiente = siguienteTiempo(nuevos, tiempoActual);
+        if (!siguiente) throw new ValidationError('No hay pedidos en espera: no queda ningún tiempo por disparar.');
+        await cuenta.update({ tiempo_actual: siguiente }, { transaction: t });
+        tiempoActual = siguiente;
+        tiempoDisparado = siguiente;
+      }
+      aEnviar = itemsEnviables(nuevos, tiempoActual);
+      if (aEnviar.length === 0) throw new ValidationError('No hay pedidos listos para enviar: dispara el siguiente tiempo.');
+    }
 
     const empresa = await Empresa.findByPk(req.empresaId, { attributes: ['estaciones'], transaction: t });
     const estaciones = Array.isArray(empresa?.estaciones) && empresa.estaciones.length ? empresa.estaciones : ['Cocina'];
     // Un plato cuya estación ya no existe (se renombró o quitó) va a la primera.
     const estacionDe = (i) => (i.producto?.estacion && estaciones.includes(i.producto.estacion) ? i.producto.estacion : estaciones[0]);
-    const grupos = new Map();
-    for (const i of nuevos) grupos.set(estacionDe(i), [...(grupos.get(estacionDe(i)) || []), i]);
 
     creadas = [];
     const enviada = new Date();
-    for (const estacion of estaciones.filter((e) => grupos.has(e))) {
-      const comanda = await Comanda.create({ empresaId: req.empresaId, cuentaId: cuenta.id, usuarioId: req.userId, estacion, enviada_en: enviada }, { transaction: t });
-      await CuentaItem.update({ comandaId: comanda.id }, { where: { id: grupos.get(estacion).map((i) => i.id) }, transaction: t });
-      creadas.push({ id: comanda.id, estacion, numItems: grupos.get(estacion).length });
+    for (const grupo of agruparParaEnvio(aEnviar, estaciones, estacionDe, porTiempo)) {
+      const comanda = await Comanda.create({
+        empresaId: req.empresaId, cuentaId: cuenta.id, usuarioId: req.userId, estacion: grupo.estacion, tiempo: grupo.tiempo, enviada_en: enviada,
+      }, { transaction: t });
+      await CuentaItem.update({ comandaId: comanda.id }, { where: { id: grupo.items.map((i) => i.id) }, transaction: t });
+      creadas.push({ id: comanda.id, estacion: grupo.estacion, tiempo: grupo.tiempo, numItems: grupo.items.length });
     }
     nombre = nombreDeCuenta(cuenta);
-    numItems = nuevos.length;
+    numItems = aEnviar.length;
     return true;
   });
   if (!ok) return noEncontrada(res);
-  for (const c of creadas) auditar(req, 'comanda_enviada', { cuentaId: Number(req.params.id), comandaId: c.id, cuenta: nombre, numItems: c.numItems, estacion: c.estacion });
+  if (tiempoDisparado) auditar(req, 'tiempo_disparado', { cuentaId: Number(req.params.id), cuenta: nombre, tiempo: nombreDeTiempo(ef.tiempos_nombres, tiempoDisparado), numItems });
+  for (const c of creadas) {
+    auditar(req, 'comanda_enviada', {
+      cuentaId: Number(req.params.id), comandaId: c.id, cuenta: nombre, numItems: c.numItems, estacion: c.estacion,
+      ...(c.tiempo ? { tiempo: nombreDeTiempo(ef.tiempos_nombres, c.tiempo) } : {}),
+    });
+  }
   const comandas = await Promise.all(creadas.map((c) => detalleDeComanda(req.empresaId, c.id)));
   res.status(201).json({ comandas, numItems });
-};
+}
+
+exports.enviarACocina = (req, res) => enviarPendientes(req, res, 'enviar');
+
+/** Pedir por tiempos: «dispara» el siguiente tiempo con pedidos en espera y manda a cocina lo que corresponda. */
+exports.dispararTiempo = (req, res) => enviarPendientes(req, res, 'disparar');
 
 exports.moverCuenta = async (req, res) => {
   let datos;
@@ -274,7 +319,8 @@ exports.unirCuentas = async (req, res) => {
     const [movidos] = await CuentaItem.update({ cuentaId: destino.id }, { where: { cuentaId: origen.id }, transaction: t });
     await Comanda.update({ cuentaId: destino.id }, { where: { cuentaId: origen.id }, transaction: t });
     const comensales = (destino.comensales || 0) + (origen.comensales || 0);
-    await destino.update({ comensales: comensales || null }, { transaction: t });
+    // Los pedidos de la otra cuenta conservan su tiempo: si allá ya se había disparado un tiempo más adelantado, aquí también.
+    await destino.update({ comensales: comensales || null, tiempo_actual: Math.max(destino.tiempo_actual, origen.tiempo_actual) }, { transaction: t });
     await origen.update({
       estado: 'CANCELADA', cerrada_en: new Date(), cancelada_por: req.userId, motivo_cancelacion: `Unida a la cuenta de ${nombreDeCuenta(destino)} (#${destino.id})`,
     }, { transaction: t });

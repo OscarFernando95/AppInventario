@@ -6,6 +6,7 @@ import { formatCOP, formatCantidad } from '../../utils/format';
 import { useEmpresaQuery } from '../../hooks/useEmpresaQuery';
 import { useAuthStore } from '../../store/authStore';
 import { usePermisos } from '../../hooks/usePermisos';
+import { useOpciones } from '../../hooks/useOpciones';
 import SearchableSelect from '../../components/SearchableSelect';
 import { UNIDADES, unidadCorta, factorEstandar, etiquetaPresentacion, presentacionDe } from '../../utils/unidades';
 import FormError from '../../components/FormError';
@@ -21,7 +22,7 @@ import { TableState } from '../../components/ui/DataState';
 const EMPTY_FORM = {
   codigo: '', nombre_producto: '', descripcion: '', precio_unitario: '', stock_actual: '',
   porcentaje_iva: '19', unidad_medida: '94', codigo_estandar: '',
-  tipo: 'VENTA', receta: [], costo_promedio: '', rendimiento: '', por_lotes: false, vida_util_dias: '', estacion: '',
+  tipo: 'VENTA', receta: [], costo_promedio: '', rendimiento: '', por_lotes: false, vida_util_dias: '', estacion: '', tiempo_objetivo_min: '',
   unidad_compra: '', factor_compra: '', presOtra: false, // presentación de compra (kg, caja…)
   stock_minimo: '', stock_objetivo: '', // alerta de reposición
 };
@@ -62,6 +63,8 @@ const Inventario = () => {
   const conMesas = useAuthStore((st) => (st.activeEmpresa?.modulos || []).includes('Mesas'));
   const { data: tableroConfig } = useEmpresaQuery(['mesas', 'config'], '/mesas', { enabled: conMesas });
   const estaciones = tableroConfig?.config?.estaciones || ['Cocina'];
+  // Objetivo de preparación por plato (solo con la opción «Alertas de demora en cocina»).
+  const conAlertas = useOpciones().opcion('cocina_alertas', false);
   const [showModal, setShowModal] = useState(false);
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [formError, setFormError] = useState(null);
@@ -134,6 +137,7 @@ const Inventario = () => {
       por_lotes: p.tipo === 'PREPARACION' && !!p.por_lotes,
       vida_util_dias: p.vida_util_dias ? String(p.vida_util_dias) : '',
       estacion: p.estacion || '',
+      tiempo_objetivo_min: p.tiempo_objetivo_min ? String(p.tiempo_objetivo_min) : '',
       stock_minimo: Number(p.stock_minimo) ? String(Number(p.stock_minimo)) : '',
       stock_objetivo: p.stock_objetivo != null ? String(Number(p.stock_objetivo)) : '',
       unidad_compra: p.unidad_compra || '',
@@ -172,6 +176,8 @@ const Inventario = () => {
       rendimiento: formData.tipo === 'PREPARACION' ? Number(formData.rendimiento) : undefined,
       por_lotes: formData.tipo === 'PREPARACION' ? !!formData.por_lotes : undefined,
       estacion: ['VENTA', 'RECETA'].includes(formData.tipo) ? (formData.estacion || null) : undefined,
+      // Objetivo de preparación: solo con «Alertas de demora en cocina» encendida (si no, ni se manda).
+      tiempo_objetivo_min: conAlertas && ['VENTA', 'RECETA'].includes(formData.tipo) ? (formData.tiempo_objetivo_min === '' ? null : Number(formData.tiempo_objetivo_min)) : undefined,
       vida_util_dias: formData.tipo === 'PREPARACION' && formData.por_lotes ? (formData.vida_util_dias === '' ? null : Number(formData.vida_util_dias)) : undefined,
       // Presentación de compra: vacía = se compra en la unidad base (null la quita al editar).
       unidad_compra: esPlato ? undefined : (formData.unidad_compra.trim() || null),
@@ -423,6 +429,14 @@ const Inventario = () => {
                 <option value="">{estaciones[0]} (por omisión)</option>
                 {estaciones.slice(1).map((e) => <option key={e} value={e}>{e}</option>)}
               </select>
+            </Field>
+          )}
+          {conAlertas && ['VENTA', 'RECETA'].includes(formData.tipo) && (
+            <Field label="Tiempo objetivo de preparación (min)" hint="Si en cocina pasa de este tiempo, el plato se marca como demorado. Vacío = sin objetivo propio.">
+              <input
+                type="number" min="1" max="600" step="1" className="input-field sm:w-40" placeholder="Sin objetivo"
+                value={formData.tiempo_objetivo_min} onChange={(e) => setFormData({ ...formData, tiempo_objetivo_min: e.target.value })}
+              />
             </Field>
           )}
           {formData.tipo === 'PREPARACION' && (

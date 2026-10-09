@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeft, ChefHat, Printer, Ban, ArrowRightLeft, Combine, Minus, Plus, Trash2, Users, Clock, Receipt, CheckCircle2, FileDown, MessageSquareText, Armchair, ShoppingBag,
+  ArrowLeft, ChefHat, Printer, Ban, ArrowRightLeft, Combine, Minus, Plus, Trash2, Users, Clock, Receipt, CheckCircle2, FileDown, MessageSquareText, Armchair, ShoppingBag, Play,
 } from 'lucide-react';
 import api from '../../api/axios';
 import { formatCOP, formatCantidad } from '../../utils/format';
@@ -35,7 +35,7 @@ const leerImprimir = (porOmision) => {
 };
 const guardarImprimir = (v) => { try { localStorage.setItem(CLAVE_IMPRIMIR, v ? '1' : '0'); } catch { /* sin almacenamiento: se usa el valor por omisión */ } };
 
-const FilaItem = ({ item, comandaPorId, puedeAnular, acciones, bloqueado, comensales, onReasignar }) => {
+const FilaItem = ({ item, comandaPorId, puedeAnular, acciones, bloqueado, comensales, onReasignar, tiempos, onCambiarTiempo }) => {
   const cobrado = !!item.ventaId;
   const anulado = item.estado === 'ANULADO';
   const comanda = item.comandaId ? comandaPorId.get(item.comandaId) : null;
@@ -55,6 +55,16 @@ const FilaItem = ({ item, comandaPorId, puedeAnular, acciones, bloqueado, comens
             {Array.from({ length: comensales }, (_, k) => k + 1).map((n) => <option key={n} value={n}>Persona {n}</option>)}
           </select>
         ) : (item.comensal ? <span className="mt-1 inline-block text-[11px] font-semibold bg-slate-100 text-slate-700 rounded px-1.5 py-0.5">Persona {item.comensal}</span> : null)}
+        {tiempos && (
+          !cobrado && !anulado && !bloqueado && !item.enviado ? (
+            <select
+              aria-label={`Tiempo de ${item.nombre}`} className="mt-1 ml-1 rounded-lg border border-slate-200 bg-white text-xs py-0.5 px-1.5 text-slate-700"
+              value={item.tiempo} onChange={(e) => onCambiarTiempo(item, e.target.value)}
+            >
+              {tiempos.map((nombre, k) => <option key={nombre} value={k + 1}>{nombre}</option>)}
+            </select>
+          ) : <span className="mt-1 ml-1 inline-block text-[11px] font-semibold bg-slate-100 text-slate-700 rounded px-1.5 py-0.5">{tiempos[item.tiempo - 1] || `Tiempo ${item.tiempo}`}</span>
+        )}
         {item.nota && <p className="text-xs font-medium text-amber-800 flex items-center gap-1"><MessageSquareText className="w-3 h-3" aria-hidden="true" /> {item.nota}</p>}
         <p className="mt-0.5 text-[11px] text-slate-500 flex flex-wrap gap-x-2 items-center">
           <span>{formatCOP(item.precio_unitario)} c/u</span>
@@ -94,6 +104,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
   const { opcion } = useOpciones();
   const conUnir = opcion('unir_cuentas', true);
   const porPersona = opcion('cuenta_por_persona', true);
+  const porTiempos = opcion('tiempos_servicio', false);
   const conCocina = modulos.includes('Cocina');
 
   const claveCuenta = ['empresa', empresaId ?? null, 'cuentas', cuentaId];
@@ -109,6 +120,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
   const [mesaDestino, setMesaDestino] = useState('');
   const [cobrando, setCobrando] = useState(false);
   const [comensalActivo, setComensalActivo] = useState(null); // para quién se pide ahora (null = para todos)
+  const [tiempoElegido, setTiempoElegido] = useState(null); // para qué tiempo se pide ahora (null = el que va en curso)
   const [cobrarA, setCobrarA] = useState(null); // persona a la que se le cobra lo suyo al abrir el cobro
   const [resultado, setResultado] = useState(null); // respuesta del cobro
   const [aviso, setAviso] = useState(null);
@@ -121,6 +133,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
   const agregar = useMutation({ mutationFn: (b) => api.post(`/cuentas/${cuentaId}/items`, b), onSuccess: aplicar, onError: fallar });
   const editar = useMutation({ mutationFn: ({ id, ...b }) => api.patch(`/cuentas/${cuentaId}/items/${id}`, b), onSuccess: (r) => { aplicar(r); setDialogo(null); }, onError: fallar });
   const reasignar = (item, valor) => editar.mutate({ id: item.id, comensal: valor === '' ? null : Number(valor) });
+  const cambiarTiempo = (item, valor) => editar.mutate({ id: item.id, tiempo: Number(valor) });
   const quitar = useMutation({ mutationFn: (id) => api.delete(`/cuentas/${cuentaId}/items/${id}`), onSuccess: aplicar, onError: fallar });
   const anularItem = useMutation({ mutationFn: ({ id, motivo }) => api.post(`/cuentas/${cuentaId}/items/${id}/anular`, { motivo }), onSuccess: (r) => { aplicar(r); setDialogo(null); }, onError: (e) => { setDialogo(null); fallar(e); } });
   const mover = useMutation({ mutationFn: (mesaId) => api.post(`/cuentas/${cuentaId}/mover`, { mesaId }), onSuccess: (r) => { aplicar(r); setDialogo(null); }, onError: (e) => { setDialogo(null); fallar(e); } });
@@ -134,32 +147,35 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['empresa'] }); onVolver(); },
     onError: (e) => { setDialogo(null); fallar(e); },
   });
-  const enviar = useMutation({
-    mutationFn: () => api.post(`/cuentas/${cuentaId}/enviar`),
-    onSuccess: (res) => {
-      qc.invalidateQueries({ queryKey: ['empresa'] });
-      setError(null);
-      const comandas = res.data.comandas;
-      const destino = comandas.length > 1
-        ? comandas.map((c) => `#${c.id} (${c.estacion})`).join(' y ')
-        : `#${comandas[0].id}${comandas[0].estacion && comandas[0].estacion !== 'Cocina' ? ` (${comandas[0].estacion})` : ''}`;
-      setAviso(`${comandas.length > 1 ? 'Comandas' : 'Comanda'} ${destino} enviada${comandas.length > 1 ? 's' : ''} a ${conCocina ? 'cocina' : 'preparación'}.`);
-      // Un ticket por estación: cada una imprime el suyo.
-      if (imprimir) comandas.forEach((c, i) => setTimeout(() => imprimirComanda(c, { empresa: activeEmpresa?.nombre }), i * 800));
-    },
-    onError: fallar,
-  });
+  // «Enviar» y «Disparar» devuelven lo mismo: las comandas creadas (una por estación y, por tiempos, una por tiempo).
+  const alEnviar = (res) => {
+    qc.invalidateQueries({ queryKey: ['empresa'] });
+    setError(null);
+    const comandas = res.data.comandas;
+    const destino = comandas.length > 1
+      ? comandas.map((c) => `#${c.id} (${c.estacion})`).join(' y ')
+      : `#${comandas[0].id}${comandas[0].estacion && comandas[0].estacion !== 'Cocina' ? ` (${comandas[0].estacion})` : ''}`;
+    const tiempos = [...new Set(comandas.map((c) => c.tiempo_nombre).filter(Boolean))];
+    setAviso(`${comandas.length > 1 ? 'Comandas' : 'Comanda'} ${destino} enviada${comandas.length > 1 ? 's' : ''} a ${conCocina ? 'cocina' : 'preparación'}.${tiempos.length ? ` Tiempo: ${tiempos.join(' y ')}.` : ''}`);
+    // Un ticket por estación: cada una imprime el suyo.
+    if (imprimir) comandas.forEach((c, i) => setTimeout(() => imprimirComanda(c, { empresa: activeEmpresa?.nombre }), i * 800));
+  };
+  const enviar = useMutation({ mutationFn: () => api.post(`/cuentas/${cuentaId}/enviar`), onSuccess: alEnviar, onError: fallar });
+  const disparar = useMutation({ mutationFn: () => api.post(`/cuentas/${cuentaId}/disparar`), onSuccess: alEnviar, onError: fallar });
 
+  // Con «Pedir por tiempos»: el tiempo elegido o, si no se eligió, el que va en curso.
+  const tiempoNombres = porTiempos && cuenta?.tiempos ? cuenta.tiempos.map((t) => t.nombre) : null;
+  const tiempoDelPedido = tiempoNombres ? Math.min(tiempoElegido ?? cuenta.tiempo_actual, tiempoNombres.length) : null;
   const modsDe = (o) => (o.tipo === 'RECETA' ? modificadores : []);
   const elegir = (o) => {
     setError(null);
     setAviso(null);
     if (modsDe(o).length > 0) return setPidiendo({ opcion: o, mods: [], nota: '', cantidad: 1 });
-    agregar.mutate({ ...(o.producto ? { productoId: o.producto.id } : { servicioId: o.servicio.id }), ...(comensalActivo ? { comensal: comensalActivo } : {}) });
+    agregar.mutate({ ...(o.producto ? { productoId: o.producto.id } : { servicioId: o.servicio.id }), ...(comensalActivo ? { comensal: comensalActivo } : {}), ...(tiempoDelPedido ? { tiempo: tiempoDelPedido } : {}) });
   };
   const confirmarPedido = (e) => {
     e.preventDefault();
-    agregar.mutate({ productoId: pidiendo.opcion.producto.id, cantidad: pidiendo.cantidad, modificadores: pidiendo.mods, nota: pidiendo.nota.trim() || undefined, ...(comensalActivo ? { comensal: comensalActivo } : {}) });
+    agregar.mutate({ productoId: pidiendo.opcion.producto.id, cantidad: pidiendo.cantidad, modificadores: pidiendo.mods, nota: pidiendo.nota.trim() || undefined, ...(comensalActivo ? { comensal: comensalActivo } : {}), ...(tiempoDelPedido ? { tiempo: tiempoDelPedido } : {}) });
     setPidiendo(null);
   };
 
@@ -194,6 +210,10 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
   const abierta = cuenta.estado === 'ABIERTA';
   const comandaPorId = new Map(cuenta.comandas.map((c) => [c.id, c]));
   const porEnviar = cuenta.items.filter((i) => i.estado === 'ACTIVO' && !i.enviado && !i.ventaId);
+  // Por tiempos: solo se envía lo de los tiempos ya disparados; lo demás espera a «Disparar».
+  const enviables = tiempoNombres ? porEnviar.filter((i) => i.tiempo <= cuenta.tiempo_actual) : porEnviar;
+  const siguienteTiempo = tiempoNombres ? Math.min(Infinity, ...porEnviar.map((i) => i.tiempo).filter((t) => t > cuenta.tiempo_actual)) : Infinity;
+  const enEspera = Number.isFinite(siguienteTiempo) ? porEnviar.filter((i) => i.tiempo === siguienteTiempo).length : 0;
   const pendientesCobro = cuenta.items.filter((i) => i.estado === 'ACTIVO' && !i.ventaId);
   const acciones = {
     cantidad: (item, cantidad) => editar.mutate({ id: item.id, cantidad }),
@@ -253,6 +273,17 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
                 ))}
               </div>
             )}
+            {tiempoNombres && (
+              <div role="radiogroup" aria-label="Pedir para el tiempo" className="flex flex-wrap items-center gap-1.5 mb-3 text-xs">
+                <span className="text-slate-500 mr-1">Pedir para el tiempo:</span>
+                {tiempoNombres.map((nombre, k) => (
+                  <label key={nombre} className={`rounded-lg border px-2.5 py-1 cursor-pointer focus-within:ring-2 focus-within:ring-brand-600 ${tiempoDelPedido === k + 1 ? 'bg-brand-700 text-white border-brand-700 font-semibold' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
+                    <input type="radio" className="sr-only" name="pedir-tiempo" checked={tiempoDelPedido === k + 1} onChange={() => setTiempoElegido(k + 1)} />
+                    {nombre}
+                  </label>
+                ))}
+              </div>
+            )}
             <ProductPicker productos={productos} servicios={servicios} onElegir={elegir} deshabilitado={agregar.isPending} />
           </section>
         ) : <span />}
@@ -263,7 +294,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
             <p className="py-8 text-center text-sm text-slate-500">Aún no hay nada pedido.</p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {cuenta.items.map((i) => <FilaItem key={i.id} item={i} comandaPorId={comandaPorId} puedeAnular={puedeAnular} acciones={acciones} bloqueado={!abierta} comensales={porPersona ? (cuenta.comensales || 0) : 0} onReasignar={reasignar} />)}
+              {cuenta.items.map((i) => <FilaItem key={i.id} item={i} comandaPorId={comandaPorId} puedeAnular={puedeAnular} acciones={acciones} bloqueado={!abierta} comensales={porPersona ? (cuenta.comensales || 0) : 0} onReasignar={reasignar} tiempos={tiempoNombres} onCambiarTiempo={cambiarTiempo} />)}
             </ul>
           )}
 
@@ -294,9 +325,14 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
                 <input type="checkbox" className="w-4 h-4 text-brand-700 rounded border-slate-300 focus:ring-brand-600" checked={imprimir} onChange={(e) => { setImprimir(e.target.checked); guardarImprimir(e.target.checked); }} />
                 Imprimir la comanda al enviar
               </label>
+              {enEspera > 0 && (
+                <button type="button" className="btn-secondary gap-2 w-full" disabled={disparar.isPending || enviar.isPending} onClick={() => { setAviso(null); disparar.mutate(); }}>
+                  <Play className="w-4 h-4" aria-hidden="true" /> {disparar.isPending ? 'Disparando…' : `Disparar: ${tiempoNombres[siguienteTiempo - 1] || `Tiempo ${siguienteTiempo}`} (${enEspera})`}
+                </button>
+              )}
               <div className="grid grid-cols-2 gap-2">
-                <button type="button" className="btn-secondary gap-2" disabled={porEnviar.length === 0 || enviar.isPending} onClick={() => { setAviso(null); enviar.mutate(); }}>
-                  <ChefHat className="w-4 h-4" aria-hidden="true" /> {enviar.isPending ? 'Enviando…' : `Enviar (${porEnviar.length})`}
+                <button type="button" className="btn-secondary gap-2" disabled={enviables.length === 0 || enviar.isPending || disparar.isPending} onClick={() => { setAviso(null); enviar.mutate(); }}>
+                  <ChefHat className="w-4 h-4" aria-hidden="true" /> {enviar.isPending ? 'Enviando…' : `Enviar (${enviables.length})`}
                 </button>
                 <button type="button" className="btn-primary gap-2" disabled={pendientesCobro.length === 0} onClick={() => { setError(null); setCobrarA(null); setCobrando(true); }}>
                   <Receipt className="w-4 h-4" aria-hidden="true" /> Cobrar
@@ -311,7 +347,7 @@ const CuentaPanel = ({ cuentaId, onVolver, tablero }) => {
               <ul className="space-y-1 text-sm">
                 {cuenta.comandas.map((c) => (
                   <li key={c.id} className="flex items-center justify-between gap-2">
-                    <span>#{c.id} <span className={`ml-1 text-[11px] rounded px-1.5 py-0.5 font-semibold ${ESTADO_COMANDA[c.estado].tono}`}>{ESTADO_COMANDA[c.estado].texto}</span></span>
+                    <span>#{c.id}{c.tiempo_nombre ? <span className="ml-1 text-[11px] font-semibold text-slate-600">{c.tiempo_nombre}</span> : null} <span className={`ml-1 text-[11px] rounded px-1.5 py-0.5 font-semibold ${ESTADO_COMANDA[c.estado].tono}`}>{ESTADO_COMANDA[c.estado].texto}</span></span>
                     <button type="button" className="btn-icon" aria-label={`Reimprimir la comanda ${c.id}`} onClick={() => reimprimir(c.id)}><Printer className="w-4 h-4" /></button>
                   </li>
                 ))}
