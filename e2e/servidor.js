@@ -59,7 +59,7 @@ async function main() {
   // 3. Frontend compilado en una carpeta PROPIA (no se pisa frontend/dist) y con la API
   // en rutas relativas: frontend/.env apunta a tu backend de desarrollo (localhost:4000)
   // y las variables VITE_* del entorno tienen prioridad sobre ese archivo.
-  const dist = path.join(os.tmpdir(), 'appinventario-e2e', 'dist'); // se borra al terminar (global-teardown)
+  const dist = path.join(os.tmpdir(), (process.env.E2E_CARPETA || 'appinventario-e2e'), 'dist'); // se borra al terminar (global-teardown)
   execFileSync('npx', ['vite', 'build', '--outDir', dist, '--emptyOutDir'], {
     cwd: FRONTEND, env: { ...process.env, VITE_API_URL: '/api' }, stdio: 'pipe',
   });

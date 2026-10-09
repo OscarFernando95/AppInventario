@@ -35,3 +35,4 @@ mano al terminar**.
 | `E2E_PORT` | 4010 | puerto del servidor de pruebas |
 | `E2E_DB_HOST` / `E2E_DB_PORT` / `E2E_DB_NAME` | localhost / 5433 / appinventario_e2e | base de pruebas |
 | `E2E_CONSERVAR` | – | `1` conserva los temporales para depurar |
+| `E2E_CARPETA` | appinventario-e2e | nombre de la carpeta temporal; distinto en cada corrida simultánea (junto con `E2E_PORT` y `E2E_DB_NAME`) |

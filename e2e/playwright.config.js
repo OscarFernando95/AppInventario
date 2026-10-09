@@ -7,7 +7,7 @@ const PUERTO = process.env.E2E_PORT || '4010';
 // Todo lo que generan las pruebas (capturas, trazas) va a la carpeta temporal del sistema y
 // se BORRA al terminar (global-teardown.js); en el proyecto no queda nada. Para investigar un
 // fallo: E2E_CONSERVAR=1 conserva esa carpeta (y hay que borrarla a mano después).
-const TEMPORAL = path.join(os.tmpdir(), 'appinventario-e2e');
+const TEMPORAL = path.join(os.tmpdir(), (process.env.E2E_CARPETA || 'appinventario-e2e'));
 const CONSERVAR = process.env.E2E_CONSERVAR === '1';
 
 module.exports = defineConfig({
