@@ -1,6 +1,7 @@
 'use strict';
 
-const { sequelize, Caja, CajaMovimiento, Venta, Usuario, Empresa, AbonoVenta } = require('../models');
+const { fn, col } = require('sequelize');
+const { sequelize, Caja, CajaMovimiento, Venta, Usuario, Empresa, AbonoVenta, PropinaReparto, UsuarioEmpresa } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { buildListWhere } = require('../utils/listFilters');
@@ -174,10 +175,63 @@ exports.cerrarCaja = async (req, res) => {
  * (la propina nunca fue ingreso, así que no resta del dinero de la empresa).
  */
 exports.registrarRetiro = async (req, res) => {
-  const { concepto, monto, tipo } = req.body;
-  const mov = await sequelize.transaction((t) => registrarEgreso(req, t, { tipo, concepto, monto }));
-  auditar(req, tipo === 'PROPINA' ? 'caja_propinas' : 'caja_retiro', { cajaId: mov.cajaId, monto: Number(mov.monto), concepto });
+  const { concepto, monto, tipo, reparto } = req.body;
+  if (reparto && tipo !== 'PROPINA') throw new ValidationError('Solo la entrega de propinas se reparte entre el personal.');
+  if (reparto) {
+    const suma = redondear2(reparto.reduce((a, r) => a + r.monto, 0));
+    if (Math.abs(suma - monto) > 0.01) throw new ValidationError(`El reparto suma ${suma.toLocaleString('es-CO')} y se entregan ${monto.toLocaleString('es-CO')}: deben coincidir.`);
+    if (new Set(reparto.map((r) => r.usuarioId)).size !== reparto.length) throw new ValidationError('Hay personas repetidas en el reparto.');
+  }
+  const mov = await sequelize.transaction(async (t) => {
+    if (reparto) {
+      const validos = await UsuarioEmpresa.count({ where: { empresaId: req.empresaId, usuarioId: reparto.map((r) => r.usuarioId) }, transaction: t });
+      if (validos !== reparto.length) throw new ValidationError('Una de las personas del reparto no pertenece a esta empresa.');
+    }
+    const m = await registrarEgreso(req, t, { tipo, concepto, monto });
+    if (reparto) {
+      await PropinaReparto.bulkCreate(reparto.map((r) => ({ empresaId: req.empresaId, movimientoId: m.id, usuarioId: r.usuarioId, monto: r.monto, fecha: m.fecha })), { transaction: t });
+    }
+    return m;
+  });
+  auditar(req, tipo === 'PROPINA' ? 'caja_propinas' : 'caja_retiro', {
+    cajaId: mov.cajaId, monto: Number(mov.monto), concepto, ...(reparto ? { repartidas: reparto.length } : {}),
+  });
   res.status(201).json(mov);
+};
+
+/** Personas de la empresa a quienes se puede repartir una entrega de propinas. */
+exports.getPersonal = async (req, res) => {
+  const enlaces = await UsuarioEmpresa.findAll({ where: { empresaId: req.empresaId }, attributes: ['usuarioId'], raw: true });
+  const personas = await Usuario.findAll({
+    where: { id: enlaces.map((e) => e.usuarioId), estado: true }, attributes: ['id', 'nombre'], order: [['nombre', 'ASC']], raw: true,
+  });
+  res.json(personas);
+};
+
+/** Propinas del rango: lo recibido en ventas, lo entregado y cuánto le tocó a cada persona. */
+exports.getPropinas = async (req, res) => {
+  const f = buildListWhere(req.query, { fecha: 'fecha' });
+  const [recibidas, entregadas, repartos] = await Promise.all([
+    Venta.sum('propina', { where: { empresaId: req.empresaId, estado: 'ACTIVA', ...f } }),
+    CajaMovimiento.sum('monto', { where: { empresaId: req.empresaId, tipo: 'PROPINA', ...f } }),
+    PropinaReparto.findAll({
+      where: { empresaId: req.empresaId, ...f },
+      attributes: ['usuarioId', [fn('SUM', col('monto')), 'total'], [fn('COUNT', col('PropinaReparto.id')), 'veces']],
+      include: [{ model: Usuario, as: 'usuario', attributes: ['nombre'] }],
+      group: ['usuarioId', 'usuario.id'],
+      raw: true,
+      nest: true,
+    }),
+  ]);
+  const porPersona = repartos.map((r) => ({ usuarioId: r.usuarioId, nombre: r.usuario.nombre, total: redondear2(r.total), veces: Number(r.veces) })).sort((a, b) => b.total - a.total);
+  const repartido = redondear2(porPersona.reduce((a, p) => a + p.total, 0));
+  res.json({
+    recibidas: redondear2(recibidas || 0),
+    entregadas: redondear2(entregadas || 0),
+    repartido,
+    sin_repartir: redondear2((entregadas || 0) - repartido),
+    por_persona: porPersona,
+  });
 };
 
 /**

@@ -1,5 +1,6 @@
 'use strict';
 
+const { Op } = require('sequelize');
 const { sequelize, Cuenta, CuentaItem, Comanda, Mesa, Producto, Servicio } = require('../models');
 const { ValidationError, ForbiddenError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
@@ -215,6 +216,41 @@ exports.moverCuenta = async (req, res) => {
   if (!ok) return noEncontrada(res);
   auditar(req, 'cuenta_movida', datos);
   res.json(await detalleDeCuenta(req.empresaId, req.params.id));
+};
+
+/**
+ * Une dos cuentas abiertas (clientes que se cambian de mesa o se juntan): todo lo pedido de `cuentaId` pasa a
+ * esta cuenta y aquella queda cancelada, con su mesa libre. Solo si de la otra aún no se cobró nada.
+ */
+exports.unirCuentas = async (req, res) => {
+  const destinoId = Number(req.params.id);
+  const origenId = req.body.cuentaId;
+  if (destinoId === origenId) throw new ValidationError('Elige otra cuenta para unir.');
+  let datos;
+  const ok = await sequelize.transaction(async (t) => {
+    // Se bloquean en orden de id para no cruzarse con otra unión o con un cobro.
+    const [primera, segunda] = [destinoId, origenId].sort((a, b) => a - b);
+    const a = await cuentaAbiertaBloqueada(req, t, primera);
+    const b = await cuentaAbiertaBloqueada(req, t, segunda);
+    if (!a || !b) return false;
+    const destino = a.id === destinoId ? a : b;
+    const origen = a.id === destinoId ? b : a;
+    const cobrados = await CuentaItem.count({ where: { cuentaId: origen.id, ventaId: { [Op.ne]: null } }, transaction: t });
+    if (cobrados > 0) throw new ValidationError(`«${nombreDeCuenta(origen)}» ya tiene una parte cobrada: termina de cobrarla antes de unirla.`);
+
+    const [movidos] = await CuentaItem.update({ cuentaId: destino.id }, { where: { cuentaId: origen.id }, transaction: t });
+    await Comanda.update({ cuentaId: destino.id }, { where: { cuentaId: origen.id }, transaction: t });
+    const comensales = (destino.comensales || 0) + (origen.comensales || 0);
+    await destino.update({ comensales: comensales || null }, { transaction: t });
+    await origen.update({
+      estado: 'CANCELADA', cerrada_en: new Date(), cancelada_por: req.userId, motivo_cancelacion: `Unida a la cuenta de ${nombreDeCuenta(destino)} (#${destino.id})`,
+    }, { transaction: t });
+    datos = { cuentaId: destino.id, destino: nombreDeCuenta(destino), origen: nombreDeCuenta(origen), numItems: movidos };
+    return true;
+  });
+  if (!ok) return noEncontrada(res);
+  auditar(req, 'cuentas_unidas', datos);
+  res.json(await detalleDeCuenta(req.empresaId, destinoId));
 };
 
 exports.cancelarCuenta = async (req, res) => {

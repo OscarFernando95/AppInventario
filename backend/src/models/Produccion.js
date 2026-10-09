@@ -14,6 +14,7 @@ const Produccion = sequelize.define('Produccion', {
   estado: { type: DataTypes.STRING(10), allowNull: false, defaultValue: 'ACTIVA' },
   motivo: { type: DataTypes.TEXT, allowNull: true },
   fecha: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+  vence_en: { type: DataTypes.DATEONLY, allowNull: true },
   anulada_en: { type: DataTypes.DATE, allowNull: true },
   anulada_por: { type: DataTypes.INTEGER, allowNull: true },
 }, {

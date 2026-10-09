@@ -20,6 +20,8 @@ router.get('/actual', asyncHandler(cajaController.getCajaActual));
 router.get('/base-sugerida', asyncHandler(cajaController.getBaseSugerida));
 // Dinero de la empresa vs su capital inicial: información financiera, solo administrador.
 router.get('/balance', requirePermiso('caja.balance'), validate({ query: balanceQuery }), asyncHandler(cajaController.getBalance));
+router.get('/personal', asyncHandler(cajaController.getPersonal));
+router.get('/propinas', requirePermiso('caja.balance'), validate({ query: balanceQuery }), asyncHandler(cajaController.getPropinas));
 router.get('/:id', validate({ params: idParam }), asyncHandler(cajaController.getCajaById));
 router.post('/retiros', validate({ body: cajaRetiro }), asyncHandler(cajaController.registrarRetiro));
 router.post('/abrir', validate({ body: cajaAbrir }), asyncHandler(cajaController.abrirCaja));

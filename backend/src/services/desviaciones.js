@@ -96,4 +96,36 @@ function armarDesviaciones({ productos, ventas = [], producciones = [], ajustes 
   return { filas, totales };
 }
 
-module.exports = { armarDesviaciones };
+/**
+ * Cada conteo físico comparado contra el ANTERIOR del mismo producto (lógica pura).
+ * `filas` = [{ id, productoId, fecha, previo, diferencia, valor, consumo_ventas, consumo_produccion, mermas }]
+ * (consumos y mermas son los ocurridos entre el conteo anterior y este). Un faltante cuyo % del consumo teórico
+ * llega a `umbralPct` es una alerta. Sin conteo anterior no hay con qué comparar: queda `sin_base`.
+ */
+function evaluarEventosDeConteo(filas, umbralPct) {
+  return filas.map((f) => {
+    const dif = redondear3(f.diferencia);
+    const faltante = dif < -EPS ? redondear3(-dif) : 0;
+    const sobrante = dif > EPS ? dif : 0;
+    const teorico = redondear3(Number(f.consumo_ventas || 0) + Number(f.consumo_produccion || 0));
+    const sinBase = !f.previo;
+    const pct = !sinBase && faltante > 0 && teorico > 0 ? redondear2((faltante / teorico) * 100) : null;
+    return {
+      ajusteId: f.id,
+      productoId: Number(f.productoId),
+      fecha: f.fecha,
+      previo: f.previo || null,
+      sin_base: sinBase,
+      consumo_teorico: teorico,
+      mermas: redondear3(f.mermas || 0),
+      conteo: dif,
+      faltante,
+      sobrante,
+      valor_conteo: redondear2(f.valor),
+      desviacion_pct: pct,
+      alerta: pct != null && pct >= Number(umbralPct),
+    };
+  });
+}
+
+module.exports = { armarDesviaciones, evaluarEventosDeConteo };

@@ -1,6 +1,7 @@
 'use strict';
 
-const { Mesa, Cuenta } = require('../models');
+const { Op } = require('sequelize');
+const { Mesa, Cuenta, Empresa, Reserva } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { auditar } = require('../utils/audit');
 const { cuentasAbiertas } = require('../services/cuentaService');
@@ -14,13 +15,24 @@ function traducirDuplicado(err) {
 /** Mesas con su cuenta abierta (si la tiene) y las cuentas abiertas sin mesa ("para llevar"). */
 exports.getMesas = async (req, res) => {
   const where = { empresaId: req.empresaId, ...(req.query.todas ? {} : { activa: true }) };
-  const [mesas, abiertas] = await Promise.all([
+  // Reservas pendientes que llegan pronto (o se atrasaron hasta una hora): se avisan en la tarjeta de la mesa.
+  const ahora = Date.now();
+  const proximas = await Reserva.findAll({
+    where: { empresaId: req.empresaId, estado: 'PENDIENTE', mesaId: { [Op.ne]: null }, fecha_hora: { [Op.between]: [new Date(ahora - 60 * 60_000), new Date(ahora + 3 * 60 * 60_000)] } },
+    attributes: ['id', 'mesaId', 'nombre', 'personas', 'fecha_hora'],
+    order: [['fecha_hora', 'ASC']],
+  });
+  const reservaPorMesa = new Map();
+  for (const r of proximas) if (!reservaPorMesa.has(r.mesaId)) reservaPorMesa.set(r.mesaId, r);
+  const [mesas, abiertas, empresa] = await Promise.all([
     Mesa.findAll({ where, order: [['nombre', 'ASC']] }),
     cuentasAbiertas(req.empresaId),
+    Empresa.findByPk(req.empresaId, { attributes: ['propina_sugerida_pct'] }),
   ]);
   const porMesa = new Map(abiertas.filter((c) => c.mesaId).map((c) => [c.mesaId, c]));
   res.json({
-    mesas: mesas.map((m) => ({ ...m.toJSON(), cuenta: porMesa.get(m.id) || null })),
+    config: { propina_sugerida_pct: Number(empresa?.propina_sugerida_pct ?? 10) },
+    mesas: mesas.map((m) => ({ ...m.toJSON(), cuenta: porMesa.get(m.id) || null, reserva: reservaPorMesa.get(m.id) || null })),
     sin_mesa: abiertas.filter((c) => !c.mesaId),
   });
 };
@@ -49,4 +61,12 @@ exports.updateMesa = async (req, res) => {
   }
   auditar(req, 'mesa_actualizada', { mesaId: mesa.id, nombre: mesa.nombre, activa: mesa.activa });
   res.json(mesa);
+};
+
+/** Propina sugerida al cobrar (0 = no sugerir). */
+exports.updateConfig = async (req, res) => {
+  const { propina_sugerida_pct: pct } = req.body;
+  await Empresa.update({ propina_sugerida_pct: pct }, { where: { id: req.empresaId } });
+  auditar(req, 'propina_sugerida_cambiada', { pct });
+  res.json({ propina_sugerida_pct: pct });
 };

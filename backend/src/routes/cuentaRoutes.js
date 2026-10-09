@@ -6,7 +6,7 @@ const asyncHandler = require('../middlewares/asyncHandler');
 const validate = require('../middlewares/validate');
 const { z } = require('../schemas/common');
 const {
-  idParam, cuentaAbrir, cuentaUpdate, cuentaListQuery, itemAgregar, itemEditar, itemAnular, cuentaMover, cuentaCancelar, cuentaCobrar,
+  idParam, cuentaAbrir, cuentaUpdate, cuentaListQuery, itemAgregar, itemEditar, itemAnular, cuentaMover, cuentaUnir, cuentaCancelar, cuentaCobrar,
 } = require('../schemas/mesaSchemas');
 
 const itemParams = z.object({ id: z.coerce.number().int().positive(), itemId: z.coerce.number().int().positive() });
@@ -31,6 +31,7 @@ router.post('/:id/items/:itemId/anular', validate({ params: itemParams, body: it
 
 router.post('/:id/enviar', validate({ params: idParam }), asyncHandler(cuentaController.enviarACocina));
 router.post('/:id/mover', validate({ params: idParam, body: cuentaMover }), asyncHandler(cuentaController.moverCuenta));
+router.post('/:id/unir', validate({ params: idParam, body: cuentaUnir }), asyncHandler(cuentaController.unirCuentas));
 router.post('/:id/cancelar', validate({ params: idParam, body: cuentaCancelar }), asyncHandler(cuentaController.cancelarCuenta));
 router.post('/:id/cobrar', validate({ params: idParam, body: cuentaCobrar }), asyncHandler(cuentaController.cobrar));
 

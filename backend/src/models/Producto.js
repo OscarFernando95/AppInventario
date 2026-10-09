@@ -89,6 +89,11 @@ const Producto = sequelize.define('Producto', {
     allowNull: false,
     defaultValue: false,
   },
+  // Solo preparaciones por lotes: días que dura un lote (vacío = no vence).
+  vida_util_dias: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+  },
   // Solo PREPARACION: cuánto produce la receta, en la unidad de medida del producto.
   rendimiento: {
     type: DataTypes.DECIMAL(12, 3),

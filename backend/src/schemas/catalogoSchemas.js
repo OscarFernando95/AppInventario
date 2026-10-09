@@ -37,6 +37,8 @@ const producto = z.object({
   rendimiento: cantidadReceta.optional(),
   // Solo preparaciones: con stock propio, se producen por lotes (módulo Recetas, «Producción»).
   por_lotes: z.boolean().optional(),
+  // Solo preparaciones por lotes: días que dura un lote (vacío/null = no vence).
+  vida_util_dias: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().int().min(1).max(3650).nullish()),
   // VENTA (por defecto) | INSUMO | PREPARACION | RECETA. Distinto de VENTA exige el módulo Recetas.
   tipo: z.enum(TIPOS_PRODUCTO, { error: 'Tipo de producto no válido.' }).optional(),
   // Ingredientes de un plato o preparación (solo con tipo RECETA / PREPARACION).

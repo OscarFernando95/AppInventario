@@ -41,6 +41,10 @@ const ajusteListQuery = z.object({
 
 const rangoQuery = z.object({ desde: fechaDia, hasta: fechaDia });
 
+// Informe de desviaciones: por rango de fechas (por omisión) o «entre conteos».
+const desviacionesQuery = z.object({ desde: fechaDia, hasta: fechaDia, modo: z.enum(['rango', 'conteos']).optional() });
+const umbralDesviacion = z.object({ desviacion_alerta_pct: z.coerce.number().min(0).max(100).transform((n) => Math.round(n * 100) / 100) });
+
 // --- Producción de preparaciones por lotes ---
 const produccionCreate = z.object({
   productoId: idRef,
@@ -57,6 +61,12 @@ const produccionListQuery = z.object({
   offset: z.any().optional(),
 });
 
+const sugerenciasQuery = z.object({
+  // Días de ventas que se promedian y días que se quiere tener cubiertos.
+  dias: z.coerce.number().int().min(1).max(90).optional().default(14),
+  cobertura: z.coerce.number().min(0.25).max(30).optional().default(1),
+});
+
 // --- Modificadores ---
 const modificadorItem = z.object({ insumoId: idRef, cantidad: cantidadConSigno });
 
@@ -70,5 +80,5 @@ const modificador = z.object({
 const modificadorUpdate = modificador.partial();
 
 module.exports = {
-  TIPOS_SALIDA, ajusteSalida, conteoFisico, ajusteListQuery, rangoQuery, produccionCreate, produccionListQuery, modificador, modificadorUpdate,
+  TIPOS_SALIDA, ajusteSalida, conteoFisico, ajusteListQuery, rangoQuery, desviacionesQuery, umbralDesviacion, produccionCreate, produccionListQuery, sugerenciasQuery, modificador, modificadorUpdate,
 };

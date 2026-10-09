@@ -134,7 +134,8 @@ function normalizarPresentacion(datos, tipo, actual) {
 function limpiarPorTipo(datos, tipo) {
   const limpio = { ...datos };
   if (TIPOS_CON_RECETA.includes(tipo)) delete limpio.costo_promedio;
-  if (tipo !== 'PREPARACION') { delete limpio.rendimiento; limpio.por_lotes = false; }
+  if (tipo !== 'PREPARACION') { delete limpio.rendimiento; limpio.por_lotes = false; limpio.vida_util_dias = null; }
+  if (tipo === 'PREPARACION' && limpio.por_lotes === false) limpio.vida_util_dias = null;
   return limpio;
 }
 

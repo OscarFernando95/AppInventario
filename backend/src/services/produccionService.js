@@ -5,6 +5,7 @@ const { ValidationError } = require('../utils/errors');
 const { consumoBase, esPorLotes, redondear3 } = require('./recetas');
 const { cargarRecetas } = require('./recetasDb');
 const { promedioPonderado } = require('./costos');
+const { fechaISO, sumarDias } = require('./lotes');
 
 const redondear2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
@@ -62,6 +63,7 @@ async function producir(req, t, { productoId, cantidad, motivo }) {
     consumo: descontado,
     motivo: motivo || null,
     fecha: new Date(),
+    vence_en: prep.vida_util_dias ? sumarDias(fechaISO(), prep.vida_util_dias) : null,
   }, { transaction: t });
   return { produccion, prep };
 }

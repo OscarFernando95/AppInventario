@@ -1,7 +1,7 @@
 'use strict';
 
 const { fn, col, QueryTypes } = require('sequelize');
-const { sequelize, AjusteInventario, Producto, Usuario } = require('../models');
+const { sequelize, AjusteInventario, Producto, Usuario, Empresa } = require('../models');
 const { ValidationError } = require('../utils/errors');
 const { parseListQuery, setTotalCount } = require('../utils/pagination');
 const { buildListWhere } = require('../utils/listFilters');
@@ -9,6 +9,7 @@ const { auditar } = require('../utils/audit');
 const { unidadCorta } = require('../utils/unidades');
 const { tiene } = require('../middlewares/auth');
 const { armarDesviaciones } = require('../services/desviaciones');
+const { umbralDeAlerta, eventosDeConteo } = require('../services/desviacionesDb');
 const { invalidateDashboard } = require('./reporteController');
 const { TIPOS_CON_RECETA, esPorLotes, redondear3 } = require('../services/recetas');
 
@@ -97,7 +98,22 @@ exports.registrarConteo = async (req, res) => {
   invalidateDashboard(req.empresaId);
   const valor = redondear2(resultado.ajustes.reduce((a, x) => a + Number(x.valor), 0));
   auditar(req, 'conteo_fisico', { ajustados: resultado.ajustes.length, sinCambio: resultado.sinCambio, valor });
-  res.status(201).json({ ajustados: resultado.ajustes.length, sin_cambio: resultado.sinCambio, valor_total: valor, ajustes: resultado.ajustes });
+
+  // Alerta automática: faltantes que superan el % de desviación de la empresa frente al conteo anterior.
+  const umbral = await umbralDeAlerta(req.empresaId);
+  const alertas = (await eventosDeConteo(req.empresaId, { ajusteIds: resultado.ajustes.map((a) => a.id), umbral })).filter((e) => e.alerta);
+  for (const a of alertas) {
+    auditar(req, 'desviacion_alerta', {
+      productoId: a.productoId, productoNombre: a.nombre_producto, faltante: a.faltante, unidad: unidadCorta(a.unidad_medida), pct: a.desviacion_pct, umbral,
+    });
+  }
+  res.status(201).json({
+    ajustados: resultado.ajustes.length, sin_cambio: resultado.sinCambio, valor_total: valor, ajustes: resultado.ajustes, umbral_pct: umbral,
+    alertas: alertas.map((a) => ({
+      productoId: a.productoId, nombre_producto: a.nombre_producto, unidad_medida: a.unidad_medida, faltante: a.faltante, consumo_teorico: a.consumo_teorico,
+      desviacion_pct: a.desviacion_pct, ...(tiene(req, 'costos.ver') ? { valor: a.valor_conteo } : {}),
+    })),
+  });
 };
 
 exports.getAjustes = async (req, res) => {
@@ -144,6 +160,13 @@ function condicionDeFechas(columna, { desde, hasta }, replacements) {
  * es la desviación (faltante si es negativa, sobrante si es positiva).
  */
 exports.getDesviaciones = async (req, res) => {
+  const umbral = await umbralDeAlerta(req.empresaId);
+  // Modo «entre conteos»: cada conteo contra el anterior del mismo producto (en vez de un rango de fechas fijo).
+  if (req.query.modo === 'conteos') {
+    const eventos = await eventosDeConteo(req.empresaId, { desde: req.query.desde, hasta: req.query.hasta, umbral });
+    if (!tiene(req, 'costos.ver')) for (const e of eventos) delete e.valor_conteo;
+    return res.json({ modo: 'conteos', umbral_pct: umbral, eventos, alertas: eventos.filter((e) => e.alerta).length });
+  }
   const replacements = { empresaId: req.empresaId };
   const fechasVenta = condicionDeFechas('v."fecha"', req.query, replacements);
   const fechasProduccion = condicionDeFechas('pr."fecha"', req.query, replacements);
@@ -183,9 +206,19 @@ exports.getDesviaciones = async (req, res) => {
     : [];
 
   const informe = armarDesviaciones({ productos, ventas, producciones, ajustes });
+  informe.umbral_pct = umbral;
+  for (const f of informe.filas) f.alerta = f.desviacion_pct != null && f.desviacion_pct >= umbral;
   if (!tiene(req, 'costos.ver')) {
     for (const f of informe.filas) { delete f.valor_conteo; delete f.valor_mermas; delete f.costo_unitario; }
     informe.totales = { productos: informe.totales.productos, con_faltante: informe.totales.con_faltante };
   }
   res.json(informe);
+};
+
+/** Cambia el % de faltante a partir del cual un conteo se marca como alerta. */
+exports.setUmbralDesviacion = async (req, res) => {
+  const { desviacion_alerta_pct: pct } = req.body;
+  await Empresa.update({ desviacion_alerta_pct: pct }, { where: { id: req.empresaId } });
+  auditar(req, 'desviacion_umbral', { pct });
+  res.json({ umbral_pct: pct });
 };

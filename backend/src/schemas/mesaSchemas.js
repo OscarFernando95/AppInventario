@@ -15,6 +15,7 @@ const mesa = z.object({
   activa: z.boolean().optional(),
 });
 const mesaUpdate = mesa.partial();
+const mesaConfig = z.object({ propina_sugerida_pct: z.coerce.number().min(0).max(30).transform((n) => Math.round(n * 100) / 100) });
 
 // --- Cuentas ---
 const cuentaAbrir = z.object({
@@ -55,6 +56,8 @@ const itemAnular = z.object({ motivo: z.string().trim().min(3, 'Indica el motivo
 
 const cuentaMover = z.object({ mesaId: idRef });
 
+const cuentaUnir = z.object({ cuentaId: idRef });
+
 const cuentaCancelar = z.object({ motivo: z.string().trim().min(3, 'Indica el motivo.').max(500) });
 
 const cuentaCobrar = z.object({
@@ -69,6 +72,26 @@ const cuentaCobrar = z.object({
   propina: z.coerce.number().min(0).max(99_999_999).transform(redondear2).optional().default(0),
 });
 
+// --- Reservas ---
+const fechaHora = z.coerce.date({ error: 'Fecha y hora inválidas.' });
+const reserva = z.object({
+  mesaId: idOpc,
+  nombre: z.string().trim().min(1, 'Indica el nombre de quien reserva.').max(120),
+  telefono: z.string().trim().max(40).optional().nullable().transform((v) => v || undefined),
+  personas: z.coerce.number().int().min(1, 'Indica cuántas personas.').max(500),
+  fecha_hora: fechaHora,
+  nota: textoOpc,
+});
+const reservaUpdate = reserva.partial().extend({
+  mesaId: z.preprocess((v) => (v === '' ? null : v), z.coerce.number().int().positive().nullish()),
+  estado: z.enum(['PENDIENTE', 'CANCELADA', 'NO_LLEGO']).optional(),
+});
+const reservaListQuery = z.object({
+  fecha: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (YYYY-MM-DD).').optional(),
+  estado: z.enum(['PENDIENTE', 'SENTADA', 'CANCELADA', 'NO_LLEGO']).optional(),
+});
+const reservaSentar = z.object({ mesaId: idOpc });
+
 // --- Comandas ---
 const ESTADOS_COMANDA = ['PENDIENTE', 'LISTA', 'ENTREGADA'];
 const comandaListQuery = z.object({
@@ -77,6 +100,6 @@ const comandaListQuery = z.object({
 const comandaEstado = z.object({ estado: z.enum(ESTADOS_COMANDA, { error: 'Estado no válido.' }) });
 
 module.exports = {
-  idParam, mesa, mesaUpdate, cuentaAbrir, cuentaUpdate, cuentaListQuery, itemAgregar, itemEditar, itemAnular,
-  cuentaMover, cuentaCancelar, cuentaCobrar, comandaListQuery, comandaEstado, ESTADOS_COMANDA,
+  idParam, mesa, mesaUpdate, mesaConfig, cuentaAbrir, cuentaUpdate, cuentaListQuery, itemAgregar, itemEditar, itemAnular,
+  cuentaMover, cuentaUnir, cuentaCancelar, reserva, reservaUpdate, reservaListQuery, reservaSentar, cuentaCobrar, comandaListQuery, comandaEstado, ESTADOS_COMANDA,
 };

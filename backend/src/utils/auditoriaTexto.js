@@ -128,6 +128,16 @@ const EVENTOS = {
     accion: () => 'Anuló una producción por lotes',
     descripcion: (d) => `${num(d.cantidad)}${d.unidad ? ` ${d.unidad}` : ''} de ${ref(d.productoNombre, d.productoId)}`,
   },
+  desviacion_alerta: {
+    modulo: 'Inventario',
+    accion: () => 'Alerta: faltante de inventario sobre el límite',
+    descripcion: (d) => `${ref(d.productoNombre, d.productoId)} · faltaron ${num(d.faltante)}${d.unidad ? ` ${d.unidad}` : ''} (${num(d.pct)} % de lo que debió gastarse; límite ${num(d.umbral)} %)`,
+  },
+  desviacion_umbral: {
+    modulo: 'Inventario',
+    accion: () => 'Cambió el límite de alerta de desviaciones',
+    descripcion: (d) => `Ahora ${num(d.pct)} %`,
+  },
   // Caja
   caja_abierta: {
     modulo: 'Caja',
@@ -150,7 +160,7 @@ const EVENTOS = {
   caja_propinas: {
     modulo: 'Caja',
     accion: () => 'Entregó las propinas al personal',
-    descripcion: (d) => `${cop(d.monto)}${d.concepto ? ` · ${d.concepto}` : ''}`,
+    descripcion: (d) => `${cop(d.monto)}${d.concepto ? ` · ${d.concepto}` : ''}${d.repartidas ? ` · repartidas entre ${plural(d.repartidas, 'persona', 'personas')}` : ''}`,
   },
   // Mesas y cocina
   comanda_enviada: {
@@ -168,11 +178,27 @@ const EVENTOS = {
     accion: () => 'Canceló una cuenta',
     descripcion: (d) => `${d.cuenta || `Cuenta #${d.cuentaId}`}${d.numItems ? ` · ${plural(d.numItems, 'ítem', 'ítems')}${d.enviados ? ` (${d.enviados} ya enviados a cocina)` : ''}` : ''}${d.motivo ? ` · motivo: ${d.motivo}` : ''}`,
   },
+  cuentas_unidas: {
+    modulo: 'Mesas',
+    accion: () => 'Unió dos cuentas',
+    descripcion: (d) => `${d.origen} pasó a ${d.destino} (${plural(d.numItems || 0, 'ítem', 'ítems')})`,
+  },
+  reserva_creada: {
+    modulo: 'Mesas',
+    accion: () => 'Registró una reserva',
+    descripcion: (d) => `${d.nombre} · ${plural(d.personas || 0, 'persona', 'personas')}${d.mesa ? ` · ${d.mesa}` : ''}${d.fecha ? ` · ${d.fecha}` : ''}`,
+  },
+  reserva_actualizada: {
+    modulo: 'Mesas',
+    accion: (d) => (d.estado === 'CANCELADA' ? 'Canceló una reserva' : d.estado === 'NO_LLEGO' ? 'Marcó una reserva como «no llegó»' : d.estado === 'SENTADA' ? 'Sentó una reserva' : 'Modificó una reserva'),
+    descripcion: (d) => `${d.nombre}${d.mesa ? ` · ${d.mesa}` : ''}`,
+  },
   cuenta_movida: {
     modulo: 'Mesas',
     accion: () => 'Cambió una cuenta de mesa',
     descripcion: (d) => `De ${d.desde} a ${d.hacia}`,
   },
+  propina_sugerida_cambiada: { modulo: 'Mesas', accion: () => 'Cambió la propina sugerida', descripcion: (d) => (Number(d.pct) > 0 ? `Ahora ${num(d.pct)} %` : 'Ya no se sugiere propina') },
   mesa_creada: { modulo: 'Mesas', accion: () => 'Creó una mesa', descripcion: (d) => ref(d.nombre, d.mesaId) },
   mesa_actualizada: { modulo: 'Mesas', accion: (d) => (d.activa === false ? 'Desactivó una mesa' : 'Modificó una mesa'), descripcion: (d) => ref(d.nombre, d.mesaId) },
   // Gastos
